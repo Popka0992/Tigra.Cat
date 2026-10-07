@@ -514,6 +514,8 @@ local CreateESPObj = LPHNoVirtualize(function(name)
 
 	espObj.Adornments = {}
 	espObj.Highlight = nil
+	espObj.MeshShell = nil
+	espObj.MeshHighlight = nil
 
 	espObj.Destroy = function()
 		container:Destroy()
@@ -552,6 +554,7 @@ local UpdateESPObj = LPHNoVirtualize(function(espObj, position, size, name, dist
 	local isDead = (humanoid and humanoid.Health <= 0)
 	local chamsEnabled = getCfg("Chams.Enabled")
 
+	-- Chams handling.
 	if chamsEnabled and not isDead then
 		local chamType = getCfg("Chams.Type")
 		local visCheck = getCfg("Chams.VisibleCheck")
@@ -608,6 +611,69 @@ local UpdateESPObj = LPHNoVirtualize(function(espObj, position, size, name, dist
 				end
 			end
 			for i = idx + 1, #espObj.Adornments do espObj.Adornments[i].Visible = false end
+
+		elseif chamType == "MeshChams" and instance:IsA("Model") then
+			if not espObj.MeshShell or not espObj.MeshShell.Parent then
+				if espObj.MeshShell then espObj.MeshShell:Destroy() end
+				cleanupCharacterMeshChams(instance)
+
+				local isR15 = humanoid and (humanoid.RigType == Enum.HumanoidRigType.R15)
+				local bodyParts = isR15 and {
+					"Head", "UpperTorso", "LowerTorso",
+					"LeftUpperArm", "LeftLowerArm", "LeftHand",
+					"RightUpperArm", "RightLowerArm", "RightHand",
+					"LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
+					"RightUpperLeg", "RightLowerLeg", "RightFoot",
+				} or { "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg" }
+
+				local shellModel = Instance.new("Model")
+				shellModel.Name = "ChamShells"
+				shellModel:SetAttribute("123ESP_MeshCham", true)
+				shellModel.Parent = instance
+
+				for _, partName in ipairs(bodyParts) do
+					local realPart = instance:FindFirstChild(partName)
+					if realPart and realPart:IsA("BasePart") then
+						local shell = Instance.new("Part")
+						shell.Name = "ChamShell_" .. partName
+						shell:SetAttribute("123ESP_MeshCham", true)
+						shell.Size = realPart.Size * 1.015
+						shell.Transparency = 0.9999999
+						shell.CastShadow = false
+						shell.CanCollide = false
+						shell.CanQuery = false
+						shell.CanTouch = false
+						shell.Anchored = false
+						shell.Massless = true
+						shell.CFrame = realPart.CFrame
+						shell.Parent = shellModel
+
+						local weld = Instance.new("Weld")
+						weld.Part0 = shell
+						weld.Part1 = realPart
+						weld.Parent = shell
+					end
+				end
+
+				local hl = Instance.new("Highlight")
+				hl.Name = "ChamShellHighlight"
+				hl:SetAttribute("123ESP_MeshCham", true)
+				hl.Adornee = shellModel
+				hl.Parent = shellModel
+
+				espObj.MeshShell = shellModel
+				espObj.MeshHighlight = hl
+			end
+
+			if espObj.MeshHighlight then
+				local hl = espObj.MeshHighlight
+				hl.FillColor = (visCheck and espObj.CachedModelVisible) and visibleColor or mainColor
+				hl.FillTransparency = getCfg("Chams.MeshChams.FillTransparency")
+				hl.OutlineColor = outlineColor
+				hl.OutlineTransparency = getCfg("Chams.MeshChams.OutlineTransparency")
+				hl.DepthMode = visCheck and Enum.HighlightDepthMode.Occluded or Enum.HighlightDepthMode.AlwaysOnTop
+				hl.Enabled = true
+			end
 		end
 	else
 		if espObj.Highlight then espObj.Highlight:Destroy(); espObj.Highlight = nil end
@@ -737,7 +803,7 @@ local UpdateESPObj = LPHNoVirtualize(function(espObj, position, size, name, dist
 		espObj.DistanceText.Visible = false
 	end
 
-	-- Health Bar.
+	-- Health Bar & Health Number & Gradient.
 	if getCfg("HealthBar.Enabled") and instance:IsA("Model") and humanoid then
 		local hpPos = getCfg("HealthBar.Position")
 		local hpWidth = getCfg("HealthBar.Width")
@@ -763,13 +829,53 @@ local UpdateESPObj = LPHNoVirtualize(function(espObj, position, size, name, dist
 			espObj.HealthBar.Position = UDim2.new(0, 0, 0, -(sy + 1 - barHeight))
 		end
 
-		espObj.HealthBar.BackgroundColor3 = Color3.fromHSV(healthPercent * 0.3, 1, 1)
+		local showText = getCfg("HealthBar.ShowText")
+		if getCfg("HealthBar.HideWhenFullHP") and health >= maxHealth then showText = false end
+		local followColorText = showText and getCfg("HealthBar.FollowGradientColorText")
+		local healthColor = Color3.fromHSV(healthPercent * 0.3, 1, 1)
 
-		if getCfg("HealthBar.ShowText") and health < maxHealth then
+		if getCfg("HealthBar.Gradient.Enabled") then
+			espObj.HealthGradient.Enabled = true
+			espObj.HealthGradient.Rotation = isHorizontal and 0 or 90
+			espObj.HealthGradient.Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, getCfg("HealthBar.Gradient.Color1")),
+				ColorSequenceKeypoint.new(0.5, getCfg("HealthBar.Gradient.Color2")),
+				ColorSequenceKeypoint.new(1, getCfg("HealthBar.Gradient.Color3"))
+			})
+			espObj.HealthBar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+
+			if followColorText then
+				if healthPercent > 0.5 then
+					healthColor = getCfg("HealthBar.Gradient.Color1"):Lerp(getCfg("HealthBar.Gradient.Color2"), (1 - healthPercent) * 2)
+				else
+					healthColor = getCfg("HealthBar.Gradient.Color2"):Lerp(getCfg("HealthBar.Gradient.Color3"), (0.5 - healthPercent) * 2)
+				end
+			end
+		else
+			espObj.HealthGradient.Enabled = false
+			espObj.HealthBar.BackgroundColor3 = healthColor
+		end
+
+		if showText then
 			espObj.HealthText.Visible = true
-			espObj.HealthText.Text = math.floor(health)
-			local barOutlineX = espObj.HealthBarOutline.Position.X.Offset
-			espObj.HealthText.Position = UDim2.new(0, hpPos == "Left" and (barOutlineX - 2) or (barOutlineX + hpWidth + 4), 0, y)
+			espObj.HealthText.Text = tostring(math.floor(health))
+			espObj.HealthText.TextSize = getCfg("HealthBar.TextSize")
+			espObj.HealthText.Font = FONT_MAP[getCfg("HealthBar.Font")] or Enum.Font.Code
+			espObj.HealthText.TextColor3 = followColorText and healthColor or getCfg("TextColor")
+			applyTextOutline(espObj.HealthText, getCfg("HealthBar.Outline.Style") or textOutlineStyle, textOutlineColor)
+
+			if isHorizontal then
+				local textY = espObj.HealthBarOutline.Position.Y.Offset
+				espObj.HealthText.TextXAlignment = Enum.TextXAlignment.Center
+				espObj.HealthText.Size = UDim2.new(0, 0, 0, 0)
+				espObj.HealthText.Position = UDim2.new(0, getCfg("HealthBar.TextFollowBar") and (x + math.floor((sx + 1) * healthPercent) - 1) or (x + sx), 0, textY + (hpWidth * 0.5) + 1)
+			else
+				local barOutlineX = espObj.HealthBarOutline.Position.X.Offset
+				espObj.HealthText.TextXAlignment = hpPos == "Left" and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left
+				espObj.HealthText.Size = UDim2.new(0, 0, 0, 0)
+				local targetY = getCfg("HealthBar.TextFollowBar") and (y + (sy + 1) - math.floor((sy + 1) * healthPercent)) or y
+				espObj.HealthText.Position = UDim2.new(0, hpPos == "Left" and (barOutlineX - 3) or (barOutlineX + hpWidth + 4), 0, targetY)
+			end
 		else
 			espObj.HealthText.Visible = false
 		end
