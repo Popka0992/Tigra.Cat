@@ -26,6 +26,13 @@ end
 local initialClouds = getTerrainClouds()
 local originalCloudsEnabled = initialClouds and initialClouds.Enabled or true
 
+local originalSunRaysState = {}
+for _, obj in ipairs(lightingService:GetChildren()) do
+	if obj:IsA("SunRaysEffect") then
+		originalSunRaysState[obj] = obj.Enabled
+	end
+end
+
 local customColorCorrection = lightingService:FindFirstChild("CustomColorCorrection")
 if not customColorCorrection then
 	customColorCorrection = Instance.new("ColorCorrectionEffect")
@@ -123,6 +130,7 @@ WorldVisuals.Config = {
 	SkyChanger = false,
 	SelectedSky = "default",
 	NoClouds = false,
+	NoSunRays = false,
 
 	Fog = false,
 	FogColor = originalFogColor,
@@ -174,6 +182,12 @@ function WorldVisuals:Update()
 	if config.Enabled then
 		if clouds then
 			clouds.Enabled = not config.NoClouds
+		end
+
+		for _, obj in ipairs(lightingService:GetChildren()) do
+			if obj:IsA("SunRaysEffect") then
+				obj.Enabled = not config.NoSunRays
+			end
 		end
 
 		lightingService.Ambient = config.Ambient and config.AmbientColor or originalAmbient
@@ -231,6 +245,12 @@ function WorldVisuals:Update()
 			clouds.Enabled = originalCloudsEnabled
 		end
 
+		for obj, state in pairs(originalSunRaysState) do
+			if obj and obj.Parent then
+				obj.Enabled = state
+			end
+		end
+
 		lightingService.Ambient = originalAmbient
 		lightingService.OutdoorAmbient = originalOutdoorAmbient
 		lightingService.FogColor = originalFogColor
@@ -265,6 +285,14 @@ function WorldVisuals:Load()
 			local clouds = getTerrainClouds()
 			if clouds and clouds.Enabled then
 				clouds.Enabled = false
+			end
+		end
+
+		if self.Config.NoSunRays then
+			for _, obj in ipairs(lightingService:GetChildren()) do
+				if obj:IsA("SunRaysEffect") and obj.Enabled then
+					obj.Enabled = false
+				end
 			end
 		end
 
