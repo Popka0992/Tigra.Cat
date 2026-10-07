@@ -1,6 +1,7 @@
 local cloneref = cloneref or function(o) return o end
 local lightingService = cloneref(game:GetService("Lighting"))
 local runService = cloneref(game:GetService("RunService"))
+local workspaceService = cloneref(game:GetService("Workspace"))
 
 local WorldVisuals = {}
 WorldVisuals.__index = WorldVisuals
@@ -13,6 +14,17 @@ local originalFogEnd = typeof(lightingService.FogEnd) == "number" and lightingSe
 local originalClockTime = typeof(lightingService.ClockTime) == "number" and lightingService.ClockTime or 14
 local originalBrightness = typeof(lightingService.Brightness) == "number" and lightingService.Brightness or 2
 local originalExposure = typeof(lightingService.ExposureCompensation) == "number" and lightingService.ExposureCompensation or 0
+
+local function getTerrainClouds()
+	local terrain = workspaceService:FindFirstChildOfClass("Terrain") or workspaceService.Terrain
+	if terrain then
+		return terrain:FindFirstChildOfClass("Clouds")
+	end
+	return nil
+end
+
+local initialClouds = getTerrainClouds()
+local originalCloudsEnabled = initialClouds and initialClouds.Enabled or true
 
 local customColorCorrection = lightingService:FindFirstChild("CustomColorCorrection")
 if not customColorCorrection then
@@ -110,6 +122,7 @@ WorldVisuals.Config = {
 	OutdoorAmbientColor = originalOutdoorAmbient,
 	SkyChanger = false,
 	SelectedSky = "default",
+	NoClouds = false,
 
 	Fog = false,
 	FogColor = originalFogColor,
@@ -156,7 +169,13 @@ end
 
 function WorldVisuals:Update()
 	local config = self.Config
+	local clouds = getTerrainClouds()
+
 	if config.Enabled then
+		if clouds then
+			clouds.Enabled = not config.NoClouds
+		end
+
 		lightingService.Ambient = config.Ambient and config.AmbientColor or originalAmbient
 		lightingService.OutdoorAmbient = config.OutdoorAmbient and config.OutdoorAmbientColor or originalOutdoorAmbient
 
@@ -208,6 +227,10 @@ function WorldVisuals:Update()
 			self:ApplySkybox("default")
 		end
 	else
+		if clouds then
+			clouds.Enabled = originalCloudsEnabled
+		end
+
 		lightingService.Ambient = originalAmbient
 		lightingService.OutdoorAmbient = originalOutdoorAmbient
 		lightingService.FogColor = originalFogColor
@@ -237,6 +260,14 @@ end
 function WorldVisuals:Load()
 	runService.RenderStepped:Connect(function()
 		if not self.Config.Enabled then return end
+
+		if self.Config.NoClouds then
+			local clouds = getTerrainClouds()
+			if clouds and clouds.Enabled then
+				clouds.Enabled = false
+			end
+		end
+
 		if self.Config.Ambient then
 			lightingService.Ambient = self.Config.AmbientColor
 		end
