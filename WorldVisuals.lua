@@ -1,74 +1,28 @@
-local cloneref = cloneref or function(o) return o end
-local lightingService = cloneref(game:GetService("Lighting"))
-local runService = cloneref(game:GetService("RunService"))
-local workspaceService = cloneref(game:GetService("Workspace"))
+-- Check for table that is shared between executions.
+if not shared then
+	return warn("No shared, no script.")
+end
 
+-- Initialize Luraph globals if they do not exist.
+loadstring("getfenv().LPH_NO_VIRTUALIZE = function(...) return ... end")()
+
+getfenv().PP_SCRAMBLE_NUM = function(...) return ... end
+getfenv().PP_SCRAMBLE_STR = function(...) return ... end
+getfenv().PP_SCRAMBLE_RE_NUM = function(...) return ... end
+
+---@module Features.Visuals.WorldVisuals
 local WorldVisuals = {}
 WorldVisuals.__index = WorldVisuals
 
-local originalAmbient = lightingService.Ambient
-local originalOutdoorAmbient = lightingService.OutdoorAmbient
-local originalFogColor = lightingService.FogColor
-local originalFogStart = typeof(lightingService.FogStart) == "number" and lightingService.FogStart or 0
-local originalFogEnd = typeof(lightingService.FogEnd) == "number" and lightingService.FogEnd or 1000
-local originalClockTime = typeof(lightingService.ClockTime) == "number" and lightingService.ClockTime or 14
-local originalBrightness = typeof(lightingService.Brightness) == "number" and lightingService.Brightness or 2
-local originalExposure = typeof(lightingService.ExposureCompensation) == "number" and lightingService.ExposureCompensation or 0
+-- Services.
+local cloneref = cloneref or function(instance) return instance end
+local lightingService = cloneref(game:GetService("Lighting"))
+local workspaceService = cloneref(game:GetService("Workspace"))
 
-local function getTerrainClouds()
-	local terrain = workspaceService:FindFirstChildOfClass("Terrain") or workspaceService.Terrain
-	if terrain then
-		return terrain:FindFirstChildOfClass("Clouds")
-	end
-	return nil
-end
-
-local initialClouds = getTerrainClouds()
-local originalCloudsEnabled = initialClouds and initialClouds.Enabled or true
-
-local originalSunRaysState = {}
-for _, obj in ipairs(lightingService:GetChildren()) do
-	if obj:IsA("SunRaysEffect") then
-		originalSunRaysState[obj] = obj.Enabled
-	end
-end
-
-local customColorCorrection = lightingService:FindFirstChild("CustomColorCorrection")
-if not customColorCorrection then
-	customColorCorrection = Instance.new("ColorCorrectionEffect")
-	customColorCorrection.Name = "CustomColorCorrection"
-	customColorCorrection.Enabled = false
-	customColorCorrection.Parent = lightingService
-end
-
-local customAtmosphere = lightingService:FindFirstChildOfClass("Atmosphere")
-local originalAtmosphere = {
-	Density = (customAtmosphere and typeof(customAtmosphere.Density) == "number") and customAtmosphere.Density or 0.3,
-	Offset = (customAtmosphere and typeof(customAtmosphere.Offset) == "number") and customAtmosphere.Offset or 0.25,
-	Haze = (customAtmosphere and typeof(customAtmosphere.Haze) == "number") and customAtmosphere.Haze or 0,
-	Glare = (customAtmosphere and typeof(customAtmosphere.Glare) == "number") and customAtmosphere.Glare or 0,
-	Color = (customAtmosphere and customAtmosphere.Color) or Color3.fromRGB(199, 199, 199),
-	Decay = (customAtmosphere and customAtmosphere.Decay) or Color3.fromRGB(106, 112, 125)
-}
-
-if not customAtmosphere then
-	customAtmosphere = Instance.new("Atmosphere")
-	customAtmosphere.Name = "CustomAtmosphere"
-	customAtmosphere.Parent = lightingService
-end
-
-local initialSky = lightingService:FindFirstChildOfClass("Sky")
-local skyboxes = {
-	["default"] = {
-		SkyboxBk = initialSky and initialSky.SkyboxBk or "",
-		SkyboxDn = initialSky and initialSky.SkyboxDn or "",
-		SkyboxFt = initialSky and initialSky.SkyboxFt or "",
-		SkyboxLf = initialSky and initialSky.SkyboxLf or "",
-		SkyboxRt = initialSky and initialSky.SkyboxRt or "",
-		SkyboxUp = initialSky and initialSky.SkyboxUp or "",
-		SunTextureId = initialSky and initialSky.SunTextureId or "",
-		MoonTextureId = initialSky and initialSky.MoonTextureId or ""
-	},
+-- Constants.
+local SKYBOX_PROPERTIES = { "SkyboxBk", "SkyboxDn", "SkyboxFt", "SkyboxLf", "SkyboxRt", "SkyboxUp", "SunTextureId", "MoonTextureId" }
+local SKYBOXES = {
+	["default"] = {},
 	["stormy"] = {
 		SkyboxUp = "rbxassetid://18703232671",
 		SkyboxBk = "rbxassetid://18703245834",
@@ -121,6 +75,99 @@ local skyboxes = {
 	}
 }
 
+-- Baseline state.
+local originalAmbient = lightingService.Ambient
+local originalOutdoorAmbient = lightingService.OutdoorAmbient
+local originalFogColor = lightingService.FogColor
+local originalFogStart = lightingService.FogStart
+local originalFogEnd = lightingService.FogEnd
+local originalClockTime = lightingService.ClockTime
+local originalBrightness = lightingService.Brightness
+local originalExposure = lightingService.ExposureCompensation
+
+-- Instances caching.
+local terrain = workspaceService:FindFirstChildOfClass("Terrain") or workspaceService.Terrain
+local cachedClouds = terrain and terrain:FindFirstChildOfClass("Clouds")
+local originalCloudsEnabled = cachedClouds and cachedClouds.Enabled or true
+
+local cachedSunRays = {}
+for _, child in ipairs(lightingService:GetChildren()) do
+	if child:IsA("SunRaysEffect") then
+		cachedSunRays[child] = child.Enabled
+	end
+end
+
+lightingService.ChildAdded:Connect(function(child)
+	if child:IsA("SunRaysEffect") then
+		cachedSunRays[child] = child.Enabled
+	end
+end)
+
+lightingService.ChildRemoved:Connect(function(child)
+	cachedSunRays[child] = nil
+end)
+
+local customColorCorrection = lightingService:FindFirstChild("CustomColorCorrection")
+if not customColorCorrection then
+	customColorCorrection = Instance.new("ColorCorrectionEffect")
+	customColorCorrection.Name = "CustomColorCorrection"
+	customColorCorrection.Enabled = false
+	customColorCorrection.Parent = lightingService
+end
+
+local customAtmosphere = lightingService:FindFirstChildOfClass("Atmosphere")
+local originalAtmosphere = {
+	Density = customAtmosphere and customAtmosphere.Density or 0.3,
+	Offset = customAtmosphere and customAtmosphere.Offset or 0.25,
+	Haze = customAtmosphere and customAtmosphere.Haze or 0,
+	Glare = customAtmosphere and customAtmosphere.Glare or 0,
+	Color = customAtmosphere and customAtmosphere.Color or Color3.fromRGB(199, 199, 199),
+	Decay = customAtmosphere and customAtmosphere.Decay or Color3.fromRGB(106, 112, 125)
+}
+
+if not customAtmosphere then
+	customAtmosphere = Instance.new("Atmosphere")
+	customAtmosphere.Name = "CustomAtmosphere"
+	customAtmosphere.Parent = lightingService
+end
+
+local customSky = lightingService:FindFirstChildOfClass("Sky")
+SKYBOXES["default"] = {
+	SkyboxBk = customSky and customSky.SkyboxBk or "",
+	SkyboxDn = customSky and customSky.SkyboxDn or "",
+	SkyboxFt = customSky and customSky.SkyboxFt or "",
+	SkyboxLf = customSky and customSky.SkyboxLf or "",
+	SkyboxRt = customSky and customSky.SkyboxRt or "",
+	SkyboxUp = customSky and customSky.SkyboxUp or "",
+	SunTextureId = customSky and customSky.SunTextureId or "",
+	MoonTextureId = customSky and customSky.MoonTextureId or ""
+}
+
+if not customSky then
+	customSky = Instance.new("Sky")
+	customSky.Name = "CustomSky"
+	customSky.Parent = lightingService
+end
+
+-- Shadow state to prevent redundant C++ bridge writes.
+local appliedState = {
+	ambient = originalAmbient,
+	outdoorAmbient = originalOutdoorAmbient,
+	fogColor = originalFogColor,
+	fogStart = originalFogStart,
+	fogEnd = originalFogEnd,
+	clockTime = originalClockTime,
+	brightness = originalBrightness,
+	exposure = originalExposure,
+	ccEnabled = false,
+	ccSaturation = 0,
+	ccContrast = 0,
+	ccTint = Color3.fromRGB(255, 255, 255),
+	sky = "default",
+	noClouds = false,
+	noSunRays = false
+}
+
 WorldVisuals.Config = {
 	Enabled = false,
 	Ambient = false,
@@ -131,25 +178,20 @@ WorldVisuals.Config = {
 	SelectedSky = "default",
 	NoClouds = false,
 	NoSunRays = false,
-
 	Fog = false,
 	FogColor = originalFogColor,
 	FogStart = originalFogStart,
 	FogEnd = originalFogEnd,
-
 	TimeChanger = false,
 	ClockTime = originalClockTime,
-
 	Brightness = false,
 	BrightnessValue = originalBrightness,
 	Exposure = false,
 	ExposureValue = originalExposure,
-
 	ColorCorrection = false,
 	Saturation = 0,
 	Contrast = 0,
 	Tint = Color3.fromRGB(255, 255, 255),
-
 	Atmosphere = false,
 	AtmosphereDensity = originalAtmosphere.Density,
 	AtmosphereOffset = originalAtmosphere.Offset,
@@ -159,164 +201,186 @@ WorldVisuals.Config = {
 	AtmosphereDecay = originalAtmosphere.Decay
 }
 
+---Fast skybox application bypassing reflection overhead.
+---@param name string
 function WorldVisuals:ApplySkybox(name)
-	local targetData = skyboxes[name] or skyboxes["default"]
-	local skyObj = lightingService:FindFirstChildOfClass("Sky")
-	if not skyObj then
-		skyObj = Instance.new("Sky")
-		skyObj.Name = "CustomSky"
-		skyObj.Parent = lightingService
-	end
+	if appliedState.sky == name then return end
+	appliedState.sky = name
 
-	for prop, val in pairs(targetData) do
-		pcall(function()
-			skyObj[prop] = val
-		end)
-	end
+	local data = SKYBOXES[name] or SKYBOXES["default"]
+	customSky.SkyboxBk = data.SkyboxBk or ""
+	customSky.SkyboxDn = data.SkyboxDn or ""
+	customSky.SkyboxFt = data.SkyboxFt or ""
+	customSky.SkyboxLf = data.SkyboxLf or ""
+	customSky.SkyboxRt = data.SkyboxRt or ""
+	customSky.SkyboxUp = data.SkyboxUp or ""
+	customSky.SunTextureId = data.SunTextureId or ""
+	customSky.MoonTextureId = data.MoonTextureId or ""
 end
 
+---Updates world visuals using fast change detection.
 function WorldVisuals:Update()
 	local config = self.Config
-	local clouds = getTerrainClouds()
+
+	if not cachedClouds and terrain then
+		cachedClouds = terrain:FindFirstChildOfClass("Clouds")
+	end
 
 	if config.Enabled then
-		if clouds then
-			clouds.Enabled = not config.NoClouds
+		-- Clouds optimization.
+		local targetClouds = not config.NoClouds
+		if cachedClouds and appliedState.noClouds ~= config.NoClouds then
+			appliedState.noClouds = config.NoClouds
+			cachedClouds.Enabled = targetClouds
 		end
 
-		for _, obj in ipairs(lightingService:GetChildren()) do
-			if obj:IsA("SunRaysEffect") then
-				obj.Enabled = not config.NoSunRays
+		-- SunRays optimization.
+		if appliedState.noSunRays ~= config.NoSunRays then
+			appliedState.noSunRays = config.NoSunRays
+			local enabled = not config.NoSunRays
+			for effect in pairs(cachedSunRays) do
+				effect.Enabled = enabled
 			end
 		end
 
-		lightingService.Ambient = config.Ambient and config.AmbientColor or originalAmbient
-		lightingService.OutdoorAmbient = config.OutdoorAmbient and config.OutdoorAmbientColor or originalOutdoorAmbient
+		-- Lighting properties with dirty checking.
+		local targetAmbient = config.Ambient and config.AmbientColor or originalAmbient
+		if appliedState.ambient ~= targetAmbient then
+			appliedState.ambient = targetAmbient
+			lightingService.Ambient = targetAmbient
+		end
 
-		if config.Fog then
-			lightingService.FogColor = config.FogColor
-			lightingService.FogStart = tonumber(config.FogStart) or originalFogStart
-			lightingService.FogEnd = tonumber(config.FogEnd) or originalFogEnd
-		else
+		local targetOutdoor = config.OutdoorAmbient and config.OutdoorAmbientColor or originalOutdoorAmbient
+		if appliedState.outdoorAmbient ~= targetOutdoor then
+			appliedState.outdoorAmbient = targetOutdoor
+			lightingService.OutdoorAmbient = targetOutdoor
+		end
+
+		local targetFogColor = config.Fog and config.FogColor or originalFogColor
+		if appliedState.fogColor ~= targetFogColor then
+			appliedState.fogColor = targetFogColor
+			lightingService.FogColor = targetFogColor
+		end
+
+		local targetFogStart = config.Fog and config.FogStart or originalFogStart
+		if appliedState.fogStart ~= targetFogStart then
+			appliedState.fogStart = targetFogStart
+			lightingService.FogStart = targetFogStart
+		end
+
+		local targetFogEnd = config.Fog and config.FogEnd or originalFogEnd
+		if appliedState.fogEnd ~= targetFogEnd then
+			appliedState.fogEnd = targetFogEnd
+			lightingService.FogEnd = targetFogEnd
+		end
+
+		local targetClockTime = config.TimeChanger and config.ClockTime or originalClockTime
+		if appliedState.clockTime ~= targetClockTime then
+			appliedState.clockTime = targetClockTime
+			lightingService.ClockTime = targetClockTime
+		end
+
+		local targetBrightness = config.Brightness and config.BrightnessValue or originalBrightness
+		if appliedState.brightness ~= targetBrightness then
+			appliedState.brightness = targetBrightness
+			lightingService.Brightness = targetBrightness
+		end
+
+		local targetExposure = config.Exposure and config.ExposureValue or originalExposure
+		if appliedState.exposure ~= targetExposure then
+			appliedState.exposure = targetExposure
+			lightingService.ExposureCompensation = targetExposure
+		end
+
+		-- Post-processing dirty checks.
+		if appliedState.ccEnabled ~= config.ColorCorrection then
+			appliedState.ccEnabled = config.ColorCorrection
+			customColorCorrection.Enabled = config.ColorCorrection
+		end
+
+		if config.ColorCorrection then
+			if appliedState.ccSaturation ~= config.Saturation then
+				appliedState.ccSaturation = config.Saturation
+				customColorCorrection.Saturation = config.Saturation
+			end
+			if appliedState.ccContrast ~= config.Contrast then
+				appliedState.ccContrast = config.Contrast
+				customColorCorrection.Contrast = config.Contrast
+			end
+			if appliedState.ccTint ~= config.Tint then
+				appliedState.ccTint = config.Tint
+				customColorCorrection.TintColor = config.Tint
+			end
+		end
+
+		self:ApplySkybox(config.SkyChanger and config.SelectedSky or "default")
+	else
+		if cachedClouds and appliedState.noClouds then
+			appliedState.noClouds = false
+			cachedClouds.Enabled = originalCloudsEnabled
+		end
+
+		if appliedState.noSunRays then
+			appliedState.noSunRays = false
+			for effect, state in pairs(cachedSunRays) do
+				if effect and effect.Parent then
+					effect.Enabled = state
+				end
+			end
+		end
+
+		if appliedState.ambient ~= originalAmbient then
+			appliedState.ambient = originalAmbient
+			lightingService.Ambient = originalAmbient
+		end
+
+		if appliedState.outdoorAmbient ~= originalOutdoorAmbient then
+			appliedState.outdoorAmbient = originalOutdoorAmbient
+			lightingService.OutdoorAmbient = originalOutdoorAmbient
+		end
+
+		if appliedState.fogColor ~= originalFogColor then
+			appliedState.fogColor = originalFogColor
 			lightingService.FogColor = originalFogColor
+		end
+
+		if appliedState.fogStart ~= originalFogStart then
+			appliedState.fogStart = originalFogStart
 			lightingService.FogStart = originalFogStart
+		end
+
+		if appliedState.fogEnd ~= originalFogEnd then
+			appliedState.fogEnd = originalFogEnd
 			lightingService.FogEnd = originalFogEnd
 		end
 
-		if config.TimeChanger then
-			lightingService.ClockTime = tonumber(config.ClockTime) or originalClockTime
-		else
+		if appliedState.clockTime ~= originalClockTime then
+			appliedState.clockTime = originalClockTime
 			lightingService.ClockTime = originalClockTime
 		end
 
-		lightingService.Brightness = config.Brightness and (tonumber(config.BrightnessValue) or originalBrightness) or originalBrightness
-		lightingService.ExposureCompensation = config.Exposure and (tonumber(config.ExposureValue) or originalExposure) or originalExposure
-
-		customColorCorrection.Enabled = config.ColorCorrection
-		if config.ColorCorrection then
-			customColorCorrection.Saturation = tonumber(config.Saturation) or 0
-			customColorCorrection.Contrast = tonumber(config.Contrast) or 0
-			customColorCorrection.TintColor = config.Tint or Color3.fromRGB(255, 255, 255)
+		if appliedState.brightness ~= originalBrightness then
+			appliedState.brightness = originalBrightness
+			lightingService.Brightness = originalBrightness
 		end
 
-		if config.Atmosphere then
-			customAtmosphere.Density = tonumber(config.AtmosphereDensity) or originalAtmosphere.Density
-			customAtmosphere.Offset = tonumber(config.AtmosphereOffset) or originalAtmosphere.Offset
-			customAtmosphere.Haze = tonumber(config.AtmosphereHaze) or originalAtmosphere.Haze
-			customAtmosphere.Glare = tonumber(config.AtmosphereGlare) or originalAtmosphere.Glare
-			customAtmosphere.Color = config.AtmosphereColor or originalAtmosphere.Color
-			customAtmosphere.Decay = config.AtmosphereDecay or originalAtmosphere.Decay
-		else
-			customAtmosphere.Density = originalAtmosphere.Density
-			customAtmosphere.Offset = originalAtmosphere.Offset
-			customAtmosphere.Haze = originalAtmosphere.Haze
-			customAtmosphere.Glare = originalAtmosphere.Glare
-			customAtmosphere.Color = originalAtmosphere.Color
-			customAtmosphere.Decay = originalAtmosphere.Decay
+		if appliedState.exposure ~= originalExposure then
+			appliedState.exposure = originalExposure
+			lightingService.ExposureCompensation = originalExposure
 		end
 
-		if config.SkyChanger then
-			self:ApplySkybox(config.SelectedSky)
-		else
-			self:ApplySkybox("default")
+		if appliedState.ccEnabled then
+			appliedState.ccEnabled = false
+			customColorCorrection.Enabled = false
 		end
-	else
-		if clouds then
-			clouds.Enabled = originalCloudsEnabled
-		end
-
-		for obj, state in pairs(originalSunRaysState) do
-			if obj and obj.Parent then
-				obj.Enabled = state
-			end
-		end
-
-		lightingService.Ambient = originalAmbient
-		lightingService.OutdoorAmbient = originalOutdoorAmbient
-		lightingService.FogColor = originalFogColor
-		lightingService.FogStart = originalFogStart
-		lightingService.FogEnd = originalFogEnd
-		lightingService.ClockTime = originalClockTime
-		lightingService.Brightness = originalBrightness
-		lightingService.ExposureCompensation = originalExposure
-
-		customColorCorrection.Enabled = false
-
-		customAtmosphere.Density = originalAtmosphere.Density
-		customAtmosphere.Offset = originalAtmosphere.Offset
-		customAtmosphere.Haze = originalAtmosphere.Haze
-		customAtmosphere.Glare = originalAtmosphere.Glare
-		customAtmosphere.Color = originalAtmosphere.Color
-		customAtmosphere.Decay = originalAtmosphere.Decay
 
 		self:ApplySkybox("default")
 	end
 end
 
-function WorldVisuals:GetConfig()
-	return self.Config
-end
-
+---Initialize module.
 function WorldVisuals:Load()
-	runService.RenderStepped:Connect(function()
-		if not self.Config.Enabled then return end
-
-		if self.Config.NoClouds then
-			local clouds = getTerrainClouds()
-			if clouds and clouds.Enabled then
-				clouds.Enabled = false
-			end
-		end
-
-		if self.Config.NoSunRays then
-			for _, obj in ipairs(lightingService:GetChildren()) do
-				if obj:IsA("SunRaysEffect") and obj.Enabled then
-					obj.Enabled = false
-				end
-			end
-		end
-
-		if self.Config.Ambient then
-			lightingService.Ambient = self.Config.AmbientColor
-		end
-		if self.Config.OutdoorAmbient then
-			lightingService.OutdoorAmbient = self.Config.OutdoorAmbientColor
-		end
-		if self.Config.Fog then
-			lightingService.FogColor = self.Config.FogColor
-			lightingService.FogStart = tonumber(self.Config.FogStart) or originalFogStart
-			lightingService.FogEnd = tonumber(self.Config.FogEnd) or originalFogEnd
-		end
-		if self.Config.TimeChanger then
-			lightingService.ClockTime = tonumber(self.Config.ClockTime) or originalClockTime
-		end
-		if self.Config.Brightness then
-			lightingService.Brightness = tonumber(self.Config.BrightnessValue) or originalBrightness
-		end
-		if self.Config.Exposure then
-			lightingService.ExposureCompensation = tonumber(self.Config.ExposureValue) or originalExposure
-		end
-	end)
+	self:Update()
 end
 
 return WorldVisuals
