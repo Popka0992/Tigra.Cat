@@ -1,4 +1,3 @@
-
 local cloneref = cloneref or function(o) return o end
 
 if not LPH_OBFUSCATED then
@@ -32,8 +31,8 @@ local PlayerRemovingConnection
 local InputBeganConnection
 local CurrentRunId = HttpService:GenerateGUID(false)
 
-if getgenv().123ESP_Unload then
-	pcall(getgenv().123ESP_Unload)
+if getgenv()["123ESP_Unload"] then
+	pcall(getgenv()["123ESP_Unload"])
 end
 
 local oldChams = UIContainer:FindFirstChild("123ESP_Chams")
@@ -90,7 +89,7 @@ local function EnsureRootInstances()
 		ScreenGui.IgnoreGuiInset = true
 		ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
 		ScreenGui.Parent = UIContainer
-		getgenv().123ESP_UI = ScreenGui
+		getgenv()["123ESP_UI"] = ScreenGui
 	end
 end
 
@@ -110,7 +109,7 @@ end)
 local ESPConfig = {
 	Enabled = false,
 	Keybind = { Enabled = false, Key = Enum.KeyCode.Insert },
-	Players = false,
+	Players = true,
 	LocalPlayer = false,
 	Bots = true,
 	BotTag = "[BOT] ",
@@ -191,7 +190,7 @@ local ESPConfig = {
 		TextSize = 12,
 		Color = Color3.fromRGB(255, 255, 255),
 		InventoryPath = "ReplicatedStorage.Players.%NAME%.Inventory",
-		UseToolFallback = false,
+		UseToolFallback = true,
 	},
 	Flags = {
 		Enabled = false,
@@ -1528,7 +1527,7 @@ function ESP:Unload()
 	end
 	if PlayerRemovingConnection then PlayerRemovingConnection:Disconnect(); PlayerRemovingConnection = nil end
 	if InputBeganConnection then InputBeganConnection:Disconnect(); InputBeganConnection = nil end
-	if getgenv().123ESP_Loop then getgenv().123ESP_Loop:Disconnect(); getgenv().123ESP_Loop = nil end
+	if getgenv()["123ESP_Loop"] then getgenv()["123ESP_Loop"]:Disconnect(); getgenv()["123ESP_Loop"] = nil end
 	if ScreenGui then ScreenGui:Destroy(); ScreenGui = nil end
 	if ChamsContainer then ChamsContainer:Destroy(); ChamsContainer = nil end
 	if MeshChamsFolder then MeshChamsFolder:Destroy(); MeshChamsFolder = nil end
@@ -1538,7 +1537,7 @@ function ESP:Unload()
 	for _, child in ipairs(Workspace:GetChildren()) do
 		if child:IsA("Model") then CleanupCharacterMeshChams(child) end
 	end
-	getgenv().123ESP_UI = nil
+	getgenv()["123ESP_UI"] = nil
 end
 
 function ESP:Load(config)
@@ -1563,12 +1562,12 @@ function ESP:Load(config)
 		end
 	end)
 
-	getgenv().123ESP_Loop = RunService.RenderStepped:Connect(RuntimeStep)
+	getgenv()["123ESP_Loop"] = RunService.RenderStepped:Connect(RuntimeStep)
 	ScanDirectories()
 	return self
 end
 
 function ESP:GetConfig() return ESPConfig end
-getgenv().123ESP_Unload = function() ESP:Unload() end
+getgenv()["123ESP_Unload"] = function() ESP:Unload() end
 
 return ESP
