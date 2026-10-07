@@ -1,3 +1,14 @@
+-- Check for table that is shared between executions.
+if not shared then
+	return warn("No shared, no script.")
+end
+
+-- Initialize Luraph globals if they do not exist.
+loadstring("getfenv().LPH_NO_VIRTUALIZE = function(...) return ... end")()
+getfenv().PP_SCRAMBLE_NUM = function(...) return ... end
+getfenv().PP_SCRAMBLE_STR = function(...) return ... end
+getfenv().PP_SCRAMBLE_RE_NUM = function(...) return ... end
+
 -- Services.
 local cloneref = cloneref or function(instance) return instance end
 local userInputService = cloneref(game:GetService("UserInputService"))
@@ -7,6 +18,36 @@ local coreGuiService = cloneref(game:GetService("CoreGui"))
 local workspaceService = cloneref(game:GetService("Workspace"))
 local httpService = cloneref(game:GetService("HttpService"))
 
+---@module Features.Visuals.ESP
+local ESP = {}
+local LPHNoVirtualize = LPH_NO_VIRTUALIZE
+
+-- Constants.
+local SKELETON_BONE_DEFS = {
+	{ "UpperTorso", "LowerTorso" }, { "Head", "UpperTorso" },
+	{ "UpperTorso", "LeftUpperArm" }, { "LeftUpperArm", "LeftLowerArm" }, { "LeftLowerArm", "LeftHand" },
+	{ "UpperTorso", "RightUpperArm" }, { "RightUpperArm", "RightLowerArm" }, { "RightLowerArm", "RightHand" },
+	{ "LowerTorso", "LeftUpperLeg" }, { "LeftUpperLeg", "LeftLowerLeg" }, { "LeftLowerLeg", "LeftFoot" },
+	{ "LowerTorso", "RightUpperLeg" }, { "RightUpperLeg", "RightLowerLeg" }, { "RightLowerLeg", "RightFoot" },
+}
+
+local FONT_MAP = {
+	["Proggy Clean"] = Enum.Font.SourceSans,
+	["Smallest Pixel-7"] = Enum.Font.SourceSans,
+	["Tahoma"] = Enum.Font.SourceSans,
+	["Minecraftia"] = Enum.Font.SourceSans,
+	["Tahoma Modern Bold"] = Enum.Font.SourceSansBold,
+}
+
+local FONTS_TO_DOWNLOAD = {
+	["Tahoma"] = "https://github.com/LuckyHub1/LuckyHub/raw/main/zekton_rg.ttf",
+	["Minecraftia"] = "https://github.com/LuckyHub1/LuckyHub/raw/refs/heads/main/Minecraftia.ttf",
+	["Smallest Pixel-7"] = "https://github.com/i77lhm/storage/raw/refs/heads/main/fonts/smallest_pixel-7.ttf",
+	["Proggy Clean"] = "https://github.com/i77lhm/storage/raw/refs/heads/main/fonts/ProggyClean.ttf",
+	["Tahoma Modern Bold"] = "https://github.com/i77lhm/storage/raw/refs/heads/main/fonts/Tahoma-Modern-Bold.ttf",
+}
+
+-- Baseline state.
 local localPlayer = playersService.LocalPlayer
 local currentCamera = workspaceService.CurrentCamera
 local uiContainer = (gethui and gethui()) or coreGuiService
@@ -15,11 +56,7 @@ if not pcall(function() return uiContainer.Name end) then
 	uiContainer = localPlayer:WaitForChild("PlayerGui")
 end
 
----@module Features.Visuals.ESP
-local ESP = {}
-local LPHNoVirtualize = LPH_NO_VIRTUALIZE or function(...) return ... end
-
--- Static raycast params to avoid frame allocations.
+-- Static Raycast optimization.
 local visRaycastParams = RaycastParams.new()
 visRaycastParams.FilterType = Enum.RaycastFilterType.Exclude
 visRaycastParams.IgnoreWater = true
@@ -270,21 +307,37 @@ end
 
 local defaultESPConfig = deepCopy(ESPConfig)
 
-local FONT_MAP = {
-	["Proggy Clean"] = Enum.Font.SourceSans,
-	["Smallest Pixel-7"] = Enum.Font.SourceSans,
-	["Tahoma"] = Enum.Font.SourceSans,
-	["Minecraftia"] = Enum.Font.SourceSans,
-	["Tahoma Modern Bold"] = Enum.Font.SourceSansBold,
-}
+-- Asynchronous font loader.
+task.spawn(function()
+	if not (writefile and isfile and getcustomasset) then return end
+	for name, link in pairs(FONTS_TO_DOWNLOAD) do
+		local fileName = name:gsub("%s+", "")
+		if not isfile(fileName .. ".ttf") then
+			local success, data = pcall(function() return game:HttpGet(link) end)
+			if success and data and #data > 0 then
+				writefile(fileName .. ".ttf", data)
+				local cfg = { name = fileName, faces = { { name = "Regular", weight = 400, style = "normal", assetId = getcustomasset(fileName .. ".ttf") } } }
+				writefile(fileName .. ".ttf.json", httpService:JSONEncode(cfg))
+			end
+		end
+		if isfile(fileName .. ".ttf.json") then
+			local ok, font = pcall(Font.new, getcustomasset(fileName .. ".ttf.json"), Enum.FontWeight.Regular)
+			if ok and font then loadedFonts[name] = font end
+		end
+	end
+end)
 
-local SKELETON_BONE_DEFS = {
-	{ "UpperTorso", "LowerTorso" }, { "Head", "UpperTorso" },
-	{ "UpperTorso", "LeftUpperArm" }, { "LeftUpperArm", "LeftLowerArm" }, { "LeftLowerArm", "LeftHand" },
-	{ "UpperTorso", "RightUpperArm" }, { "RightUpperArm", "RightLowerArm" }, { "RightLowerArm", "RightHand" },
-	{ "LowerTorso", "LeftUpperLeg" }, { "LeftUpperLeg", "LeftLowerLeg" }, { "LeftLowerLeg", "LeftFoot" },
-	{ "LowerTorso", "RightUpperLeg" }, { "RightUpperLeg", "RightLowerLeg" }, { "RightLowerLeg", "RightFoot" },
-}
+---Apply custom FontFace or fallback to system Font enum.
+---@param label TextLabel
+---@param fontName string
+local function applyLabelFont(label, fontName)
+	local custom = loadedFonts[fontName]
+	if custom then
+		label.FontFace = custom
+	else
+		label.Font = FONT_MAP[fontName] or Enum.Font.Code
+	end
+end
 
 local DrawLine = LPHNoVirtualize(function(line, p1, p2, thickness, color)
 	local diffX = p2.X - p1.X
@@ -414,7 +467,7 @@ local CreateESPObj = LPHNoVirtualize(function(name)
 	local function setupLabel(label)
 		label.BackgroundTransparency = 1
 		label.Size = UDim2.new(0, 100, 0, ESPConfig.TextSize)
-		label.Font = FONT_MAP[ESPConfig.Font] or Enum.Font.Code
+		applyLabelFont(label, ESPConfig.Font)
 		label.TextSize = ESPConfig.TextSize
 		label.TextColor3 = ESPConfig.TextColor
 		label.TextStrokeTransparency = 1
@@ -481,6 +534,7 @@ local CreateESPObj = LPHNoVirtualize(function(name)
 	local healthText = Instance.new("TextLabel")
 	setupLabel(healthText)
 	healthText.TextYAlignment = Enum.TextYAlignment.Center
+	healthText.Size = UDim2.new(0, 0, 0, 0)
 	healthText.ZIndex = 3
 	healthText.Visible = false
 	espObj.HealthText = healthText
@@ -489,7 +543,7 @@ local CreateESPObj = LPHNoVirtualize(function(name)
 		local flag = Instance.new("TextLabel")
 		setupLabel(flag)
 		flag.TextSize = ESPConfig.Flags.TextSize
-		flag.Font = FONT_MAP[ESPConfig.Flags.Font] or Enum.Font.Code
+		applyLabelFont(flag, ESPConfig.Flags.Font)
 		flag.Visible = false
 		espObj.FlagLabels[i] = flag
 	end
@@ -699,7 +753,7 @@ local UpdateESPObj = LPHNoVirtualize(function(espObj, position, size, name, dist
 		espObj.Text.Text = name
 		espObj.Text.TextSize = textSize
 		espObj.Text.TextColor3 = getCfg("TextColor")
-		espObj.Text.Font = FONT_MAP[getCfg("Font")] or Enum.Font.Code
+		applyLabelFont(espObj.Text, getCfg("Font"))
 		applyTextOutline(espObj.Text, textOutlineStyle, textOutlineColor)
 	end
 
@@ -798,6 +852,10 @@ local UpdateESPObj = LPHNoVirtualize(function(espObj, position, size, name, dist
 		espObj.DistanceText.Position = UDim2.new(0, px - 50, 0, currentBottomY)
 		local distVal = getCfg("Distance.Unit") == "Meters" and math.floor(distanceStuds / getCfg("Distance.StudsPerMeter")) or math.floor(distanceStuds)
 		espObj.DistanceText.Text = distVal .. getCfg("Distance.Ending")
+		espObj.DistanceText.TextColor3 = getCfg("Distance.Color")
+		espObj.DistanceText.TextSize = getCfg("Distance.TextSize") or textSize
+		applyLabelFont(espObj.DistanceText, getCfg("Distance.Font"))
+		applyTextOutline(espObj.DistanceText, getCfg("Distance.OutlineStyle") or textOutlineStyle, textOutlineColor)
 		currentBottomY = currentBottomY + (getCfg("Distance.TextSize") or textSize) + (getCfg("Weapon.Gap") or 0)
 	else
 		espObj.DistanceText.Visible = false
@@ -860,19 +918,17 @@ local UpdateESPObj = LPHNoVirtualize(function(espObj, position, size, name, dist
 			espObj.HealthText.Visible = true
 			espObj.HealthText.Text = tostring(math.floor(health))
 			espObj.HealthText.TextSize = getCfg("HealthBar.TextSize")
-			espObj.HealthText.Font = FONT_MAP[getCfg("HealthBar.Font")] or Enum.Font.Code
+			applyLabelFont(espObj.HealthText, getCfg("HealthBar.Font"))
 			espObj.HealthText.TextColor3 = followColorText and healthColor or getCfg("TextColor")
 			applyTextOutline(espObj.HealthText, getCfg("HealthBar.Outline.Style") or textOutlineStyle, textOutlineColor)
 
 			if isHorizontal then
 				local textY = espObj.HealthBarOutline.Position.Y.Offset
 				espObj.HealthText.TextXAlignment = Enum.TextXAlignment.Center
-				espObj.HealthText.Size = UDim2.new(0, 0, 0, 0)
 				espObj.HealthText.Position = UDim2.new(0, getCfg("HealthBar.TextFollowBar") and (x + math.floor((sx + 1) * healthPercent) - 1) or (x + sx), 0, textY + (hpWidth * 0.5) + 1)
 			else
 				local barOutlineX = espObj.HealthBarOutline.Position.X.Offset
 				espObj.HealthText.TextXAlignment = hpPos == "Left" and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left
-				espObj.HealthText.Size = UDim2.new(0, 0, 0, 0)
 				local targetY = getCfg("HealthBar.TextFollowBar") and (y + (sy + 1) - math.floor((sy + 1) * healthPercent)) or y
 				espObj.HealthText.Position = UDim2.new(0, hpPos == "Left" and (barOutlineX - 3) or (barOutlineX + hpWidth + 4), 0, targetY)
 			end
