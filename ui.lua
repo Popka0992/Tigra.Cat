@@ -1,4 +1,4 @@
--- made by samet september 14 2025
+-- made by samet september 14 2025 - dev
 -- example at bottom
 
 local LoadingTick = os.clock()
