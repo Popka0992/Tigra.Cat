@@ -89,7 +89,7 @@ local terrain = workspaceService:FindFirstChildOfClass("Terrain") or workspaceSe
 local cachedClouds = terrain and terrain:FindFirstChildOfClass("Clouds")
 local originalCloudsEnabled = cachedClouds and cachedClouds.Enabled or true
 
--- Cache sun rays without GetChildren allocations.
+-- Cache sun rays to eliminate :GetChildren() allocations.
 local cachedSunRays = {}
 for _, child in ipairs(lightingService:GetChildren()) do
 	if child:IsA("SunRaysEffect") then
@@ -107,6 +107,7 @@ lightingService.ChildRemoved:Connect(function(child)
 	cachedSunRays[child] = nil
 end)
 
+-- Setup visual post-processing instances.
 local customColorCorrection = lightingService:FindFirstChild("CustomColorCorrection")
 if not customColorCorrection then
 	customColorCorrection = Instance.new("ColorCorrectionEffect")
@@ -150,6 +151,7 @@ if not customSky then
 end
 
 local appliedSky = "default"
+local isHookInstalled = false
 
 WorldVisuals.Config = {
 	Enabled = false,
@@ -284,24 +286,67 @@ end
 function WorldVisuals:Load()
 	self:Update()
 
+	-- Intercept game scripts trying to overwrite lighting properties.
+	if not isHookInstalled then
+		isHookInstalled = true
+		local oldNewIndex
+		oldNewIndex = hookmetamethod(game, "__newindex", newcclosure(function(self, key, value)
+			if not checkcaller() and self == lightingService then
+				local config = WorldVisuals.Config
+				if config and config.Enabled then
+					if config.TimeChanger and (key == "ClockTime" or key == "TimeOfDay") then
+						return
+					end
+					if (config.Ambient or config.TimeChanger) and key == "Ambient" then
+						return
+					end
+					if (config.OutdoorAmbient or config.TimeChanger) and key == "OutdoorAmbient" then
+						return
+					end
+					if (config.Brightness or config.TimeChanger) and key == "Brightness" then
+						return
+					end
+					if config.Exposure and key == "ExposureCompensation" then
+						return
+					end
+					if config.Fog and (key == "FogColor" or key == "FogStart" or key == "FogEnd") then
+						return
+					end
+				end
+			end
+			return oldNewIndex(self, key, value)
+		end))
+	end
+
+	-- Enforce active state against tweens and render steps.
 	runService.RenderStepped:Connect(function()
-		local config = self.Config
+		local config = WorldVisuals.Config
 		if not config.Enabled then return end
-
-		-- Only re-assign when game's day/night scripts overwrite our target values.
-		if config.Ambient and lightingService.Ambient ~= config.AmbientColor then
-			lightingService.Ambient = config.AmbientColor
-		end
-
-		if config.OutdoorAmbient and lightingService.OutdoorAmbient ~= config.OutdoorAmbientColor then
-			lightingService.OutdoorAmbient = config.OutdoorAmbientColor
-		end
 
 		if config.TimeChanger then
 			local targetTime = tonumber(config.ClockTime) or originalClockTime
 			if lightingService.ClockTime ~= targetTime then
 				lightingService.ClockTime = targetTime
 			end
+
+			-- Counter night dimming when custom ambient is not active.
+			if not config.Ambient and lightingService.Ambient.R < 0.35 then
+				lightingService.Ambient = Color3.fromRGB(130, 130, 130)
+			end
+			if not config.OutdoorAmbient and lightingService.OutdoorAmbient.R < 0.35 then
+				lightingService.OutdoorAmbient = Color3.fromRGB(130, 130, 130)
+			end
+			if not config.Brightness and lightingService.Brightness < 1.5 then
+				lightingService.Brightness = 2
+			end
+		end
+
+		if config.Ambient and lightingService.Ambient ~= config.AmbientColor then
+			lightingService.Ambient = config.AmbientColor
+		end
+
+		if config.OutdoorAmbient and lightingService.OutdoorAmbient ~= config.OutdoorAmbientColor then
+			lightingService.OutdoorAmbient = config.OutdoorAmbientColor
 		end
 
 		if config.Brightness then
