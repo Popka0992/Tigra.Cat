@@ -5,7 +5,6 @@ end
 
 -- Initialize Luraph globals if they do not exist.
 loadstring("getfenv().LPH_NO_VIRTUALIZE = function(...) return ... end")()
-
 getfenv().PP_SCRAMBLE_NUM = function(...) return ... end
 getfenv().PP_SCRAMBLE_STR = function(...) return ... end
 getfenv().PP_SCRAMBLE_RE_NUM = function(...) return ... end
@@ -18,9 +17,9 @@ WorldVisuals.__index = WorldVisuals
 local cloneref = cloneref or function(instance) return instance end
 local lightingService = cloneref(game:GetService("Lighting"))
 local workspaceService = cloneref(game:GetService("Workspace"))
+local runService = cloneref(game:GetService("RunService"))
 
 -- Constants.
-local SKYBOX_PROPERTIES = { "SkyboxBk", "SkyboxDn", "SkyboxFt", "SkyboxLf", "SkyboxRt", "SkyboxUp", "SunTextureId", "MoonTextureId" }
 local SKYBOXES = {
 	["default"] = {},
 	["stormy"] = {
@@ -85,11 +84,12 @@ local originalClockTime = lightingService.ClockTime
 local originalBrightness = lightingService.Brightness
 local originalExposure = lightingService.ExposureCompensation
 
--- Instances caching.
+-- Cache terrain and clouds.
 local terrain = workspaceService:FindFirstChildOfClass("Terrain") or workspaceService.Terrain
 local cachedClouds = terrain and terrain:FindFirstChildOfClass("Clouds")
 local originalCloudsEnabled = cachedClouds and cachedClouds.Enabled or true
 
+-- Cache sun rays without GetChildren allocations.
 local cachedSunRays = {}
 for _, child in ipairs(lightingService:GetChildren()) do
 	if child:IsA("SunRaysEffect") then
@@ -149,24 +149,7 @@ if not customSky then
 	customSky.Parent = lightingService
 end
 
--- Shadow state to prevent redundant C++ bridge writes.
-local appliedState = {
-	ambient = originalAmbient,
-	outdoorAmbient = originalOutdoorAmbient,
-	fogColor = originalFogColor,
-	fogStart = originalFogStart,
-	fogEnd = originalFogEnd,
-	clockTime = originalClockTime,
-	brightness = originalBrightness,
-	exposure = originalExposure,
-	ccEnabled = false,
-	ccSaturation = 0,
-	ccContrast = 0,
-	ccTint = Color3.fromRGB(255, 255, 255),
-	sky = "default",
-	noClouds = false,
-	noSunRays = false
-}
+local appliedSky = "default"
 
 WorldVisuals.Config = {
 	Enabled = false,
@@ -201,11 +184,11 @@ WorldVisuals.Config = {
 	AtmosphereDecay = originalAtmosphere.Decay
 }
 
----Fast skybox application bypassing reflection overhead.
+---Apply skybox textures directly.
 ---@param name string
 function WorldVisuals:ApplySkybox(name)
-	if appliedState.sky == name then return end
-	appliedState.sky = name
+	if appliedSky == name then return end
+	appliedSky = name
 
 	local data = SKYBOXES[name] or SKYBOXES["default"]
 	customSky.SkyboxBk = data.SkyboxBk or ""
@@ -218,7 +201,7 @@ function WorldVisuals:ApplySkybox(name)
 	customSky.MoonTextureId = data.MoonTextureId or ""
 end
 
----Updates world visuals using fast change detection.
+---Updates static visual effects (Atmosphere, CC, Skybox).
 function WorldVisuals:Update()
 	local config = self.Config
 
@@ -227,160 +210,128 @@ function WorldVisuals:Update()
 	end
 
 	if config.Enabled then
-		-- Clouds optimization.
-		local targetClouds = not config.NoClouds
-		if cachedClouds and appliedState.noClouds ~= config.NoClouds then
-			appliedState.noClouds = config.NoClouds
-			cachedClouds.Enabled = targetClouds
+		if cachedClouds then
+			cachedClouds.Enabled = not config.NoClouds
 		end
 
-		-- SunRays optimization.
-		if appliedState.noSunRays ~= config.NoSunRays then
-			appliedState.noSunRays = config.NoSunRays
-			local enabled = not config.NoSunRays
-			for effect in pairs(cachedSunRays) do
-				effect.Enabled = enabled
-			end
+		for effect in pairs(cachedSunRays) do
+			effect.Enabled = not config.NoSunRays
 		end
 
-		-- Lighting properties with dirty checking.
-		local targetAmbient = config.Ambient and config.AmbientColor or originalAmbient
-		if appliedState.ambient ~= targetAmbient then
-			appliedState.ambient = targetAmbient
-			lightingService.Ambient = targetAmbient
-		end
-
-		local targetOutdoor = config.OutdoorAmbient and config.OutdoorAmbientColor or originalOutdoorAmbient
-		if appliedState.outdoorAmbient ~= targetOutdoor then
-			appliedState.outdoorAmbient = targetOutdoor
-			lightingService.OutdoorAmbient = targetOutdoor
-		end
-
-		local targetFogColor = config.Fog and config.FogColor or originalFogColor
-		if appliedState.fogColor ~= targetFogColor then
-			appliedState.fogColor = targetFogColor
-			lightingService.FogColor = targetFogColor
-		end
-
-		local targetFogStart = config.Fog and config.FogStart or originalFogStart
-		if appliedState.fogStart ~= targetFogStart then
-			appliedState.fogStart = targetFogStart
-			lightingService.FogStart = targetFogStart
-		end
-
-		local targetFogEnd = config.Fog and config.FogEnd or originalFogEnd
-		if appliedState.fogEnd ~= targetFogEnd then
-			appliedState.fogEnd = targetFogEnd
-			lightingService.FogEnd = targetFogEnd
-		end
-
-		local targetClockTime = config.TimeChanger and config.ClockTime or originalClockTime
-		if appliedState.clockTime ~= targetClockTime then
-			appliedState.clockTime = targetClockTime
-			lightingService.ClockTime = targetClockTime
-		end
-
-		local targetBrightness = config.Brightness and config.BrightnessValue or originalBrightness
-		if appliedState.brightness ~= targetBrightness then
-			appliedState.brightness = targetBrightness
-			lightingService.Brightness = targetBrightness
-		end
-
-		local targetExposure = config.Exposure and config.ExposureValue or originalExposure
-		if appliedState.exposure ~= targetExposure then
-			appliedState.exposure = targetExposure
-			lightingService.ExposureCompensation = targetExposure
-		end
-
-		-- Post-processing dirty checks.
-		if appliedState.ccEnabled ~= config.ColorCorrection then
-			appliedState.ccEnabled = config.ColorCorrection
-			customColorCorrection.Enabled = config.ColorCorrection
-		end
-
+		customColorCorrection.Enabled = config.ColorCorrection
 		if config.ColorCorrection then
-			if appliedState.ccSaturation ~= config.Saturation then
-				appliedState.ccSaturation = config.Saturation
-				customColorCorrection.Saturation = config.Saturation
-			end
-			if appliedState.ccContrast ~= config.Contrast then
-				appliedState.ccContrast = config.Contrast
-				customColorCorrection.Contrast = config.Contrast
-			end
-			if appliedState.ccTint ~= config.Tint then
-				appliedState.ccTint = config.Tint
-				customColorCorrection.TintColor = config.Tint
-			end
+			customColorCorrection.Saturation = tonumber(config.Saturation) or 0
+			customColorCorrection.Contrast = tonumber(config.Contrast) or 0
+			customColorCorrection.TintColor = config.Tint or Color3.fromRGB(255, 255, 255)
+		end
+
+		if config.Atmosphere then
+			customAtmosphere.Density = tonumber(config.AtmosphereDensity) or originalAtmosphere.Density
+			customAtmosphere.Offset = tonumber(config.AtmosphereOffset) or originalAtmosphere.Offset
+			customAtmosphere.Haze = tonumber(config.AtmosphereHaze) or originalAtmosphere.Haze
+			customAtmosphere.Glare = tonumber(config.AtmosphereGlare) or originalAtmosphere.Glare
+			customAtmosphere.Color = config.AtmosphereColor or originalAtmosphere.Color
+			customAtmosphere.Decay = config.AtmosphereDecay or originalAtmosphere.Decay
+		else
+			customAtmosphere.Density = originalAtmosphere.Density
+			customAtmosphere.Offset = originalAtmosphere.Offset
+			customAtmosphere.Haze = originalAtmosphere.Haze
+			customAtmosphere.Glare = originalAtmosphere.Glare
+			customAtmosphere.Color = originalAtmosphere.Color
+			customAtmosphere.Decay = originalAtmosphere.Decay
 		end
 
 		self:ApplySkybox(config.SkyChanger and config.SelectedSky or "default")
 	else
-		if cachedClouds and appliedState.noClouds then
-			appliedState.noClouds = false
+		if cachedClouds then
 			cachedClouds.Enabled = originalCloudsEnabled
 		end
 
-		if appliedState.noSunRays then
-			appliedState.noSunRays = false
-			for effect, state in pairs(cachedSunRays) do
-				if effect and effect.Parent then
-					effect.Enabled = state
-				end
+		for effect, state in pairs(cachedSunRays) do
+			if effect and effect.Parent then
+				effect.Enabled = state
 			end
 		end
 
-		if appliedState.ambient ~= originalAmbient then
-			appliedState.ambient = originalAmbient
-			lightingService.Ambient = originalAmbient
-		end
+		lightingService.Ambient = originalAmbient
+		lightingService.OutdoorAmbient = originalOutdoorAmbient
+		lightingService.FogColor = originalFogColor
+		lightingService.FogStart = originalFogStart
+		lightingService.FogEnd = originalFogEnd
+		lightingService.ClockTime = originalClockTime
+		lightingService.Brightness = originalBrightness
+		lightingService.ExposureCompensation = originalExposure
 
-		if appliedState.outdoorAmbient ~= originalOutdoorAmbient then
-			appliedState.outdoorAmbient = originalOutdoorAmbient
-			lightingService.OutdoorAmbient = originalOutdoorAmbient
-		end
-
-		if appliedState.fogColor ~= originalFogColor then
-			appliedState.fogColor = originalFogColor
-			lightingService.FogColor = originalFogColor
-		end
-
-		if appliedState.fogStart ~= originalFogStart then
-			appliedState.fogStart = originalFogStart
-			lightingService.FogStart = originalFogStart
-		end
-
-		if appliedState.fogEnd ~= originalFogEnd then
-			appliedState.fogEnd = originalFogEnd
-			lightingService.FogEnd = originalFogEnd
-		end
-
-		if appliedState.clockTime ~= originalClockTime then
-			appliedState.clockTime = originalClockTime
-			lightingService.ClockTime = originalClockTime
-		end
-
-		if appliedState.brightness ~= originalBrightness then
-			appliedState.brightness = originalBrightness
-			lightingService.Brightness = originalBrightness
-		end
-
-		if appliedState.exposure ~= originalExposure then
-			appliedState.exposure = originalExposure
-			lightingService.ExposureCompensation = originalExposure
-		end
-
-		if appliedState.ccEnabled then
-			appliedState.ccEnabled = false
-			customColorCorrection.Enabled = false
-		end
+		customColorCorrection.Enabled = false
+		customAtmosphere.Density = originalAtmosphere.Density
+		customAtmosphere.Offset = originalAtmosphere.Offset
+		customAtmosphere.Haze = originalAtmosphere.Haze
+		customAtmosphere.Glare = originalAtmosphere.Glare
+		customAtmosphere.Color = originalAtmosphere.Color
+		customAtmosphere.Decay = originalAtmosphere.Decay
 
 		self:ApplySkybox("default")
 	end
 end
 
----Initialize module.
+---Returns configuration table.
+---@return table
+function WorldVisuals:GetConfig()
+	return self.Config
+end
+
+---Starts frame-level property protection without performance drops.
 function WorldVisuals:Load()
 	self:Update()
+
+	runService.RenderStepped:Connect(function()
+		local config = self.Config
+		if not config.Enabled then return end
+
+		-- Only re-assign when game's day/night scripts overwrite our target values.
+		if config.Ambient and lightingService.Ambient ~= config.AmbientColor then
+			lightingService.Ambient = config.AmbientColor
+		end
+
+		if config.OutdoorAmbient and lightingService.OutdoorAmbient ~= config.OutdoorAmbientColor then
+			lightingService.OutdoorAmbient = config.OutdoorAmbientColor
+		end
+
+		if config.TimeChanger then
+			local targetTime = tonumber(config.ClockTime) or originalClockTime
+			if lightingService.ClockTime ~= targetTime then
+				lightingService.ClockTime = targetTime
+			end
+		end
+
+		if config.Brightness then
+			local targetBrightness = tonumber(config.BrightnessValue) or originalBrightness
+			if lightingService.Brightness ~= targetBrightness then
+				lightingService.Brightness = targetBrightness
+			end
+		end
+
+		if config.Exposure then
+			local targetExposure = tonumber(config.ExposureValue) or originalExposure
+			if lightingService.ExposureCompensation ~= targetExposure then
+				lightingService.ExposureCompensation = targetExposure
+			end
+		end
+
+		if config.Fog then
+			if lightingService.FogColor ~= config.FogColor then
+				lightingService.FogColor = config.FogColor
+			end
+			local targetStart = tonumber(config.FogStart) or originalFogStart
+			if lightingService.FogStart ~= targetStart then
+				lightingService.FogStart = targetStart
+			end
+			local targetEnd = tonumber(config.FogEnd) or originalFogEnd
+			if lightingService.FogEnd ~= targetEnd then
+				lightingService.FogEnd = targetEnd
+			end
+		end
+	end)
 end
 
 return WorldVisuals
