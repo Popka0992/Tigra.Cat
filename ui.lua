@@ -5084,7 +5084,7 @@ local Library do
     end
 
     Library.CreateSettingsPage = function(self, Window, KeybindList, Watermark)
-        local SettingsPage = Window:Page({Icon = "rbxassetid://97136055979291"})
+        local SettingsPage = Window:Page({Icon = "rbxassetid://101420508297304"})
         
         local MenuSubPage = SettingsPage:SubPage({Name = "Menu"})
         local ConfigsSubPage = SettingsPage:SubPage({Name = "Configs"})
