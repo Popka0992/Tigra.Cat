@@ -34,7 +34,15 @@ local CombatConfig = {
 	FOVColor = Color3.fromRGB(170, 85, 255),
 	FOVOutline = true,
 	Recoil = 100,
-	Spread = 100
+	Spread = 100,
+	Firerate = 1,
+	InstantEquip = false,
+	ShootSprinting = false,
+	ReloadSprinting = false,
+	InstantReload = false,
+	AutoReload = false,
+	FastBow = false,
+	InstantEoka = false
 }
 
 local circleOutline = Drawing.new("Circle")
@@ -146,14 +154,14 @@ local function getClosestTarget()
 	return closestPart
 end
 
----Patch weapon recoil and spread directly in game modules.
+---Apply Recoil, Spread, Firerate, Sprinting and Reload modifications.
 local function applyWeaponMods()
 	task.spawn(function()
 		local modules = replicatedStorage:WaitForChild("Modules", 10)
-		if not modules then return warn("[Combat] Modules folder not found") end
+		if not modules then return end
 
 		local client = modules:WaitForChild("Client", 10)
-		if not client then return warn("[Combat] Client folder not found") end
+		if not client then return end
 
 		local recoilScript = client:WaitForChild("Character", 5)
 			and client.Character:WaitForChild("Camera", 5)
@@ -169,6 +177,7 @@ local function applyWeaponMods()
 				local data = require(mod)
 				if typeof(data) ~= "table" then continue end
 
+				-- 1. No Recoil Hook
 				local fire = rawget(data, "Fire")
 				if typeof(fire) == "function" and debug.getupvalues and debug.setupvalue then
 					for idx, upv in pairs(debug.getupvalues(fire)) do
@@ -187,10 +196,119 @@ local function applyWeaponMods()
 							end)
 						end
 					end
+
+					-- 2. Firerate, Shoot While Sprinting, Fast Bow, Auto Reload
+					local origFire = fire
+					rawset(data, "Fire", function(...)
+						local rawParams = ...
+						if typeof(rawParams) == "table" then
+							local proxyParams = setmetatable({}, {
+								__index = function(_, key)
+									local val = rawParams[key]
+									if key == "RPM" and typeof(val) == "number" and CombatConfig.Firerate > 1 then
+										return val * CombatConfig.Firerate
+									end
+									if key == "Ready" and CombatConfig.FastBow then
+										return true
+									end
+									if key == "Viewmodel" and CombatConfig.ShootSprinting and typeof(val) == "table" then
+										return setmetatable({}, {
+											__index = function(_, vmKey)
+												if vmKey == "Sprinting" then
+													return false
+												end
+												return val[vmKey]
+											end,
+											__newindex = val
+										})
+									end
+									return val
+								end,
+								__newindex = rawParams
+							})
+
+							if CombatConfig.AutoReload and typeof(data.Reload) == "function" then
+								task.defer(data.Reload, rawParams)
+							end
+
+							return origFire(proxyParams)
+						end
+						return origFire(...)
+					end)
+				end
+
+				-- 3. Reload While Sprinting & Instant Reload
+				local reload = rawget(data, "Reload")
+				if typeof(reload) == "function" then
+					local origReload = reload
+					rawset(data, "Reload", function(...)
+						local rawParams = ...
+						if typeof(rawParams) == "table" then
+							local proxyParams = setmetatable({}, {
+								__index = function(_, key)
+									local val = rawParams[key]
+									if key == "Viewmodel" and typeof(val) == "table" then
+										return setmetatable({}, {
+											__index = function(_, vmKey)
+												if vmKey == "Sprinting" and CombatConfig.ReloadSprinting then
+													return false
+												end
+												if vmKey == "Play" and CombatConfig.InstantReload then
+													return function(vmSelf, animKey, ...)
+														task.defer(function()
+															pcall(function()
+																local animator = val.Animator
+																local loaded = animator and animator.LoadedAnimations
+																local track = loaded and loaded[animKey]
+																if track then
+																	local s1 = track:GetMarkerReachedSignal("FinishReload")
+																	local s2 = track:GetMarkerReachedSignal("InsertBullet")
+																	local s3 = track:GetMarkerReachedSignal("Insert")
+
+																	local chosen = (#getconnections(s1) > 0 and s1)
+																		or (#getconnections(s2) > 0 and s2)
+																		or (#getconnections(s3) > 0 and s3)
+
+																	if chosen then
+																		firesignal(chosen)
+																		rawset(rawParams, "Reloading", false)
+																	end
+																end
+															end)
+														end)
+														return val:Play(animKey, ...)
+													end
+												end
+												return val[vmKey]
+											end,
+											__newindex = val
+										})
+									end
+									return val
+								end,
+								__newindex = rawParams
+							})
+							return origReload(proxyParams)
+						end
+						return origReload(...)
+					end)
+				end
+
+				-- 4. Instant Eoka
+				local tryFire = rawget(data, "TryFire")
+				if typeof(tryFire) == "function" then
+					local origTryFire = tryFire
+					rawset(data, "TryFire", function(...)
+						if CombatConfig.InstantEoka then
+							return true
+						end
+						return origTryFire(...)
+					end)
 				end
 			end
 		end
 
+		-- 5. No Spread Hook
 		local physicsFolder = client:WaitForChild("Physics", 5)
 		local projFolder = physicsFolder and physicsFolder:WaitForChild("Projectile", 5)
 
