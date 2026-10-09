@@ -40,6 +40,7 @@ local CombatConfig = {
 	ShootSprinting = false,
 	ReloadSprinting = false,
 	InstantReload = false,
+	InstantHit = false,
 	AutoReload = false,
 	FastBow = false,
 	InstantEoka = false
@@ -179,22 +180,7 @@ local function applyWeaponMods()
 					local data = require(mod)
 					if typeof(data) ~= "table" then return end
 
-					-- 1. No Pullout Delay (Instant Equip)
-					local setup = rawget(data, "Setup")
-					if typeof(setup) == "function" and debug.info(setup, "s") ~= "[C]" then
-						local origSetupEnv = getfenv(setup)
-						local fakeTask = setmetatable({
-							delay = newcclosure(function(dTime, fn, ...)
-								if CombatConfig.InstantEquip then
-									return fn(...)
-								end
-								return task.delay(dTime, fn, ...)
-							end)
-						}, {__index = origSetupEnv.task or task})
-						setfenv(setup, setmetatable({task = fakeTask}, {__index = origSetupEnv}))
-					end
-
-					-- 2. Recoil Hook & Fire Hook
+					-- 1. No Recoil Hook
 					local fire = rawget(data, "Fire")
 					if typeof(fire) == "function" then
 						if debug.getupvalues and debug.setupvalue then
@@ -216,6 +202,7 @@ local function applyWeaponMods()
 							end
 						end
 
+						-- 2. Fire Modifications (RPM, Sprinting, AutoReload, FastBow)
 						local origFire = fire
 						local function modifiedFire(...)
 							local rawParams = ...
@@ -459,6 +446,43 @@ function Combat:Load()
 		if method == "Raycast" then
 			local origin, direction, params = ...
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
+				-- Instant Hit / Force Hit
+				if CombatConfig.InstantHit then
+					local isProjectileRay = false
+					if params and typeof(params) == "RaycastParams" then
+						local filter = params.FilterDescendantsInstances
+						local myChar = localPlayer.Character
+						if params.IgnoreWater or (filter and myChar and table.find(filter, myChar)) then
+							isProjectileRay = true
+						end
+					else
+						isProjectileRay = true
+					end
+
+					if isProjectileRay then
+						local fakeParams = RaycastParams.new()
+						fakeParams.FilterType = Enum.RaycastFilterType.Include
+						fakeParams.FilterDescendantsInstances = {hitpart}
+						fakeParams.IgnoreWater = true
+
+						isInternalRaycast = true
+						local forcedResult = workspaceService:Raycast(hitpos + Vector3.new(0, 1, 0), Vector3.new(0, -2, 0), fakeParams)
+						isInternalRaycast = false
+
+						if forcedResult then
+							return forcedResult
+						end
+
+						return {
+							Instance = hitpart,
+							Position = hitpos,
+							Normal = Vector3.new(0, 1, 0),
+							Material = hitpart.Material,
+							Distance = (origin - hitpos).Magnitude
+						}
+					end
+				end
+
 				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
 
 				if CombatConfig.Wallbang then
@@ -496,7 +520,7 @@ function Combat:Load()
 				local direction = ray.Direction
 				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
 
-				if CombatConfig.Wallbang then
+				if CombatConfig.Wallbang or CombatConfig.InstantHit then
 					return hitpart, hitpos, (origin - hitpos).Unit, hitpart.Material
 				end
 
