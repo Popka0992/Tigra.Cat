@@ -28,31 +28,6 @@ local MiscConfig = {
 	FlyTimerMode = "Pulse Ground"
 }
 
--- Anti-Kick Protection.
-local originalKick
-originalKick = hookfunction(localPlayer.Kick, newcclosure(function(player, ...)
-	if player == localPlayer then return end
-	return originalKick(player, ...)
-end))
-
-local oldNamecall
-oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-	local method = getnamecallmethod()
-
-	if self == localPlayer and (method == "Kick" or method == "kick") then
-		return
-	end
-
-	if method == "FireServer" and not checkcaller() then
-		local remoteName = self.Name:lower()
-		if remoteName:find("anticheat") or remoteName:find("detection") or remoteName:find("securitycheck") then
-			return
-		end
-	end
-
-	return oldNamecall(self, ...)
-end))
-
 function Misc:GetConfig()
 	return MiscConfig
 end
