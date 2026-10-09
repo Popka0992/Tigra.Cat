@@ -256,61 +256,58 @@ local function applyWeaponMods()
 						rawset(data, "Fire", modifiedFire)
 					end
 
-					-- 3. Reload Hook
-local reload = rawget(data, "Reload")
-if typeof(reload) == "function" then
-	local origReload = reload
-	local function modifiedReload(...)
-		local rawParams = ...
-		if typeof(rawParams) == "table" then
-			local proxyParams = setmetatable({}, {
-				__index = function(_, key)
-					local val = rawParams[key]
-					if key ~= "Viewmodel" then
-						return val
-					end
+					-- 3. Reload Hook (exact port of amongus-hook Fn38)
+					local reload = rawget(data, "Reload")
+					if typeof(reload) == "function" then
+						local origReload = reload
+						local function modifiedReload(...)
+							local params = ...
+							local proxyParams = setmetatable({}, {
+								__index = function(_, key)
+									local value = params[key]
+									if key ~= "Viewmodel" then
+										return value
+									end
 
-					local proxyVm = {}
-					if CombatConfig.ReloadSprinting then
-						proxyVm.Sprinting = false
-					end
+									local proxyVm = {}
+									if CombatConfig.ReloadSprinting then
+										proxyVm.Sprinting = false
+									end
 
-					if CombatConfig.InstantReload then
-						proxyVm.Play = function(_, animKey, ...)
-							local success, markerSignal = pcall(function()
-								local anim = val.Animator.LoadedAnimations[animKey]
-								local s1 = anim:GetMarkerReachedSignal("FinishReload")
-								local s2 = anim:GetMarkerReachedSignal("InsertBullet")
-								return (#getconnections(s1) > 0 and s1)
-									or (#getconnections(s2) > 0 and s2)
-									or anim:GetMarkerReachedSignal("Insert")
-							end)
+									if CombatConfig.InstantReload then
+										proxyVm.Play = function(_, animKey, ...)
+											local success, markerSignal = pcall(function()
+												local track = params.Viewmodel.Animator.LoadedAnimations[animKey]
+												local s1 = track:GetMarkerReachedSignal("FinishReload")
+												local s2 = track:GetMarkerReachedSignal("InsertBullet")
+												return (#getconnections(s1) > 0 and s1)
+													or (#getconnections(s2) > 0 and s2)
+													or track:GetMarkerReachedSignal("Insert")
+											end)
 
-							if success then
-								firesignal(markerSignal)
-								rawset(rawParams, "Reloading", false)
-								return
-							end
+											if success then
+												firesignal(markerSignal)
+												rawset(params, "Reloading", false)
+												return
+											end
 
-							return val:Play(animKey, ...)
+											return params.Viewmodel:Play(animKey, ...)
+										end
+									end
+
+									return setmetatable(proxyVm, {__index = value, __newindex = value})
+								end,
+								__newindex = params,
+								__metatable = ""
+							})
+							return origReload(proxyParams)
 						end
+
+						if setfenv and getfenv then
+							setfenv(modifiedReload, getfenv(origReload))
+						end
+						rawset(data, "Reload", modifiedReload)
 					end
-
-					return setmetatable(proxyVm, {__index = val, __newindex = val})
-				end,
-				__newindex = rawParams,
-				__metatable = ""
-			})
-			return origReload(proxyParams)
-		end
-		return origReload(...)
-	end
-
-	if setfenv and getfenv then
-		setfenv(modifiedReload, getfenv(origReload))
-	end
-	rawset(data, "Reload", modifiedReload)
-end
 
 					-- 4. Instant Eoka
 					local tryFire = rawget(data, "TryFire")
