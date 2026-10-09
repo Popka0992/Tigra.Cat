@@ -256,7 +256,7 @@ local function applyWeaponMods()
 						rawset(data, "Fire", modifiedFire)
 					end
 
-					-- 3. Reload Hook (Sprint Reload & Clean Single Instant Reload)
+					-- 3. Reload Hook (Clean Instant Reload & Reload While Sprinting)
 					local reload = rawget(data, "Reload")
 					if typeof(reload) == "function" then
 						local origReload = reload
@@ -288,14 +288,15 @@ local function applyWeaponMods()
 
 												if success and marker then
 													firesignal(marker)
-													if #getconnections(marker) > 0 and rawParams.Ammo and rawParams.Stats and rawParams.Stats.Ammo then
-														for _ = 1, 10 do
-															if rawParams.Ammo >= rawParams.Stats.Ammo then
-																break
-															end
-															firesignal(marker)
-														end
-													end
+													rawset(rawParams, "Reloading", false)
+													task.defer(function()
+														rawset(rawParams, "Reloading", false)
+													end)
+													return
+												end
+
+												local animName = tostring(animKey):lower()
+												if animName:find("reload") or animName:find("insert") then
 													rawset(rawParams, "Reloading", false)
 													return
 												end
