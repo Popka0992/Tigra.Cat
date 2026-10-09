@@ -276,25 +276,32 @@ local function applyWeaponMods()
 										end
 
 										if CombatConfig.InstantReload then
-											proxyVm.Play = function(_, animKey, ...)
-												local success, marker = pcall(function()
-													local anim = rawParams.Viewmodel.Animator.LoadedAnimations[animKey]
-													local s1 = anim:GetMarkerReachedSignal("FinishReload")
-													local s2 = anim:GetMarkerReachedSignal("InsertBullet")
-													local s3 = anim:GetMarkerReachedSignal("Insert")
+											proxyVm.Play = function(vmSelf, animKey, ...)
+												local track = val:Play(animKey, ...)
+												task.defer(function()
+													pcall(function()
+														local animator = val.Animator
+														local loaded = animator and animator.LoadedAnimations
+														local targetTrack = track or (loaded and loaded[animKey])
+														if targetTrack then
+															local s1 = targetTrack:GetMarkerReachedSignal("FinishReload")
+															local s2 = targetTrack:GetMarkerReachedSignal("InsertBullet")
+															local s3 = targetTrack:GetMarkerReachedSignal("Insert")
 
-													return (#getconnections(s1) > 0 and s1)
-														or (#getconnections(s2) > 0 and s2)
-														or (#getconnections(s3) > 0 and s3)
+															local chosen = (#getconnections(s1) > 0 and s1)
+																or (#getconnections(s2) > 0 and s2)
+																or (#getconnections(s3) > 0 and s3)
+																or s1
+
+															if chosen then
+																firesignal(chosen)
+															end
+															targetTrack:Stop(0)
+														end
+														rawset(rawParams, "Reloading", false)
+													end)
 												end)
-
-												if success and marker then
-													firesignal(marker)
-													rawset(rawParams, "Reloading", false)
-													return -- Прерываем вызов анимации: магазин пополнен, повторного круга не будет
-												end
-
-												return val:Play(animKey, ...)
+												return track
 											end
 										end
 
