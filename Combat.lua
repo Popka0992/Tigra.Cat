@@ -14,15 +14,12 @@ local currentCamera = workspaceService.CurrentCamera
 local Combat = {}
 Combat.__index = Combat
 
-local isInternalRaycast = false
 local targetPart = nil
 
 local CombatConfig = {
 	Enabled = false,
 	HitPart = "Head",
 	HitChance = 100,
-	Wallbang = false,
-	ProjectionOverride = false,
 	TargetPlayers = true,
 	TargetBots = true,
 	TeamCheck = false,
@@ -256,70 +253,69 @@ local function applyWeaponMods()
 						rawset(data, "Fire", modifiedFire)
 					end
 
-				-- 3. Reload While Sprinting & Instant Reload
-							
-local reload = rawget(data, "Reload")
-if typeof(reload) == "function" then
-	local origReload = reload
-	rawset(data, "Reload", function(...)
-		local rawParams = ...
-		if typeof(rawParams) == "table" then
-			local firedOnce = false
-			local proxyParams = setmetatable({}, {
-				__index = function(_, key)
-					local val = rawParams[key]
-					if key == "Viewmodel" and typeof(val) == "table" then
-						return setmetatable({}, {
-							__index = function(_, vmKey)
-								if vmKey == "Sprinting" and CombatConfig.ReloadSprinting then
-									return false
-								end
-								if vmKey == "Play" and CombatConfig.InstantReload then
-									return function(vmSelf, animKey, ...)
-										local track = val:Play(animKey, ...)
-										task.defer(function()
-											pcall(function()
-												local animator = val.Animator
-												local loaded = animator and animator.LoadedAnimations
-												local resolvedTrack = track or (loaded and loaded[animKey])
-												if resolvedTrack and not firedOnce then
-													local s1 = resolvedTrack:GetMarkerReachedSignal("FinishReload")
-													local s2 = resolvedTrack:GetMarkerReachedSignal("InsertBullet")
-													local s3 = resolvedTrack:GetMarkerReachedSignal("Insert")
-
-													local chosen = (#getconnections(s1) > 0 and s1)
-														or (#getconnections(s2) > 0 and s2)
-														or (#getconnections(s3) > 0 and s3)
-
-													if chosen then
-														firedOnce = true
-														firesignal(chosen)
-														rawset(rawParams, "Reloading", false)
-														pcall(function()
-															resolvedTrack:Stop(0)
-														end)
+					-- 3. Reload While Sprinting & Instant Reload
+					local reload = rawget(data, "Reload")
+					if typeof(reload) == "function" then
+						local origReload = reload
+						rawset(data, "Reload", function(...)
+							local rawParams = ...
+							if typeof(rawParams) == "table" then
+								local firedOnce = false
+								local proxyParams = setmetatable({}, {
+									__index = function(_, key)
+										local val = rawParams[key]
+										if key == "Viewmodel" and typeof(val) == "table" then
+											return setmetatable({}, {
+												__index = function(_, vmKey)
+													if vmKey == "Sprinting" and CombatConfig.ReloadSprinting then
+														return false
 													end
-												end
-											end)
-										end)
-										return track
-									end
-								end
-								return val[vmKey]
-							end,
-							__newindex = val
-						})
+													if vmKey == "Play" and CombatConfig.InstantReload then
+														return function(vmSelf, animKey, ...)
+															local track = val:Play(animKey, ...)
+															task.defer(function()
+																pcall(function()
+																	local animator = val.Animator
+																	local loaded = animator and animator.LoadedAnimations
+																	local resolvedTrack = track or (loaded and loaded[animKey])
+																	if resolvedTrack and not firedOnce then
+																		local s1 = resolvedTrack:GetMarkerReachedSignal("FinishReload")
+																		local s2 = resolvedTrack:GetMarkerReachedSignal("InsertBullet")
+																		local s3 = resolvedTrack:GetMarkerReachedSignal("Insert")
+
+																		local chosen = (#getconnections(s1) > 0 and s1)
+																			or (#getconnections(s2) > 0 and s2)
+																			or (#getconnections(s3) > 0 and s3)
+
+																		if chosen then
+																			firedOnce = true
+																			firesignal(chosen)
+																			rawset(rawParams, "Reloading", false)
+																			pcall(function()
+																				resolvedTrack:Stop(0)
+																			end)
+																		end
+																	end
+																end)
+															end)
+															return track
+														end
+													end
+													return val[vmKey]
+												end,
+												__newindex = val
+											})
+										end
+										return val
+									end,
+									__newindex = rawParams
+								})
+								return origReload(proxyParams)
+							end
+							return origReload(...)
+						end)
 					end
-					return val
-				end,
-				__newindex = rawParams
-			})
-			return origReload(proxyParams)
-		end
-		return origReload(...)
-	end)
-end
-					
+
 					-- 4. Instant Eoka
 					local tryFire = rawget(data, "TryFire")
 					if typeof(tryFire) == "function" and debug.info(tryFire, "s") ~= "[C]" then
@@ -432,7 +428,7 @@ function Combat:Load()
 
 	local oldNamecall
 	oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-		if isInternalRaycast or checkcaller() or not CombatConfig.Enabled then
+		if checkcaller() or not CombatConfig.Enabled then
 			return oldNamecall(self, ...)
 		end
 
@@ -458,23 +454,7 @@ function Combat:Load()
 		if method == "Raycast" then
 			local origin, direction, params = ...
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
-
-				if CombatConfig.Wallbang then
-					local fakeParams = RaycastParams.new()
-					fakeParams.FilterType = Enum.RaycastFilterType.Include
-					fakeParams.FilterDescendantsInstances = {hitpart}
-					fakeParams.IgnoreWater = true
-
-					isInternalRaycast = true
-					local forcedResult = workspaceService:Raycast(hitpos + Vector3.new(0, 2, 0), Vector3.new(0, -5, 0), fakeParams)
-					isInternalRaycast = false
-
-					if forcedResult then
-						return forcedResult
-					end
-				end
-
+				local newDir = (hitpos - origin).Unit * direction.Magnitude
 				return oldNamecall(self, origin, newDir, params)
 			end
 		end
@@ -483,7 +463,7 @@ function Combat:Load()
 			local ray = oldNamecall(self, ...)
 			local origin = ray.Origin
 			local direction = ray.Direction
-			local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
+			local newDir = (hitpos - origin).Unit * direction.Magnitude
 
 			return Ray.new(origin, newDir)
 		end
@@ -493,11 +473,7 @@ function Combat:Load()
 			if typeof(ray) == "Ray" then
 				local origin = ray.Origin
 				local direction = ray.Direction
-				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
-
-				if CombatConfig.Wallbang then
-					return hitpart, hitpos, (origin - hitpos).Unit, hitpart.Material
-				end
+				local newDir = (hitpos - origin).Unit * direction.Magnitude
 
 				return oldNamecall(self, Ray.new(origin, newDir), ignoreList, terrainCellsAreCubes, ignoreWater)
 			end
