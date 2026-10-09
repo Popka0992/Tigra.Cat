@@ -154,7 +154,7 @@ local function getClosestTarget()
 	return closestPart
 end
 
----Apply Recoil, Spread, Firerate, Sprinting and Reload modifications.
+---Patch weapon parameters in game modules.
 local function applyWeaponMods()
 	task.spawn(function()
 		local modules = replicatedStorage:WaitForChild("Modules", 10)
@@ -177,7 +177,7 @@ local function applyWeaponMods()
 				local data = require(mod)
 				if typeof(data) ~= "table" then continue end
 
-				-- 1. No Recoil Hook
+				-- Recoil modifier
 				local fire = rawget(data, "Fire")
 				if typeof(fire) == "function" and debug.getupvalues and debug.setupvalue then
 					for idx, upv in pairs(debug.getupvalues(fire)) do
@@ -197,7 +197,7 @@ local function applyWeaponMods()
 						end
 					end
 
-					-- 2. Firerate, Shoot While Sprinting, Fast Bow, Auto Reload
+					-- Firerate, Shoot While Sprinting, Fast Bow, Auto Reload
 					local origFire = fire
 					rawset(data, "Fire", function(...)
 						local rawParams = ...
@@ -237,7 +237,7 @@ local function applyWeaponMods()
 					end)
 				end
 
-				-- 3. Reload While Sprinting & Instant Reload
+				-- Reload While Sprinting & Single-Trigger Instant Reload
 				local reload = rawget(data, "Reload")
 				if typeof(reload) == "function" then
 					local origReload = reload
@@ -255,28 +255,30 @@ local function applyWeaponMods()
 												end
 												if vmKey == "Play" and CombatConfig.InstantReload then
 													return function(vmSelf, animKey, ...)
+														local track = val:Play(animKey, ...)
 														task.defer(function()
 															pcall(function()
-																local animator = val.Animator
-																local loaded = animator and animator.LoadedAnimations
-																local track = loaded and loaded[animKey]
-																if track then
-																	local s1 = track:GetMarkerReachedSignal("FinishReload")
-																	local s2 = track:GetMarkerReachedSignal("InsertBullet")
-																	local s3 = track:GetMarkerReachedSignal("Insert")
+																local loaded = val.Animator and val.Animator.LoadedAnimations
+																local targetTrack = track or (loaded and loaded[animKey])
+																if targetTrack then
+																	local s1 = targetTrack:GetMarkerReachedSignal("FinishReload")
+																	local s2 = targetTrack:GetMarkerReachedSignal("InsertBullet")
+																	local s3 = targetTrack:GetMarkerReachedSignal("Insert")
 
-																	local chosen = (#getconnections(s1) > 0 and s1)
+																	local marker = (#getconnections(s1) > 0 and s1)
 																		or (#getconnections(s2) > 0 and s2)
 																		or (#getconnections(s3) > 0 and s3)
+																		or s1
 
-																	if chosen then
-																		firesignal(chosen)
-																		rawset(rawParams, "Reloading", false)
+																	if marker then
+																		firesignal(marker)
 																	end
+																	targetTrack:Stop()
 																end
+																rawset(rawParams, "Reloading", false)
 															end)
 														end)
-														return val:Play(animKey, ...)
+														return track
 													end
 												end
 												return val[vmKey]
@@ -294,7 +296,7 @@ local function applyWeaponMods()
 					end)
 				end
 
-				-- 4. Instant Eoka
+				-- Instant Eoka
 				local tryFire = rawget(data, "TryFire")
 				if typeof(tryFire) == "function" then
 					local origTryFire = tryFire
@@ -308,7 +310,7 @@ local function applyWeaponMods()
 			end
 		end
 
-		-- 5. No Spread Hook
+		-- Spread modifier
 		local physicsFolder = client:WaitForChild("Physics", 5)
 		local projFolder = physicsFolder and physicsFolder:WaitForChild("Projectile", 5)
 
@@ -322,31 +324,35 @@ local function applyWeaponMods()
 					for idx, upv in pairs(debug.getupvalues(projFn)) do
 						if typeof(upv) == "function" and debug.info(upv, "n") == "GetSpreadDirection" then
 							local origSpread = upv
+							local spreadEnv = getfenv(origSpread)
 
-							debug.setupvalue(projFn, idx, function(...)
+							local fakeMath = setmetatable({
+								random = newcclosure(function(...)
+									local mult = (CombatConfig.Spread or 0) / 100
+									local res = math.random(...)
+									if typeof(res) == "number" then
+										return res * mult
+									end
+									return res
+								end)
+							}, {__index = spreadEnv.math or math})
+
+							setfenv(origSpread, setmetatable({math = fakeMath}, {__index = spreadEnv}))
+
+							local customSpread = function(...)
+								local first = ...
 								if CombatConfig.Spread <= 0 then
-									local args = {...}
-									local origin = args[1]
-									local target = args[2]
-									if typeof(origin) == "Vector3" and typeof(target) == "Vector3" then
-										return (target - origin).Unit
+									if typeof(first) == "Vector3" then
+										return first.Unit
+									elseif typeof(first) == "CFrame" then
+										return first.LookVector
 									end
 								end
+								return origSpread(...)
+							end
 
-								local calculatedDir = origSpread(...)
-								if CombatConfig.Spread < 100 and typeof(calculatedDir) == "Vector3" then
-									local args = {...}
-									local origin = args[1]
-									local target = args[2]
-									if typeof(origin) == "Vector3" and typeof(target) == "Vector3" then
-										local perfectDir = (target - origin).Unit
-										local mult = CombatConfig.Spread / 100
-										return (perfectDir + (calculatedDir - perfectDir) * mult).Unit
-									end
-								end
-
-								return calculatedDir
-							end)
+							setfenv(customSpread, getfenv(origSpread))
+							debug.setupvalue(projFn, idx, customSpread)
 							break
 						end
 					end
