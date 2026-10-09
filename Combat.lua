@@ -256,7 +256,7 @@ local function applyWeaponMods()
 						rawset(data, "Fire", modifiedFire)
 					end
 
-					-- 3. Reload Hook (Sprint Reload & Clean Single Instant Reload)
+					-- 3. Reload Hook (amongus-hook logic)
 					local reload = rawget(data, "Reload")
 					if typeof(reload) == "function" then
 						local origReload = reload
@@ -266,7 +266,7 @@ local function applyWeaponMods()
 								local proxyParams = setmetatable({}, {
 									__index = function(_, key)
 										local val = rawParams[key]
-										if key ~= "Viewmodel" or typeof(val) ~= "table" then
+										if key ~= "Viewmodel" then
 											return val
 										end
 
@@ -276,32 +276,19 @@ local function applyWeaponMods()
 										end
 
 										if CombatConfig.InstantReload then
-											proxyVm.Play = function(vmSelf, animKey, ...)
-												local track = val:Play(animKey, ...)
-												task.defer(function()
-													pcall(function()
-														local animator = val.Animator
-														local loaded = animator and animator.LoadedAnimations
-														local targetTrack = track or (loaded and loaded[animKey])
-														if targetTrack then
-															local s1 = targetTrack:GetMarkerReachedSignal("FinishReload")
-															local s2 = targetTrack:GetMarkerReachedSignal("InsertBullet")
-															local s3 = targetTrack:GetMarkerReachedSignal("Insert")
-
-															local chosen = (#getconnections(s1) > 0 and s1)
-																or (#getconnections(s2) > 0 and s2)
-																or (#getconnections(s3) > 0 and s3)
-																or s1
-
-															if chosen then
-																firesignal(chosen)
-															end
-															targetTrack:Stop(0)
-														end
-														rawset(rawParams, "Reloading", false)
-													end)
+											proxyVm.Play = function(_, animKey, ...)
+												local success, marker = pcall(function()
+													local anim = rawParams.Viewmodel.Animator.LoadedAnimations[animKey]
+													local s1 = anim:GetMarkerReachedSignal("FinishReload")
+													local s2 = anim:GetMarkerReachedSignal("InsertBullet")
+													return #getconnections(s1) > 0 and s1 or #getconnections(s2) > 0 and s2 or anim:GetMarkerReachedSignal("Insert")
 												end)
-												return track
+												if success then
+													firesignal(marker)
+													rawset(rawParams, "Reloading", false)
+													return
+												end
+												return rawParams.Viewmodel:Play(animKey, ...)
 											end
 										end
 
@@ -340,7 +327,7 @@ local function applyWeaponMods()
 			end
 		end
 
-		-- 5. No Spread Hook (native amongus-hook implementation)
+		-- 5. No Spread Hook
 		local physicsFolder = client:FindFirstChild("Physics")
 		local projFolder = physicsFolder and physicsFolder:FindFirstChild("Projectile")
 
