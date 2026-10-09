@@ -266,7 +266,7 @@ local function applyWeaponMods()
 								local proxyParams = setmetatable({}, {
 									__index = function(_, key)
 										local val = rawParams[key]
-										if key ~= "Viewmodel" then
+										if key ~= "Viewmodel" or typeof(val) ~= "table" then
 											return val
 										end
 
@@ -289,10 +289,19 @@ local function applyWeaponMods()
 												if success and marker then
 													firesignal(marker)
 													rawset(rawParams, "Reloading", false)
+													task.defer(function()
+														rawset(rawParams, "Reloading", false)
+													end)
 													return
 												end
 
-												return rawParams.Viewmodel:Play(animKey, ...)
+												local animName = tostring(animKey):lower()
+												if animName:find("reload") or animName:find("insert") then
+													rawset(rawParams, "Reloading", false)
+													return
+												end
+
+												return val:Play(animKey, ...)
 											end
 										end
 
