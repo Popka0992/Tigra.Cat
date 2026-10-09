@@ -256,63 +256,70 @@ local function applyWeaponMods()
 						rawset(data, "Fire", modifiedFire)
 					end
 
-					-- 3. Reload While Sprinting & Instant Reload
-					local reload = rawget(data, "Reload")
-					if typeof(reload) == "function" then
-						local origReload = reload
-						rawset(data, "Reload", function(...)
-							local rawParams = ...
-							if typeof(rawParams) == "table" then
-								local proxyParams = setmetatable({}, {
-									__index = function(_, key)
-										local val = rawParams[key]
-										if key == "Viewmodel" and typeof(val) == "table" then
-											return setmetatable({}, {
-												__index = function(_, vmKey)
-													if vmKey == "Sprinting" and CombatConfig.ReloadSprinting then
-														return false
-													end
-													if vmKey == "Play" and CombatConfig.InstantReload then
-														return function(vmSelf, animKey, ...)
-															task.defer(function()
-																pcall(function()
-																	local animator = val.Animator
-																	local loaded = animator and animator.LoadedAnimations
-																	local track = loaded and loaded[animKey]
-																	if track then
-																		local s1 = track:GetMarkerReachedSignal("FinishReload")
-																		local s2 = track:GetMarkerReachedSignal("InsertBullet")
-																		local s3 = track:GetMarkerReachedSignal("Insert")
+				-- 3. Reload While Sprinting & Instant Reload
+							
+local reload = rawget(data, "Reload")
+if typeof(reload) == "function" then
+	local origReload = reload
+	rawset(data, "Reload", function(...)
+		local rawParams = ...
+		if typeof(rawParams) == "table" then
+			local firedOnce = false
+			local proxyParams = setmetatable({}, {
+				__index = function(_, key)
+					local val = rawParams[key]
+					if key == "Viewmodel" and typeof(val) == "table" then
+						return setmetatable({}, {
+							__index = function(_, vmKey)
+								if vmKey == "Sprinting" and CombatConfig.ReloadSprinting then
+									return false
+								end
+								if vmKey == "Play" and CombatConfig.InstantReload then
+									return function(vmSelf, animKey, ...)
+										local track = val:Play(animKey, ...)
+										task.defer(function()
+											pcall(function()
+												local animator = val.Animator
+												local loaded = animator and animator.LoadedAnimations
+												local resolvedTrack = track or (loaded and loaded[animKey])
+												if resolvedTrack and not firedOnce then
+													local s1 = resolvedTrack:GetMarkerReachedSignal("FinishReload")
+													local s2 = resolvedTrack:GetMarkerReachedSignal("InsertBullet")
+													local s3 = resolvedTrack:GetMarkerReachedSignal("Insert")
 
-																		local chosen = (#getconnections(s1) > 0 and s1)
-																			or (#getconnections(s2) > 0 and s2)
-																			or (#getconnections(s3) > 0 and s3)
+													local chosen = (#getconnections(s1) > 0 and s1)
+														or (#getconnections(s2) > 0 and s2)
+														or (#getconnections(s3) > 0 and s3)
 
-																		if chosen then
-																			firesignal(chosen)
-																			rawset(rawParams, "Reloading", false)
-																		end
-																	end
-																end)
-															end)
-															return val:Play(animKey, ...)
-														end
+													if chosen then
+														firedOnce = true
+														firesignal(chosen)
+														rawset(rawParams, "Reloading", false)
+														pcall(function()
+															resolvedTrack:Stop(0)
+														end)
 													end
-													return val[vmKey]
-												end,
-												__newindex = val
-											})
-										end
-										return val
-									end,
-									__newindex = rawParams
-								})
-								return origReload(proxyParams)
-							end
-							return origReload(...)
-						end)
+												end
+											end)
+										end)
+										return track
+									end
+								end
+								return val[vmKey]
+							end,
+							__newindex = val
+						})
 					end
-
+					return val
+				end,
+				__newindex = rawParams
+			})
+			return origReload(proxyParams)
+		end
+		return origReload(...)
+	end)
+end
+					
 					-- 4. Instant Eoka
 					local tryFire = rawget(data, "TryFire")
 					if typeof(tryFire) == "function" and debug.info(tryFire, "s") ~= "[C]" then
