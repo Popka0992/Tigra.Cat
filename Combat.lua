@@ -218,36 +218,42 @@ local function applyWeaponMods()
 
 						local origFire = fire
 						local function modifiedFire(...)
-							local rawParams = ...
-							if typeof(rawParams) == "table" then
-								local proxyParams = setmetatable({}, {
-									__index = function(_, key)
-										local val = rawParams[key]
-										if key == "RPM" and typeof(val) == "number" then
-											if CombatConfig.Firerate > 1 then
-												return val / CombatConfig.Firerate
+							local args = {...}
+							for i = 1, select("#", ...) do
+								local rawParams = args[i]
+								if typeof(rawParams) == "table" then
+									args[i] = setmetatable({}, {
+										__index = function(_, key)
+											local val = rawParams[key]
+											if (key == "RPM" or key == "FireRate" or key == "Firerate" or key == "Cooldown") and typeof(val) == "number" then
+												if CombatConfig.Firerate > 1 then
+													if val > 10 then
+														return val * CombatConfig.Firerate
+													else
+														return val / CombatConfig.Firerate
+													end
+												end
+												return val
+											end
+											if key == "Ready" and CombatConfig.FastBow then
+												return true
+											end
+											if key == "Viewmodel" and CombatConfig.ShootSprinting and typeof(val) == "table" then
+												return setmetatable({Sprinting = false}, {__index = val, __newindex = val})
 											end
 											return val
-										end
-										if key == "Ready" and CombatConfig.FastBow then
-											return true
-										end
-										if key == "Viewmodel" and CombatConfig.ShootSprinting and typeof(val) == "table" then
-											return setmetatable({Sprinting = false}, {__index = val, __newindex = val})
-										end
-										return val
-									end,
-									__newindex = rawParams,
-									__metatable = ""
-								})
+										end,
+										__newindex = rawParams,
+										__metatable = ""
+									})
 
-								if CombatConfig.AutoReload and typeof(data.Reload) == "function" then
-									task.delay(0, data.Reload, rawParams)
+									if CombatConfig.AutoReload and typeof(data.Reload) == "function" then
+										task.delay(0, data.Reload, rawParams)
+									end
 								end
-
-								return origFire(proxyParams)
 							end
-							return origFire(...)
+
+							return origFire(unpack(args))
 						end
 
 						if setfenv and getfenv then
@@ -256,63 +262,90 @@ local function applyWeaponMods()
 						rawset(data, "Fire", modifiedFire)
 					end
 
-					-- 3. Reload Hook (Clean Instant Reload & Reload While Sprinting)
+					-- 3. Reload Hook
 					local reload = rawget(data, "Reload")
 					if typeof(reload) == "function" then
 						local origReload = reload
 						local function modifiedReload(...)
-							local rawParams = ...
-							if typeof(rawParams) == "table" then
-								local proxyParams = setmetatable({}, {
-									__index = function(_, key)
-										local val = rawParams[key]
-										if key ~= "Viewmodel" or typeof(val) ~= "table" then
-											return val
-										end
-
-										local proxyVm = {}
-										if CombatConfig.ReloadSprinting then
-											proxyVm.Sprinting = false
-										end
-
-										if CombatConfig.InstantReload then
-											proxyVm.Play = function(_, animKey, ...)
-												local success, marker = pcall(function()
-													local anim = rawParams.Viewmodel.Animator.LoadedAnimations[animKey]
-													local s1 = anim:GetMarkerReachedSignal("FinishReload")
-													local s2 = anim:GetMarkerReachedSignal("InsertBullet")
-													return (#getconnections(s1) > 0 and s1)
-														or (#getconnections(s2) > 0 and s2)
-														or anim:GetMarkerReachedSignal("Insert")
-												end)
-
-												if success and marker then
-													firesignal(marker)
-													rawset(rawParams, "Reloading", false)
-													task.defer(function()
-														rawset(rawParams, "Reloading", false)
-													end)
-													return
-												end
-
-												local animName = tostring(animKey):lower()
-												if animName:find("reload") or animName:find("insert") then
-													rawset(rawParams, "Reloading", false)
-													return
-												end
-
-												return val:Play(animKey, ...)
+							local args = {...}
+							for i = 1, select("#", ...) do
+								local rawParams = args[i]
+								if typeof(rawParams) == "table" then
+									args[i] = setmetatable({}, {
+										__index = function(_, key)
+											local val = rawParams[key]
+											if key ~= "Viewmodel" then
+												return val
 											end
-										end
 
-										return setmetatable(proxyVm, {__index = val, __newindex = val})
-									end,
-									__newindex = rawParams,
-									__metatable = ""
-								})
-								return origReload(proxyParams)
+											local proxyVm = {}
+											if CombatConfig.ReloadSprinting then
+												proxyVm.Sprinting = false
+											end
+
+											if CombatConfig.InstantReload then
+												proxyVm.Play = function(vmSelf, animKey, ...)
+													local animTrack = nil
+													if typeof(val.Play) == "function" then
+														animTrack = val:Play(animKey, ...)
+													end
+
+													local anim = animTrack
+													if not anim and rawParams.Viewmodel and rawParams.Viewmodel.Animator and rawParams.Viewmodel.Animator.LoadedAnimations then
+														anim = rawParams.Viewmodel.Animator.LoadedAnimations[animKey]
+													end
+
+													if anim then
+														pcall(function()
+															local s1 = anim:GetMarkerReachedSignal("FinishReload")
+															local s2 = anim:GetMarkerReachedSignal("InsertBullet")
+															local s3 = anim:GetMarkerReachedSignal("Insert")
+															local marker = (#getconnections(s1) > 0 and s1)
+																or (#getconnections(s2) > 0 and s2)
+																or (#getconnections(s3) > 0 and s3)
+																or s1
+
+															if marker then
+																firesignal(marker)
+															end
+														end)
+
+														pcall(function()
+															if anim.Stop then
+																anim:Stop(0)
+															end
+														end)
+													end
+
+													rawset(rawParams, "Reloading", false)
+
+													pcall(function()
+														local char = localPlayer.Character
+														local hum = char and char:FindFirstChildOfClass("Humanoid")
+														local animator = hum and hum:FindFirstChildOfClass("Animator")
+														if animator then
+															for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+																local name = tostring(track.Name):lower()
+																if name:find("reload") or name:find("insert") then
+																	track:Stop(0)
+																end
+															end
+														end
+													end)
+
+													return animTrack
+												end
+											end
+
+											return setmetatable(proxyVm, {__index = val, __newindex = val})
+										end,
+										__newindex = rawParams,
+										__metatable = ""
+									})
+								end
 							end
-							return origReload(...)
+
+							return origReload(unpack(args))
 						end
 
 						if setfenv and getfenv then
