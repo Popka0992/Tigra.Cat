@@ -40,7 +40,6 @@ local CombatConfig = {
 	ShootSprinting = false,
 	ReloadSprinting = false,
 	InstantReload = false,
-	InstantHit = false,
 	AutoReload = false,
 	FastBow = false,
 	InstantEoka = false
@@ -180,7 +179,22 @@ local function applyWeaponMods()
 					local data = require(mod)
 					if typeof(data) ~= "table" then return end
 
-					-- 1. No Recoil Hook
+					-- 1. No Pullout Delay (Instant Equip)
+					local setup = rawget(data, "Setup")
+					if typeof(setup) == "function" and debug.info(setup, "s") ~= "[C]" then
+						local origSetupEnv = getfenv(setup)
+						local fakeTask = setmetatable({
+							delay = newcclosure(function(dTime, fn, ...)
+								if CombatConfig.InstantEquip then
+									return fn(...)
+								end
+								return task.delay(dTime, fn, ...)
+							end)
+						}, {__index = origSetupEnv.task or task})
+						setfenv(setup, setmetatable({task = fakeTask}, {__index = origSetupEnv}))
+					end
+
+					-- 2. Recoil Hook & Fire Hook
 					local fire = rawget(data, "Fire")
 					if typeof(fire) == "function" then
 						if debug.getupvalues and debug.setupvalue then
@@ -202,7 +216,6 @@ local function applyWeaponMods()
 							end
 						end
 
-						-- 2. Fire Modifications (RPM, Sprinting, AutoReload, FastBow)
 						local origFire = fire
 						local function modifiedFire(...)
 							local rawParams = ...
@@ -243,7 +256,7 @@ local function applyWeaponMods()
 						rawset(data, "Fire", modifiedFire)
 					end
 
-					-- 3. Reload Hook (Sprint Reload & Single-Trigger Instant Reload)
+					-- 3. Reload Hook (Sprint Reload & Clean Single Instant Reload)
 					local reload = rawget(data, "Reload")
 					if typeof(reload) == "function" then
 						local origReload = reload
@@ -264,31 +277,31 @@ local function applyWeaponMods()
 
 										if CombatConfig.InstantReload then
 											proxyVm.Play = function(vmSelf, animKey, ...)
+												local track = val:Play(animKey, ...)
 												task.defer(function()
 													pcall(function()
 														local animator = val.Animator
 														local loaded = animator and animator.LoadedAnimations
-														local track = loaded and loaded[animKey]
-														if track then
-															local s1 = track:GetMarkerReachedSignal("FinishReload")
-															local s2 = track:GetMarkerReachedSignal("InsertBullet")
-															local s3 = track:GetMarkerReachedSignal("Insert")
+														local targetTrack = track or (loaded and loaded[animKey])
+														if targetTrack then
+															local s1 = targetTrack:GetMarkerReachedSignal("FinishReload")
+															local s2 = targetTrack:GetMarkerReachedSignal("InsertBullet")
+															local s3 = targetTrack:GetMarkerReachedSignal("Insert")
 
 															local chosen = (#getconnections(s1) > 0 and s1)
 																or (#getconnections(s2) > 0 and s2)
 																or (#getconnections(s3) > 0 and s3)
+																or s1
 
 															if chosen then
 																firesignal(chosen)
-																rawset(rawParams, "Reloading", false)
-																for _, conn in ipairs(getconnections(chosen)) do
-																	conn:Disconnect()
-																end
 															end
+															targetTrack:Stop(0)
 														end
+														rawset(rawParams, "Reloading", false)
 													end)
 												end)
-												return val:Play(animKey, ...)
+												return track
 											end
 										end
 
@@ -448,7 +461,7 @@ function Combat:Load()
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
 				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
 
-				if CombatConfig.InstantHit or CombatConfig.Wallbang then
+				if CombatConfig.Wallbang then
 					local fakeParams = RaycastParams.new()
 					fakeParams.FilterType = Enum.RaycastFilterType.Include
 					fakeParams.FilterDescendantsInstances = {hitpart}
@@ -483,7 +496,7 @@ function Combat:Load()
 				local direction = ray.Direction
 				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
 
-				if CombatConfig.Wallbang or CombatConfig.InstantHit then
+				if CombatConfig.Wallbang then
 					return hitpart, hitpos, (origin - hitpos).Unit, hitpart.Material
 				end
 
