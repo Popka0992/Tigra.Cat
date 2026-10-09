@@ -256,7 +256,7 @@ local function applyWeaponMods()
 						rawset(data, "Fire", modifiedFire)
 					end
 
-					-- 3. Reload Hook (Clean Instant Reload & Reload While Sprinting)
+					-- 3. Reload Hook (Sprint Reload & Clean Single Instant Reload)
 					local reload = rawget(data, "Reload")
 					if typeof(reload) == "function" then
 						local origReload = reload
@@ -276,32 +276,32 @@ local function applyWeaponMods()
 										end
 
 										if CombatConfig.InstantReload then
-											proxyVm.Play = function(_, animKey, ...)
-												local success, marker = pcall(function()
-													local anim = rawParams.Viewmodel.Animator.LoadedAnimations[animKey]
-													local s1 = anim:GetMarkerReachedSignal("FinishReload")
-													local s2 = anim:GetMarkerReachedSignal("InsertBullet")
-													return (#getconnections(s1) > 0 and s1)
-														or (#getconnections(s2) > 0 and s2)
-														or anim:GetMarkerReachedSignal("Insert")
-												end)
+											proxyVm.Play = function(vmSelf, animKey, ...)
+												local track = val:Play(animKey, ...)
+												task.defer(function()
+													pcall(function()
+														local animator = val.Animator
+														local loaded = animator and animator.LoadedAnimations
+														local targetTrack = track or (loaded and loaded[animKey])
+														if targetTrack then
+															local s1 = targetTrack:GetMarkerReachedSignal("FinishReload")
+															local s2 = targetTrack:GetMarkerReachedSignal("InsertBullet")
+															local s3 = targetTrack:GetMarkerReachedSignal("Insert")
 
-												if success and marker then
-													firesignal(marker)
-													rawset(rawParams, "Reloading", false)
-													task.defer(function()
+															local chosen = (#getconnections(s1) > 0 and s1)
+																or (#getconnections(s2) > 0 and s2)
+																or (#getconnections(s3) > 0 and s3)
+																or s1
+
+															if chosen then
+																firesignal(chosen)
+															end
+															targetTrack:Stop(0)
+														end
 														rawset(rawParams, "Reloading", false)
 													end)
-													return
-												end
-
-												local animName = tostring(animKey):lower()
-												if animName:find("reload") or animName:find("insert") then
-													rawset(rawParams, "Reloading", false)
-													return
-												end
-
-												return val:Play(animKey, ...)
+												end)
+												return track
 											end
 										end
 
