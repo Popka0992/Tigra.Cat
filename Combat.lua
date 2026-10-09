@@ -146,23 +146,22 @@ local function getClosestTarget()
 	return closestPart
 end
 
----Apply Recoil and Spread modifiers.
+---Patch weapon recoil and spread directly in game modules.
 local function applyWeaponMods()
-	pcall(function()
-		local modules = replicatedStorage:WaitForChild("Modules", 5)
-		if not modules then return end
+	task.spawn(function()
+		local modules = replicatedStorage:WaitForChild("Modules", 10)
+		if not modules then return warn("[Combat] Modules folder not found") end
 
-		local client = modules:WaitForChild("Client", 5)
-		if not client then return end
+		local client = modules:WaitForChild("Client", 10)
+		if not client then return warn("[Combat] Client folder not found") end
 
-		local recoilScript = client:FindFirstChild("Character")
-			and client.Character:FindFirstChild("Camera")
-			and client.Character.Camera:FindFirstChild("Recoil")
+		local recoilScript = client:WaitForChild("Character", 5)
+			and client.Character:WaitForChild("Camera", 5)
+			and client.Character.Camera:WaitForChild("Recoil", 5)
 		local recoilModule = recoilScript and require(recoilScript)
 
-		local viewmodelFolder = client:FindFirstChild("Tools")
-			and client.Tools:FindFirstChild("Tool")
-			and client.Tools.Tool:FindFirstChild("Viewmodel")
+		local toolsFolder = client:WaitForChild("Tools", 5)
+		local viewmodelFolder = toolsFolder and toolsFolder:WaitForChild("Tool", 5) and toolsFolder.Tool:WaitForChild("Viewmodel", 5)
 
 		if viewmodelFolder and recoilModule then
 			for _, mod in ipairs(viewmodelFolder:GetChildren()) do
@@ -173,7 +172,11 @@ local function applyWeaponMods()
 				local fire = rawget(data, "Fire")
 				if typeof(fire) == "function" and debug.getupvalues and debug.setupvalue then
 					for idx, upv in pairs(debug.getupvalues(fire)) do
-						if typeof(upv) == "function" and debug.info(upv, "s"):find("Recoil") then
+						local upvType = typeof(upv)
+						local isRecoil = (upvType == "function" and debug.info(upv, "s"):find("Recoil"))
+							or (upvType == "Instance" and upv.Name == "Recoil")
+
+						if isRecoil then
 							debug.setupvalue(fire, idx, function(arg1, arg2, arg3, factor)
 								local origFactor = factor
 								if typeof(factor) == "number" then
@@ -188,7 +191,9 @@ local function applyWeaponMods()
 			end
 		end
 
-		local projFolder = client:FindFirstChild("Physics") and client.Physics:FindFirstChild("Projectile")
+		local physicsFolder = client:WaitForChild("Physics", 5)
+		local projFolder = physicsFolder and physicsFolder:WaitForChild("Projectile", 5)
+
 		if projFolder then
 			for _, mod in ipairs(projFolder:GetChildren()) do
 				if not mod:IsA("ModuleScript") then continue end
@@ -199,13 +204,31 @@ local function applyWeaponMods()
 					for idx, upv in pairs(debug.getupvalues(projFn)) do
 						if typeof(upv) == "function" and debug.info(upv, "n") == "GetSpreadDirection" then
 							local origSpread = upv
-							local spreadEnv = getfenv(origSpread)
-							local fakeMath = setmetatable({
-								random = newcclosure(function(...)
-									return math.random(...) * (CombatConfig.Spread / 100)
-								end)
-							}, {__index = spreadEnv.math})
-							setfenv(origSpread, setmetatable({math = fakeMath}, {__index = spreadEnv}))
+
+							debug.setupvalue(projFn, idx, function(...)
+								if CombatConfig.Spread <= 0 then
+									local args = {...}
+									local origin = args[1]
+									local target = args[2]
+									if typeof(origin) == "Vector3" and typeof(target) == "Vector3" then
+										return (target - origin).Unit
+									end
+								end
+
+								local calculatedDir = origSpread(...)
+								if CombatConfig.Spread < 100 and typeof(calculatedDir) == "Vector3" then
+									local args = {...}
+									local origin = args[1]
+									local target = args[2]
+									if typeof(origin) == "Vector3" and typeof(target) == "Vector3" then
+										local perfectDir = (target - origin).Unit
+										local mult = CombatConfig.Spread / 100
+										return (perfectDir + (calculatedDir - perfectDir) * mult).Unit
+									end
+								end
+
+								return calculatedDir
+							end)
 							break
 						end
 					end
