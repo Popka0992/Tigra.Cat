@@ -216,7 +216,6 @@ local function applyWeaponMods()
 							end
 						end
 
-						-- 2. Fire Modifications (RPM, Sprinting, AutoReload, FastBow)
 						local origFire = fire
 						local function modifiedFire(...)
 							local rawParams = ...
@@ -257,7 +256,7 @@ local function applyWeaponMods()
 						rawset(data, "Fire", modifiedFire)
 					end
 
-					-- 3. Reload Hook (Sprint Reload & Instant Reload)
+					-- 3. Reload Hook (Sprint Reload & Clean Single Instant Reload)
 					local reload = rawget(data, "Reload")
 					if typeof(reload) == "function" then
 						local origReload = reload
@@ -277,22 +276,26 @@ local function applyWeaponMods()
 										end
 
 										if CombatConfig.InstantReload then
-											proxyVm.Play = function(vmSelf, animKey, ...)
+											proxyVm.Play = function(_, animKey, ...)
 												local success, marker = pcall(function()
-													local anim = val.Animator and val.Animator.LoadedAnimations and val.Animator.LoadedAnimations[animKey]
-													if not anim then return nil end
+													local anim = rawParams.Viewmodel.Animator.LoadedAnimations[animKey]
 													local s1 = anim:GetMarkerReachedSignal("FinishReload")
 													local s2 = anim:GetMarkerReachedSignal("InsertBullet")
-													local s3 = anim:GetMarkerReachedSignal("Insert")
-
 													return (#getconnections(s1) > 0 and s1)
 														or (#getconnections(s2) > 0 and s2)
-														or (#getconnections(s3) > 0 and s3)
-														or s1
+														or anim:GetMarkerReachedSignal("Insert")
 												end)
 
 												if success and marker then
 													firesignal(marker)
+													if #getconnections(marker) > 0 and rawParams.Ammo and rawParams.Stats and rawParams.Stats.Ammo then
+														for _ = 1, 10 do
+															if rawParams.Ammo >= rawParams.Stats.Ammo then
+																break
+															end
+															firesignal(marker)
+														end
+													end
 													rawset(rawParams, "Reloading", false)
 													return
 												end
