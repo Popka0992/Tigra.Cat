@@ -163,13 +163,14 @@ local function applyWeaponMods()
 		local client = modules:WaitForChild("Client", 10)
 		if not client then return end
 
-		local recoilScript = client:FindFirstChild("Character")
-			and client.Character:FindFirstChild("Camera")
-			and client.Character.Camera:FindFirstChild("Recoil")
+		local characterFolder = client:WaitForChild("Character", 10)
+		local cameraFolder = characterFolder and characterFolder:WaitForChild("Camera", 10)
+		local recoilScript = cameraFolder and cameraFolder:WaitForChild("Recoil", 10)
 		local recoilModule = recoilScript and require(recoilScript)
 
-		local toolsFolder = client:FindFirstChild("Tools")
-		local viewmodelFolder = toolsFolder and toolsFolder:FindFirstChild("Tool") and toolsFolder.Tool:FindFirstChild("Viewmodel")
+		local toolsFolder = client:WaitForChild("Tools", 10)
+		local toolFolder = toolsFolder and toolsFolder:WaitForChild("Tool", 10)
+		local viewmodelFolder = toolFolder and toolFolder:WaitForChild("Viewmodel", 10)
 
 		if viewmodelFolder and recoilModule then
 			for _, mod in ipairs(viewmodelFolder:GetChildren()) do
@@ -256,7 +257,7 @@ local function applyWeaponMods()
 						rawset(data, "Fire", modifiedFire)
 					end
 
-					-- 3. Reload Hook (Clean Instant Reload & Reload While Sprinting)
+					-- 3. Reload Hook (Ported exactly from working reference)
 					local reload = rawget(data, "Reload")
 					if typeof(reload) == "function" then
 						local origReload = reload
@@ -266,7 +267,7 @@ local function applyWeaponMods()
 								local proxyParams = setmetatable({}, {
 									__index = function(_, key)
 										local val = rawParams[key]
-										if key ~= "Viewmodel" or typeof(val) ~= "table" then
+										if key ~= "Viewmodel" then
 											return val
 										end
 
@@ -277,7 +278,7 @@ local function applyWeaponMods()
 
 										if CombatConfig.InstantReload then
 											proxyVm.Play = function(_, animKey, ...)
-												local success, marker = pcall(function()
+												local success, markerSignal = pcall(function()
 													local anim = rawParams.Viewmodel.Animator.LoadedAnimations[animKey]
 													local s1 = anim:GetMarkerReachedSignal("FinishReload")
 													local s2 = anim:GetMarkerReachedSignal("InsertBullet")
@@ -286,22 +287,13 @@ local function applyWeaponMods()
 														or anim:GetMarkerReachedSignal("Insert")
 												end)
 
-												if success and marker then
-													firesignal(marker)
-													rawset(rawParams, "Reloading", false)
-													task.defer(function()
-														rawset(rawParams, "Reloading", false)
-													end)
-													return
-												end
-
-												local animName = tostring(animKey):lower()
-												if animName:find("reload") or animName:find("insert") then
+												if success and markerSignal then
+													firesignal(markerSignal)
 													rawset(rawParams, "Reloading", false)
 													return
 												end
 
-												return val:Play(animKey, ...)
+												return rawParams.Viewmodel:Play(animKey, ...)
 											end
 										end
 
@@ -340,7 +332,7 @@ local function applyWeaponMods()
 			end
 		end
 
-		-- 5. No Spread Hook (native amongus-hook implementation)
+		-- 5. No Spread Hook
 		local physicsFolder = client:FindFirstChild("Physics")
 		local projFolder = physicsFolder and physicsFolder:FindFirstChild("Projectile")
 
