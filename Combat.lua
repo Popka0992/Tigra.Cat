@@ -154,7 +154,7 @@ local function getClosestTarget()
 	return closestPart
 end
 
----Patch weapon recoil, spread, reload and viewmodel handlers.
+---Patch weapon recoil, spread, firerate, reload and viewmodels.
 local function applyWeaponMods()
 	task.spawn(function()
 		local modules = replicatedStorage:WaitForChild("Modules", 10)
@@ -179,23 +179,43 @@ local function applyWeaponMods()
 					local data = require(mod)
 					if typeof(data) ~= "table" then return end
 
-					-- 1. Recoil Hook (strictly function upvalues)
+					-- 1. No Pullout Delay (Instant Equip)
+					local setup = rawget(data, "Setup")
+					if typeof(setup) == "function" and debug.info(setup, "s") ~= "[C]" then
+						local origSetupEnv = getfenv(setup)
+						local fakeTask = setmetatable({
+							delay = newcclosure(function(dTime, fn, ...)
+								if CombatConfig.InstantEquip then
+									return fn(...)
+								end
+								return task.delay(dTime, fn, ...)
+							end)
+						}, {__index = origSetupEnv.task or task})
+						setfenv(setup, setmetatable({task = fakeTask}, {__index = origSetupEnv}))
+					end
+
+					-- 2. Recoil Hook & Fire Hook
 					local fire = rawget(data, "Fire")
-					if typeof(fire) == "function" and debug.getupvalues and debug.setupvalue then
-						for idx, upv in pairs(debug.getupvalues(fire)) do
-							if typeof(upv) == "function" and debug.info(upv, "s"):find("Recoil") then
-								debug.setupvalue(fire, idx, function(arg1, arg2, arg3, factor)
-									local origFactor = factor
-									if typeof(factor) == "number" then
-										factor = factor * (CombatConfig.Recoil / 100)
-									end
-									local r1, r2 = recoilModule()(arg1, arg2, arg3, factor)
-									return r1, r2, origFactor
-								end)
+					if typeof(fire) == "function" then
+						if debug.getupvalues and debug.setupvalue then
+							for idx, upv in pairs(debug.getupvalues(fire)) do
+								local upvType = typeof(upv)
+								local isRecoil = (upvType == "function" and debug.info(upv, "s"):find("Recoil"))
+									or (upvType == "Instance" and upv.Name == "Recoil")
+
+								if isRecoil then
+									debug.setupvalue(fire, idx, function(arg1, arg2, arg3, factor)
+										local origFactor = factor
+										if typeof(factor) == "number" then
+											factor = factor * (CombatConfig.Recoil / 100)
+										end
+										local r1, r2 = recoilModule()(arg1, arg2, arg3, factor)
+										return r1, r2, origFactor
+									end)
+								end
 							end
 						end
 
-						-- 2. Fire Modifications (RPM, Sprinting, AutoReload, FastBow)
 						local origFire = fire
 						local function modifiedFire(...)
 							local rawParams = ...
@@ -203,8 +223,11 @@ local function applyWeaponMods()
 								local proxyParams = setmetatable({}, {
 									__index = function(_, key)
 										local val = rawParams[key]
-										if key == "RPM" and typeof(val) == "number" and CombatConfig.Firerate > 1 then
-											return val / CombatConfig.Firerate
+										if key == "RPM" and typeof(val) == "number" then
+											if CombatConfig.Firerate > 1 then
+												return val / CombatConfig.Firerate
+											end
+											return val
 										end
 										if key == "Ready" and CombatConfig.FastBow then
 											return true
@@ -214,7 +237,8 @@ local function applyWeaponMods()
 										end
 										return val
 									end,
-									__newindex = rawParams
+									__newindex = rawParams,
+									__metatable = ""
 								})
 
 								if CombatConfig.AutoReload and typeof(data.Reload) == "function" then
@@ -232,7 +256,7 @@ local function applyWeaponMods()
 						rawset(data, "Fire", modifiedFire)
 					end
 
-					-- 3. Reload Hook (Reload while sprinting & Instant Reload without double-play)
+					-- 3. Reload Hook (Sprint Reload & Clean Single Instant Reload)
 					local reload = rawget(data, "Reload")
 					if typeof(reload) == "function" then
 						local origReload = reload
@@ -267,7 +291,7 @@ local function applyWeaponMods()
 												if success and marker then
 													firesignal(marker)
 													rawset(rawParams, "Reloading", false)
-													return -- Прерываем вызов, предотвращая повторное естественное срабатывание
+													return -- Прерываем вызов анимации: магазин пополнен, повторного круга не будет
 												end
 
 												return val:Play(animKey, ...)
@@ -276,7 +300,8 @@ local function applyWeaponMods()
 
 										return setmetatable(proxyVm, {__index = val, __newindex = val})
 									end,
-									__newindex = rawParams
+									__newindex = rawParams,
+									__metatable = ""
 								})
 								return origReload(proxyParams)
 							end
@@ -308,7 +333,7 @@ local function applyWeaponMods()
 			end
 		end
 
-		-- 5. No Spread Hook (native amongus.hook method)
+		-- 5. No Spread Hook (native amongus-hook implementation)
 		local physicsFolder = client:FindFirstChild("Physics")
 		local projFolder = physicsFolder and physicsFolder:FindFirstChild("Projectile")
 
