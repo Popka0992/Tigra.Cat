@@ -154,7 +154,7 @@ local function getClosestTarget()
 	return closestPart
 end
 
----Patch weapon parameters in game modules.
+---Patch weapon recoil, spread, reload and viewmodel handlers.
 local function applyWeaponMods()
 	task.spawn(function()
 		local modules = replicatedStorage:WaitForChild("Modules", 10)
@@ -163,200 +163,181 @@ local function applyWeaponMods()
 		local client = modules:WaitForChild("Client", 10)
 		if not client then return end
 
-		local recoilScript = client:WaitForChild("Character", 5)
-			and client.Character:WaitForChild("Camera", 5)
-			and client.Character.Camera:WaitForChild("Recoil", 5)
+		local recoilScript = client:FindFirstChild("Character")
+			and client.Character:FindFirstChild("Camera")
+			and client.Character.Camera:FindFirstChild("Recoil")
 		local recoilModule = recoilScript and require(recoilScript)
 
-		local toolsFolder = client:WaitForChild("Tools", 5)
-		local viewmodelFolder = toolsFolder and toolsFolder:WaitForChild("Tool", 5) and toolsFolder.Tool:WaitForChild("Viewmodel", 5)
+		local toolsFolder = client:FindFirstChild("Tools")
+		local viewmodelFolder = toolsFolder and toolsFolder:FindFirstChild("Tool") and toolsFolder.Tool:FindFirstChild("Viewmodel")
 
 		if viewmodelFolder and recoilModule then
 			for _, mod in ipairs(viewmodelFolder:GetChildren()) do
 				if not mod:IsA("ModuleScript") then continue end
-				local data = require(mod)
-				if typeof(data) ~= "table" then continue end
 
-				-- Recoil modifier
-				local fire = rawget(data, "Fire")
-				if typeof(fire) == "function" and debug.getupvalues and debug.setupvalue then
-					for idx, upv in pairs(debug.getupvalues(fire)) do
-						local upvType = typeof(upv)
-						local isRecoil = (upvType == "function" and debug.info(upv, "s"):find("Recoil"))
-							or (upvType == "Instance" and upv.Name == "Recoil")
+				pcall(function()
+					local data = require(mod)
+					if typeof(data) ~= "table" then return end
 
-						if isRecoil then
-							debug.setupvalue(fire, idx, function(arg1, arg2, arg3, factor)
-								local origFactor = factor
-								if typeof(factor) == "number" then
-									factor = factor * (CombatConfig.Recoil / 100)
-								end
-								local r1, r2 = recoilModule()(arg1, arg2, arg3, factor)
-								return r1, r2, origFactor
-							end)
+					-- 1. Recoil Hook (strictly function upvalues)
+					local fire = rawget(data, "Fire")
+					if typeof(fire) == "function" and debug.getupvalues and debug.setupvalue then
+						for idx, upv in pairs(debug.getupvalues(fire)) do
+							if typeof(upv) == "function" and debug.info(upv, "s"):find("Recoil") then
+								debug.setupvalue(fire, idx, function(arg1, arg2, arg3, factor)
+									local origFactor = factor
+									if typeof(factor) == "number" then
+										factor = factor * (CombatConfig.Recoil / 100)
+									end
+									local r1, r2 = recoilModule()(arg1, arg2, arg3, factor)
+									return r1, r2, origFactor
+								end)
+							end
 						end
+
+						-- 2. Fire Modifications (RPM, Sprinting, AutoReload, FastBow)
+						local origFire = fire
+						local function modifiedFire(...)
+							local rawParams = ...
+							if typeof(rawParams) == "table" then
+								local proxyParams = setmetatable({}, {
+									__index = function(_, key)
+										local val = rawParams[key]
+										if key == "RPM" and typeof(val) == "number" and CombatConfig.Firerate > 1 then
+											return val / CombatConfig.Firerate
+										end
+										if key == "Ready" and CombatConfig.FastBow then
+											return true
+										end
+										if key == "Viewmodel" and CombatConfig.ShootSprinting and typeof(val) == "table" then
+											return setmetatable({Sprinting = false}, {__index = val, __newindex = val})
+										end
+										return val
+									end,
+									__newindex = rawParams
+								})
+
+								if CombatConfig.AutoReload and typeof(data.Reload) == "function" then
+									task.delay(0, data.Reload, rawParams)
+								end
+
+								return origFire(proxyParams)
+							end
+							return origFire(...)
+						end
+
+						if setfenv and getfenv then
+							setfenv(modifiedFire, getfenv(origFire))
+						end
+						rawset(data, "Fire", modifiedFire)
 					end
 
-					-- Firerate, Shoot While Sprinting, Fast Bow, Auto Reload
-					local origFire = fire
-					rawset(data, "Fire", function(...)
-						local rawParams = ...
-						if typeof(rawParams) == "table" then
-							local proxyParams = setmetatable({}, {
-								__index = function(_, key)
-									local val = rawParams[key]
-									if key == "RPM" and typeof(val) == "number" and CombatConfig.Firerate > 1 then
-										return val * CombatConfig.Firerate
-									end
-									if key == "Ready" and CombatConfig.FastBow then
-										return true
-									end
-									if key == "Viewmodel" and CombatConfig.ShootSprinting and typeof(val) == "table" then
-										return setmetatable({}, {
-											__index = function(_, vmKey)
-												if vmKey == "Sprinting" then
-													return false
-												end
-												return val[vmKey]
-											end,
-											__newindex = val
-										})
-									end
-									return val
-								end,
-								__newindex = rawParams
-							})
+					-- 3. Reload Hook (Reload while sprinting & Instant Reload without double-play)
+					local reload = rawget(data, "Reload")
+					if typeof(reload) == "function" then
+						local origReload = reload
+						local function modifiedReload(...)
+							local rawParams = ...
+							if typeof(rawParams) == "table" then
+								local proxyParams = setmetatable({}, {
+									__index = function(_, key)
+										local val = rawParams[key]
+										if key ~= "Viewmodel" or typeof(val) ~= "table" then
+											return val
+										end
 
-							if CombatConfig.AutoReload and typeof(data.Reload) == "function" then
-								task.defer(data.Reload, rawParams)
+										local proxyVm = {}
+										if CombatConfig.ReloadSprinting then
+											proxyVm.Sprinting = false
+										end
+
+										if CombatConfig.InstantReload then
+											proxyVm.Play = function(_, animKey, ...)
+												local success, marker = pcall(function()
+													local anim = rawParams.Viewmodel.Animator.LoadedAnimations[animKey]
+													local s1 = anim:GetMarkerReachedSignal("FinishReload")
+													local s2 = anim:GetMarkerReachedSignal("InsertBullet")
+													local s3 = anim:GetMarkerReachedSignal("Insert")
+
+													return (#getconnections(s1) > 0 and s1)
+														or (#getconnections(s2) > 0 and s2)
+														or (#getconnections(s3) > 0 and s3)
+												end)
+
+												if success and marker then
+													firesignal(marker)
+													rawset(rawParams, "Reloading", false)
+													return -- Прерываем вызов, предотвращая повторное естественное срабатывание
+												end
+
+												return val:Play(animKey, ...)
+											end
+										end
+
+										return setmetatable(proxyVm, {__index = val, __newindex = val})
+									end,
+									__newindex = rawParams
+								})
+								return origReload(proxyParams)
 							end
-
-							return origFire(proxyParams)
+							return origReload(...)
 						end
-						return origFire(...)
-					end)
-				end
 
-				-- Reload While Sprinting & Single-Trigger Instant Reload
-				local reload = rawget(data, "Reload")
-				if typeof(reload) == "function" then
-					local origReload = reload
-					rawset(data, "Reload", function(...)
-						local rawParams = ...
-						if typeof(rawParams) == "table" then
-							local proxyParams = setmetatable({}, {
-								__index = function(_, key)
-									local val = rawParams[key]
-									if key == "Viewmodel" and typeof(val) == "table" then
-										return setmetatable({}, {
-											__index = function(_, vmKey)
-												if vmKey == "Sprinting" and CombatConfig.ReloadSprinting then
-													return false
-												end
-												if vmKey == "Play" and CombatConfig.InstantReload then
-													return function(vmSelf, animKey, ...)
-														local track = val:Play(animKey, ...)
-														task.defer(function()
-															pcall(function()
-																local loaded = val.Animator and val.Animator.LoadedAnimations
-																local targetTrack = track or (loaded and loaded[animKey])
-																if targetTrack then
-																	local s1 = targetTrack:GetMarkerReachedSignal("FinishReload")
-																	local s2 = targetTrack:GetMarkerReachedSignal("InsertBullet")
-																	local s3 = targetTrack:GetMarkerReachedSignal("Insert")
-
-																	local marker = (#getconnections(s1) > 0 and s1)
-																		or (#getconnections(s2) > 0 and s2)
-																		or (#getconnections(s3) > 0 and s3)
-																		or s1
-
-																	if marker then
-																		firesignal(marker)
-																	end
-																	targetTrack:Stop()
-																end
-																rawset(rawParams, "Reloading", false)
-															end)
-														end)
-														return track
-													end
-												end
-												return val[vmKey]
-											end,
-											__newindex = val
-										})
-									end
-									return val
-								end,
-								__newindex = rawParams
-							})
-							return origReload(proxyParams)
+						if setfenv and getfenv then
+							setfenv(modifiedReload, getfenv(origReload))
 						end
-						return origReload(...)
-					end)
-				end
+						rawset(data, "Reload", modifiedReload)
+					end
 
-				-- Instant Eoka
-				local tryFire = rawget(data, "TryFire")
-				if typeof(tryFire) == "function" then
-					local origTryFire = tryFire
-					rawset(data, "TryFire", function(...)
-						if CombatConfig.InstantEoka then
-							return true
-						end
-						return origTryFire(...)
-					end)
-				end
+					-- 4. Instant Eoka
+					local tryFire = rawget(data, "TryFire")
+					if typeof(tryFire) == "function" and debug.info(tryFire, "s") ~= "[C]" then
+						local origEnv = getfenv(tryFire)
+						local fakeMath = setmetatable({
+							random = function(...)
+								if CombatConfig.InstantEoka then
+									local a, b = ...
+									return b or a or 1
+								end
+								return math.random(...)
+							end
+						}, {__index = origEnv.math or math})
+						setfenv(tryFire, setmetatable({math = fakeMath}, {__index = origEnv}))
+					end
+				end)
 			end
 		end
 
-		-- Spread modifier
-		local physicsFolder = client:WaitForChild("Physics", 5)
-		local projFolder = physicsFolder and physicsFolder:WaitForChild("Projectile", 5)
+		-- 5. No Spread Hook (native amongus.hook method)
+		local physicsFolder = client:FindFirstChild("Physics")
+		local projFolder = physicsFolder and physicsFolder:FindFirstChild("Projectile")
 
 		if projFolder then
 			for _, mod in ipairs(projFolder:GetChildren()) do
 				if not mod:IsA("ModuleScript") then continue end
-				local projFn = require(mod)
-				if typeof(projFn) ~= "function" then continue end
 
-				if debug.getupvalues and debug.setupvalue then
-					for idx, upv in pairs(debug.getupvalues(projFn)) do
-						if typeof(upv) == "function" and debug.info(upv, "n") == "GetSpreadDirection" then
-							local origSpread = upv
-							local spreadEnv = getfenv(origSpread)
+				pcall(function()
+					local projFn = require(mod)
+					if typeof(projFn) ~= "function" then return end
 
-							local fakeMath = setmetatable({
-								random = newcclosure(function(...)
-									local mult = (CombatConfig.Spread or 0) / 100
-									local res = math.random(...)
-									if typeof(res) == "number" then
-										return res * mult
-									end
-									return res
+					if debug.getupvalues then
+						for idx, upv in pairs(debug.getupvalues(projFn)) do
+							if typeof(upv) == "function" and debug.info(upv, "n") == "GetSpreadDirection" then
+								local spreadEnv = getfenv(upv)
+								local fakeRandom = newcclosure(function(...)
+									return math.random(...) * (CombatConfig.Spread / 100)
 								end)
-							}, {__index = spreadEnv.math or math})
 
-							setfenv(origSpread, setmetatable({math = fakeMath}, {__index = spreadEnv}))
+								local fakeEnv = setmetatable({
+									math = setmetatable({random = fakeRandom}, {__index = spreadEnv.math or math})
+								}, {__index = spreadEnv})
 
-							local customSpread = function(...)
-								local first = ...
-								if CombatConfig.Spread <= 0 then
-									if typeof(first) == "Vector3" then
-										return first.Unit
-									elseif typeof(first) == "CFrame" then
-										return first.LookVector
-									end
-								end
-								return origSpread(...)
+								setfenv(upv, fakeEnv)
+								break
 							end
-
-							setfenv(customSpread, getfenv(origSpread))
-							debug.setupvalue(projFn, idx, customSpread)
-							break
 						end
 					end
-				end
+				end)
 			end
 		end
 	end)
