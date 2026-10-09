@@ -243,7 +243,7 @@ local function applyWeaponMods()
 						rawset(data, "Fire", modifiedFire)
 					end
 
-					-- 3. Reload Hook (Sprint Reload & Clean Single Instant Reload)
+					-- 3. Reload Hook (Sprint Reload & Single-Trigger Instant Reload)
 					local reload = rawget(data, "Reload")
 					if typeof(reload) == "function" then
 						local origReload = reload
@@ -264,31 +264,31 @@ local function applyWeaponMods()
 
 										if CombatConfig.InstantReload then
 											proxyVm.Play = function(vmSelf, animKey, ...)
-												local track = val:Play(animKey, ...)
 												task.defer(function()
 													pcall(function()
 														local animator = val.Animator
 														local loaded = animator and animator.LoadedAnimations
-														local targetTrack = track or (loaded and loaded[animKey])
-														if targetTrack then
-															local s1 = targetTrack:GetMarkerReachedSignal("FinishReload")
-															local s2 = targetTrack:GetMarkerReachedSignal("InsertBullet")
-															local s3 = targetTrack:GetMarkerReachedSignal("Insert")
+														local track = loaded and loaded[animKey]
+														if track then
+															local s1 = track:GetMarkerReachedSignal("FinishReload")
+															local s2 = track:GetMarkerReachedSignal("InsertBullet")
+															local s3 = track:GetMarkerReachedSignal("Insert")
 
 															local chosen = (#getconnections(s1) > 0 and s1)
 																or (#getconnections(s2) > 0 and s2)
 																or (#getconnections(s3) > 0 and s3)
-																or s1
 
 															if chosen then
 																firesignal(chosen)
+																rawset(rawParams, "Reloading", false)
+																for _, conn in ipairs(getconnections(chosen)) do
+																	conn:Disconnect()
+																end
 															end
-															targetTrack:Stop(0)
 														end
-														rawset(rawParams, "Reloading", false)
 													end)
 												end)
-												return track
+												return val:Play(animKey, ...)
 											end
 										end
 
@@ -446,46 +446,9 @@ function Combat:Load()
 		if method == "Raycast" then
 			local origin, direction, params = ...
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-				-- Instant Hit / Force Hit
-				if CombatConfig.InstantHit then
-					local isProjectileRay = false
-					if params and typeof(params) == "RaycastParams" then
-						local filter = params.FilterDescendantsInstances
-						local myChar = localPlayer.Character
-						if params.IgnoreWater or (filter and myChar and table.find(filter, myChar)) then
-							isProjectileRay = true
-						end
-					else
-						isProjectileRay = true
-					end
-
-					if isProjectileRay then
-						local fakeParams = RaycastParams.new()
-						fakeParams.FilterType = Enum.RaycastFilterType.Include
-						fakeParams.FilterDescendantsInstances = {hitpart}
-						fakeParams.IgnoreWater = true
-
-						isInternalRaycast = true
-						local forcedResult = workspaceService:Raycast(hitpos + Vector3.new(0, 1, 0), Vector3.new(0, -2, 0), fakeParams)
-						isInternalRaycast = false
-
-						if forcedResult then
-							return forcedResult
-						end
-
-						return {
-							Instance = hitpart,
-							Position = hitpos,
-							Normal = Vector3.new(0, 1, 0),
-							Material = hitpart.Material,
-							Distance = (origin - hitpos).Magnitude
-						}
-					end
-				end
-
 				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
 
-				if CombatConfig.Wallbang then
+				if CombatConfig.InstantHit or CombatConfig.Wallbang then
 					local fakeParams = RaycastParams.new()
 					fakeParams.FilterType = Enum.RaycastFilterType.Include
 					fakeParams.FilterDescendantsInstances = {hitpart}
