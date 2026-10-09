@@ -216,6 +216,7 @@ local function applyWeaponMods()
 							end
 						end
 
+						-- 2. Fire Modifications (RPM, Sprinting, AutoReload, FastBow)
 						local origFire = fire
 						local function modifiedFire(...)
 							local rawParams = ...
@@ -256,7 +257,7 @@ local function applyWeaponMods()
 						rawset(data, "Fire", modifiedFire)
 					end
 
-					-- 3. Reload Hook (Sprint Reload & Clean Single Instant Reload)
+					-- 3. Reload Hook (Sprint Reload & Instant Reload)
 					local reload = rawget(data, "Reload")
 					if typeof(reload) == "function" then
 						local origReload = reload
@@ -277,31 +278,26 @@ local function applyWeaponMods()
 
 										if CombatConfig.InstantReload then
 											proxyVm.Play = function(vmSelf, animKey, ...)
-												local track = val:Play(animKey, ...)
-												task.defer(function()
-													pcall(function()
-														local animator = val.Animator
-														local loaded = animator and animator.LoadedAnimations
-														local targetTrack = track or (loaded and loaded[animKey])
-														if targetTrack then
-															local s1 = targetTrack:GetMarkerReachedSignal("FinishReload")
-															local s2 = targetTrack:GetMarkerReachedSignal("InsertBullet")
-															local s3 = targetTrack:GetMarkerReachedSignal("Insert")
+												local success, marker = pcall(function()
+													local anim = val.Animator and val.Animator.LoadedAnimations and val.Animator.LoadedAnimations[animKey]
+													if not anim then return nil end
+													local s1 = anim:GetMarkerReachedSignal("FinishReload")
+													local s2 = anim:GetMarkerReachedSignal("InsertBullet")
+													local s3 = anim:GetMarkerReachedSignal("Insert")
 
-															local chosen = (#getconnections(s1) > 0 and s1)
-																or (#getconnections(s2) > 0 and s2)
-																or (#getconnections(s3) > 0 and s3)
-																or s1
-
-															if chosen then
-																firesignal(chosen)
-															end
-															targetTrack:Stop(0)
-														end
-														rawset(rawParams, "Reloading", false)
-													end)
+													return (#getconnections(s1) > 0 and s1)
+														or (#getconnections(s2) > 0 and s2)
+														or (#getconnections(s3) > 0 and s3)
+														or s1
 												end)
-												return track
+
+												if success and marker then
+													firesignal(marker)
+													rawset(rawParams, "Reloading", false)
+													return
+												end
+
+												return val:Play(animKey, ...)
 											end
 										end
 
