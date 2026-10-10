@@ -6,6 +6,7 @@ local runService = cloneref(game:GetService("RunService"))
 local userInputService = cloneref(game:GetService("UserInputService"))
 local workspaceService = cloneref(game:GetService("Workspace"))
 local replicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
+local contextActionService = cloneref(game:GetService("ContextActionService"))
 
 local localPlayer = playersService.LocalPlayer
 local currentCamera = workspaceService.CurrentCamera
@@ -24,6 +25,7 @@ local freecamPitch = 0
 local freecamYaw = 0
 local savedCameraType = nil
 local savedCameraSubject = nil
+local frozenCharacterCFrame = nil
 local heartbeatConn = nil
 local renderSteppedConn = nil
 
@@ -77,7 +79,12 @@ local function setupInstantLoot()
 	end)
 end
 
----Enable freecam scriptable control.
+---Sink movement inputs so character does not move.
+local function sinkMovementAction()
+	return Enum.ContextActionResult.Sink
+end
+
+---Enable freecam scriptable control and freeze character.
 local function enableFreecam()
 	currentCamera = workspaceService.CurrentCamera or currentCamera
 	savedCameraType = currentCamera.CameraType
@@ -93,12 +100,29 @@ local function enableFreecam()
 
 	currentCamera.CameraType = Enum.CameraType.Scriptable
 	freecamActive = true
+
+	local character = localPlayer.Character
+	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+	if rootPart then
+		frozenCharacterCFrame = rootPart.CFrame
+	end
+
+	contextActionService:BindActionAtPriority(
+		"FreecamMovementSink",
+		sinkMovementAction,
+		false,
+		Enum.ContextActionPriority.High.Value + 2000,
+		Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D, Enum.KeyCode.Space
+	)
 end
 
 ---Disable freecam and restore original camera.
 local function disableFreecam()
 	if not freecamActive then return end
 	freecamActive = false
+	frozenCharacterCFrame = nil
+
+	contextActionService:UnbindAction("FreecamMovementSink")
 
 	currentCamera = workspaceService.CurrentCamera or currentCamera
 	currentCamera.CameraType = savedCameraType or Enum.CameraType.Custom
@@ -165,7 +189,6 @@ function Misc:Load()
 				enableFreecam()
 			end
 
-			-- Поворот камеры при удержании ПКМ
 			if userInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
 				userInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
 				local delta = userInputService:GetMouseDelta()
@@ -214,6 +237,16 @@ function Misc:Load()
 
 		currentCamera = workspaceService.CurrentCamera or currentCamera
 		local stepDt = math.clamp(dt, 0.001, 0.033)
+
+		-- Заморозка персонажа пока активна Freecam
+		if MiscConfig.FreecamEnabled and freecamActive then
+			if frozenCharacterCFrame then
+				rootPart.CFrame = frozenCharacterCFrame
+				rootPart.AssemblyLinearVelocity = Vector3.zero
+				rootPart.AssemblyAngularVelocity = Vector3.zero
+			end
+			return
+		end
 
 		-- Fly.
 		local isFlying = MiscConfig.FlyEnabled
