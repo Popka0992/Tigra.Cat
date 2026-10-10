@@ -50,7 +50,7 @@ local BLOCKED_FREECAM_KEYS = {
 	[Enum.KeyCode.C] = true,
 }
 
-local TARGET_ROOT_NAMES = {
+local TARGET_CONTAINER_NAMES = {
 	["builtobjects"] = true,
 	["builtobject"] = true,
 	["doors"] = true,
@@ -59,13 +59,18 @@ local TARGET_ROOT_NAMES = {
 
 local TARGET_PART_NAMES = {
 	["doorframe"] = true,
+	["door frame"] = true,
 	["window frame"] = true,
+	["windowframe"] = true,
 	["triangle floor"] = true,
 	["floor"] = true,
 	["wall frame"] = true,
+	["wallframe"] = true,
 	["half wall"] = true,
+	["halfwall"] = true,
 	["foundation"] = true,
 	["triangle foundation"] = true,
+	["triange foundation"] = true,
 	["iron door"] = true,
 	["iron double door"] = true,
 	["wood door"] = true,
@@ -227,7 +232,7 @@ local function disableFreecam()
 	userInputService.MouseBehavior = Enum.MouseBehavior.Default
 end
 
----Validate if part qualifies for X-Ray modifications.
+---Strictly validate if the part or its model matches target building names.
 ---@param inst Instance
 ---@return boolean
 local function isXRayTarget(inst)
@@ -236,17 +241,11 @@ local function isXRayTarget(inst)
 	end
 
 	local current = inst
-	local underTargetRoot = false
-
 	while current and current ~= workspaceService do
 		local lowerName = current.Name:lower()
 
 		if string.find(lowerName, "bear trap") or string.find(lowerName, "beartrap") then
 			return false
-		end
-
-		if TARGET_ROOT_NAMES[lowerName] then
-			underTargetRoot = true
 		end
 
 		if TARGET_PART_NAMES[lowerName] then
@@ -256,7 +255,7 @@ local function isXRayTarget(inst)
 		current = current.Parent
 	end
 
-	return underTargetRoot
+	return false
 end
 
 ---Apply X-Ray transparency to a base part.
@@ -278,7 +277,7 @@ local function findStructureRoots()
 
 	for _, child in ipairs(workspaceService:GetChildren()) do
 		local lower = child.Name:lower()
-		if TARGET_ROOT_NAMES[lower] then
+		if TARGET_CONTAINER_NAMES[lower] then
 			table.insert(roots, child)
 		end
 	end
@@ -307,7 +306,7 @@ local function setXRayState(state)
 		end
 
 		table.insert(xrayWatchConns, workspaceService.ChildAdded:Connect(function(child)
-			if xrayActive and TARGET_ROOT_NAMES[child.Name:lower()] then
+			if xrayActive and TARGET_CONTAINER_NAMES[child.Name:lower()] then
 				for _, desc in ipairs(child:GetDescendants()) do
 					applyInstanceXRay(desc)
 				end
@@ -624,7 +623,7 @@ function Misc:SetXRay(enabled)
 	setXRayState(enabled)
 end
 
----Update X-Ray transparency value dynamically.
+---Update X-Ray transparency value dynamically from slider.
 ---@param value number
 function Misc:SetXRayTransparency(value)
 	MiscConfig.XRayTransparency = value
