@@ -13,7 +13,6 @@ local currentCamera = workspaceService.CurrentCamera
 local Misc = {}
 Misc.__index = Misc
 
--- Constants.
 local FLY_PULSE_DURATION = 0.7
 
 local VALID_NAMES = {
@@ -41,7 +40,6 @@ local VALID_NAMES = {
 	["door"] = true,
 }
 
--- State.
 local flyStartTime = 0
 local isPulsingGround = false
 
@@ -111,7 +109,8 @@ local function setupInstantLoot()
 	end)
 end
 
----Get normalized transparency value.
+---Get normalized transparency between 0 and 1.
+---@return number
 local function getNormalizedTransparency()
 	local raw = MiscConfig.XRayTransparency
 	if typeof(raw) ~= "number" then return 1 end
@@ -121,21 +120,32 @@ local function getNormalizedTransparency()
 	return math.clamp(raw, 0, 1)
 end
 
----Check whether the instance matches building parts and is not a trap.
+---Check whether the instance is a valid base structure.
+---@param inst Instance
+---@return boolean
 local function isTargetBuilding(inst)
+	if not inst:IsA("BasePart") or inst:IsA("Terrain") then
+		return false
+	end
+
+	local model = inst:FindFirstAncestorOfClass("Model")
+	if model and (model:FindFirstChildOfClass("Humanoid") or playersService:GetPlayerFromCharacter(model)) then
+		return false
+	end
+
 	local current = inst
-	local foundValid = false
+	local isMatch = false
 
 	while current and current ~= workspaceService do
-		local name = current.Name:lower()
+		local lowerName = current.Name:lower()
 
-		if name:find("bear trap") or name:find("beartrap") then
+		if lowerName:find("bear trap", 1, true) or lowerName:find("beartrap", 1, true) then
 			return false
 		end
 
 		for validName in pairs(VALID_NAMES) do
-			if name:find(validName, 1, true) then
-				foundValid = true
+			if lowerName:find(validName, 1, true) then
+				isMatch = true
 				break
 			end
 		end
@@ -143,15 +153,14 @@ local function isTargetBuilding(inst)
 		current = current.Parent
 	end
 
-	return foundValid
+	return isMatch
 end
 
----Apply transparency and remove opaque surface appearances.
-local function applyToPart(part)
-	if not part:IsA("BasePart") or part:IsA("Terrain") then return end
+---Apply transparency and hide decals/appearances on a single part.
+---@param part BasePart
+---@param targetTransparency number
+local function applyPartXRay(part, targetTransparency)
 	if not isTargetBuilding(part) then return end
-
-	local targetTransparency = getNormalizedTransparency()
 
 	if cachedParts[part] == nil then
 		cachedParts[part] = part.Transparency
@@ -171,87 +180,81 @@ local function applyToPart(part)
 	end
 end
 
----Scan an individual container for valid base objects.
-local function scanContainer(container)
-	for _, desc in ipairs(container:GetDescendants()) do
-		if desc:IsA("BasePart") then
-			applyToPart(desc)
+---Update transparency across all cached instances dynamically.
+local function updateXRayTransparency()
+	local targetTransparency = getNormalizedTransparency()
+
+	for part in pairs(cachedParts) do
+		if part and part.Parent then
+			part.Transparency = targetTransparency
 		end
 	end
 
-	table.insert(xrayWatchConns, container.DescendantAdded:Connect(function(desc)
+	for decal in pairs(cachedDecals) do
+		if decal and decal.Parent then
+			decal.Transparency = targetTransparency
+		end
+	end
+end
+
+---Disable X-Ray and restore original transparencies.
+local function disableXRay()
+	xrayActive = false
+
+	for _, conn in ipairs(xrayWatchConns) do
+		conn:Disconnect()
+	end
+	table.clear(xrayWatchConns)
+
+	for _, item in ipairs(cachedSurfaceAppearances) do
+		if item.Object and item.Parent and item.Parent.Parent then
+			pcall(function()
+				item.Object.Parent = item.Parent
+			end)
+		end
+	end
+	table.clear(cachedSurfaceAppearances)
+
+	for part, original in pairs(cachedParts) do
+		if part and part.Parent then
+			pcall(function()
+				part.Transparency = original
+			end)
+		end
+	end
+	table.clear(cachedParts)
+
+	for decal, original in pairs(cachedDecals) do
+		if decal and decal.Parent then
+			pcall(function()
+				decal.Transparency = original
+			end)
+		end
+	end
+	table.clear(cachedDecals)
+end
+
+---Enable X-Ray and scan Workspace.
+local function enableXRay()
+	if xrayActive then
+		updateXRayTransparency()
+		return
+	end
+	xrayActive = true
+
+	local targetTransparency = getNormalizedTransparency()
+
+	for _, desc in ipairs(workspaceService:GetDescendants()) do
+		if desc:IsA("BasePart") then
+			applyPartXRay(desc, targetTransparency)
+		end
+	end
+
+	table.insert(xrayWatchConns, workspaceService.DescendantAdded:Connect(function(desc)
 		if xrayActive and desc:IsA("BasePart") then
-			task.defer(applyToPart, desc)
+			task.defer(applyPartXRay, desc, getNormalizedTransparency())
 		end
 	end))
-end
-
----Locate target structure folders in Workspace.
-local function findTargetContainers()
-	local containers = {}
-
-	for _, child in ipairs(workspaceService:GetChildren()) do
-		local lower = child.Name:lower()
-		if lower:find("builtobject") or lower:find("door") then
-			table.insert(containers, child)
-		end
-	end
-
-	return containers
-end
-
----Enable or disable building X-Ray and restore original visuals.
-local function setXRayState(state)
-	if xrayActive == state then return end
-	xrayActive = state
-
-	if state then
-		local containers = findTargetContainers()
-		for _, container in ipairs(containers) do
-			scanContainer(container)
-		end
-
-		table.insert(xrayWatchConns, workspaceService.ChildAdded:Connect(function(child)
-			if xrayActive then
-				local lower = child.Name:lower()
-				if lower:find("builtobject") or lower:find("door") then
-					scanContainer(child)
-				end
-			end
-		end))
-	else
-		for _, conn in ipairs(xrayWatchConns) do
-			conn:Disconnect()
-		end
-		table.clear(xrayWatchConns)
-
-		for _, item in ipairs(cachedSurfaceAppearances) do
-			if item.Object and item.Parent and item.Parent.Parent then
-				pcall(function()
-					item.Object.Parent = item.Parent
-				end)
-			end
-		end
-		table.clear(cachedSurfaceAppearances)
-
-		for part, original in pairs(cachedParts) do
-			if part and part.Parent then
-				pcall(function()
-					part.Transparency = original
-				end)
-			end
-		end
-		table.clear(cachedParts)
-
-		for decal, original in pairs(cachedDecals) do
-			if decal and decal.Parent then
-				pcall(function()
-					decal.Transparency = original
-				end)
-			end
-		end
-		table.clear(cachedDecals)
-	end
 end
 
 function Misc:GetConfig()
@@ -266,7 +269,7 @@ function Misc:Unload()
 	MiscConfig.InstantLoot = false
 	MiscConfig.NoFall = false
 
-	setXRayState(false)
+	disableXRay()
 
 	if isZoomActive and savedCameraFov then
 		currentCamera.FieldOfView = savedCameraFov
@@ -451,26 +454,22 @@ function Misc:Load()
 end
 
 ---Toggle X-Ray state from outside.
+---@param enabled boolean
 function Misc:SetXRay(enabled)
 	MiscConfig.XRayEnabled = enabled
-	setXRayState(enabled)
+	if enabled then
+		enableXRay()
+	else
+		disableXRay()
+	end
 end
 
 ---Update X-Ray transparency dynamically.
+---@param value number
 function Misc:SetXRayTransparency(value)
 	MiscConfig.XRayTransparency = value
 	if xrayActive then
-		local trans = getNormalizedTransparency()
-		for part in pairs(cachedParts) do
-			if part and part.Parent then
-				part.Transparency = trans
-			end
-		end
-		for decal in pairs(cachedDecals) do
-			if decal and decal.Parent then
-				decal.Transparency = trans
-			end
-		end
+		updateXRayTransparency()
 	end
 end
 
