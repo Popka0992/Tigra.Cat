@@ -16,6 +16,7 @@ local runService = cloneref(game:GetService("RunService"))
 local playersService = cloneref(game:GetService("Players"))
 local coreGuiService = cloneref(game:GetService("CoreGui"))
 local workspaceService = cloneref(game:GetService("Workspace"))
+local replicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 local httpService = cloneref(game:GetService("HttpService"))
 
 ---@module Features.Visuals.ESP
@@ -47,6 +48,15 @@ local FONTS_TO_DOWNLOAD = {
 	["Tahoma Modern Bold"] = "https://github.com/i77lhm/storage/raw/refs/heads/main/fonts/Tahoma-Modern-Bold.ttf",
 }
 
+local GENERIC_PARTS = {
+	["cube"] = true,
+	["handle"] = true,
+	["part"] = true,
+	["mesh"] = true,
+	["model"] = true,
+	["worldmodel"] = true,
+}
+
 -- Baseline state.
 local localPlayer = playersService.LocalPlayer
 local currentCamera = workspaceService.CurrentCamera
@@ -71,6 +81,9 @@ local trackedInstances = {}
 local currentRunId = httpService:GenerateGUID(false)
 local labelStrokeMap = setmetatable({}, { __mode = "k" })
 local loadedFonts = {}
+
+local weaponDatabase = {}
+local iconDatabase = {}
 
 -- Clean up older sessions.
 if getgenv()["123ESP_Unload"] then
@@ -194,7 +207,11 @@ local ESPConfig = {
 	},
 	Weapon = {
 		Enabled = false,
-		Gap = 1,
+		ShowText = true,
+		ShowIcon = true,
+		IconWidth = 36,
+		IconHeight = 36,
+		Gap = 2,
 		OutlineStyle = "Full",
 		Font = "Proggy Clean",
 		TextSize = 12,
@@ -285,6 +302,208 @@ local ESPConfig = {
 		}
 	}
 }
+
+---Normalize string to lowercase alphanumeric characters.
+---@param str string
+---@return string
+local function normalizeName(str)
+	if not str then return "" end
+	return (str:lower():gsub("[%s%-_]", ""))
+end
+
+---Extract numeric asset ID from string.
+---@param str string
+---@return string?
+local function extractNumericId(str)
+	if not str or typeof(str) ~= "string" or str == "" then return nil end
+	return str:match("%d+")
+end
+
+---Collect texture IDs and part names from a model.
+---@param container Instance
+---@return table, table
+local function extractSignatures(container)
+	local textures = {}
+	local parts = {}
+
+	for _, desc in ipairs(container:GetDescendants()) do
+		local parentName = desc.Parent and desc.Parent.Name:lower() or ""
+		local isHandle = (parentName == "handle")
+
+		if desc:IsA("SurfaceAppearance") then
+			local colorId = extractNumericId(desc.ColorMap)
+			if colorId then
+				textures[colorId] = isHandle and 5 or 2
+			end
+
+			local packId = extractNumericId(desc.TexturePack)
+			if packId then
+				textures[packId] = isHandle and 5 or 2
+			end
+
+			local baseColorAttr = desc:GetAttribute("BaseColor")
+			if baseColorAttr then
+				local attrId = extractNumericId(tostring(baseColorAttr))
+				if attrId then
+					textures[attrId] = isHandle and 5 or 2
+				end
+			end
+		elseif desc:IsA("MeshPart") and desc.TextureID ~= "" then
+			local meshTexId = extractNumericId(desc.TextureID)
+			if meshTexId then
+				textures[meshTexId] = isHandle and 5 or 2
+			end
+		end
+
+		if desc:IsA("BasePart") then
+			parts[desc.Name:lower()] = true
+		end
+	end
+
+	return textures, parts
+end
+
+---Build detailed signature database for every weapon tool.
+local function buildWeaponDatabase()
+	table.clear(weaponDatabase)
+	local count = 0
+
+	local assets = replicatedStorage:FindFirstChild("Assets") or replicatedStorage:WaitForChild("Assets", 3)
+	local prefabs = assets and (assets:FindFirstChild("Prefabs") or assets:WaitForChild("Prefabs", 3))
+	local tools = prefabs and (prefabs:FindFirstChild("Tools") or prefabs:WaitForChild("Tools", 3))
+
+	if not tools then return 0 end
+
+	for _, toolFolder in ipairs(tools:GetChildren()) do
+		if toolFolder.Name:find("ADMIN") then continue end
+
+		local wm = toolFolder:FindFirstChild("Worldmodel") or toolFolder:FindFirstChild("WorldModel")
+		if wm then
+			local textures, parts = extractSignatures(wm)
+			weaponDatabase[toolFolder.Name] = {
+				Textures = textures,
+				Parts = parts
+			}
+			count = count + 1
+		end
+	end
+
+	return count
+end
+
+---Build 2D item icon database directly from crafting UI.
+local function buildIconDatabase()
+	table.clear(iconDatabase)
+	local count = 0
+
+	local playerGui = localPlayer:FindFirstChild("PlayerGui")
+	if not playerGui then return 0 end
+
+	local ui = playerGui:FindFirstChild("UI")
+	local ingame = ui and ui:FindFirstChild("Ingame")
+	local crafting = ingame and ingame:FindFirstChild("Crafting")
+	local items = crafting and crafting:FindFirstChild("Items")
+	local scrollingFrame = items and items:FindFirstChild("ScrollingFrame")
+
+	if not scrollingFrame then
+		for _, desc in ipairs(playerGui:GetDescendants()) do
+			if desc:IsA("ScrollingFrame") and desc.Parent and desc.Parent.Name == "Items" then
+				scrollingFrame = desc
+				break
+			end
+		end
+	end
+
+	if not scrollingFrame then return 0 end
+
+	for _, itemFrame in ipairs(scrollingFrame:GetChildren()) do
+		if not itemFrame:IsA("GuiObject") then continue end
+
+		local iconAsset = nil
+		local btn = itemFrame:FindFirstChild("Button")
+
+		if btn and (btn:IsA("ImageButton") or btn:IsA("ImageLabel")) and btn.Image ~= "" then
+			iconAsset = btn.Image
+		else
+			for _, child in ipairs(itemFrame:GetChildren()) do
+				if (child:IsA("ImageLabel") or child:IsA("ImageButton")) and child.Name ~= "Favorite" and child.Name ~= "Locked" and child.Image ~= "" then
+					iconAsset = child.Image
+					break
+				end
+			end
+		end
+
+		if iconAsset then
+			local rawName = itemFrame.Name
+			local normName = normalizeName(rawName)
+			iconDatabase[rawName] = iconAsset
+			iconDatabase[normName] = iconAsset
+			count = count + 1
+		end
+	end
+
+	return count
+end
+
+---Resolve weapon 2D icon by weapon name.
+---@param name string
+---@return string?
+local function getWeaponIcon(name)
+	if not name then return nil end
+	if iconDatabase[name] then return iconDatabase[name] end
+
+	local norm = normalizeName(name)
+	if iconDatabase[norm] then return iconDatabase[norm] end
+
+	for key, asset in pairs(iconDatabase) do
+		if norm:find(key, 1, true) or key:find(norm, 1, true) then
+			return asset
+		end
+	end
+
+	return nil
+end
+
+---Resolve weapon held by character using weighted scoring.
+---@param char Model
+---@return string?, number?
+local function resolveWeaponAccurate(char)
+	local wm = char:FindFirstChild("Worldmodel") or char:FindFirstChild("WorldModel")
+	if not wm or #wm:GetChildren() == 0 then
+		return nil, 0
+	end
+
+	local charTextures, charParts = extractSignatures(wm)
+	local bestMatch = nil
+	local highestScore = 0
+
+	for weaponName, data in pairs(weaponDatabase) do
+		local score = 0
+
+		for texId, weight in pairs(charTextures) do
+			if data.Textures[texId] then
+				score = score + (weight * 10)
+			end
+		end
+
+		for partName in pairs(charParts) do
+			if data.Parts[partName] then
+				score = score + (GENERIC_PARTS[partName] and 1 or 5)
+			end
+		end
+
+		if score > highestScore then
+			highestScore = score
+			bestMatch = weaponName
+		end
+	end
+
+	if highestScore >= 12 then
+		return bestMatch, highestScore
+	end
+
+	return nil, highestScore
+end
 
 local function deepCopy(tbl)
 	if type(tbl) ~= "table" then return tbl end
@@ -430,7 +649,8 @@ end
 local CreateESPObj = LPHNoVirtualize(function(name)
 	local espObj = {
 		Visible = false, Lines = {}, Outlines = {}, CornerLines = {}, CornerOutlines = {},
-		FlagLabels = {}, LastVisCheck = 0, CachedModelVisible = true
+		FlagLabels = {}, LastVisCheck = 0, CachedModelVisible = true, LastWeaponCheck = 0,
+		CachedWeapon = nil
 	}
 
 	local container = Instance.new("Frame")
@@ -502,6 +722,14 @@ local CreateESPObj = LPHNoVirtualize(function(name)
 	weaponText.TextYAlignment = Enum.TextYAlignment.Top
 	weaponText.Visible = false
 	espObj.WeaponText = weaponText
+
+	local weaponIcon = Instance.new("ImageLabel")
+	weaponIcon.BackgroundTransparency = 1
+	weaponIcon.ScaleType = Enum.ScaleType.Fit
+	weaponIcon.ZIndex = 2
+	weaponIcon.Visible = false
+	weaponIcon.Parent = container
+	espObj.WeaponIcon = weaponIcon
 
 	local healthBarOutline = Instance.new("Frame")
 	healthBarOutline.BackgroundColor3 = ESPConfig.Outlines.Color
@@ -861,6 +1089,61 @@ local UpdateESPObj = LPHNoVirtualize(function(espObj, position, size, name, dist
 		espObj.DistanceText.Visible = false
 	end
 
+	-- Weapon Visuals (Text + 2D Icon).
+	if getCfg("Weapon.Enabled") and instance:IsA("Model") then
+		if (now - espObj.LastWeaponCheck) > 0.25 then
+			espObj.LastWeaponCheck = now
+			local detectedWeapon = resolveWeaponAccurate(instance)
+			if not detectedWeapon and getCfg("Weapon.UseToolFallback") then
+				local tool = instance:FindFirstChildOfClass("Tool")
+				if tool then detectedWeapon = tool.Name end
+			end
+			espObj.CachedWeapon = detectedWeapon
+		end
+
+		local weaponName = espObj.CachedWeapon
+		local showText = getCfg("Weapon.ShowText")
+		local showIcon = getCfg("Weapon.ShowIcon")
+
+		if weaponName and (showText or showIcon) then
+			if showText then
+				espObj.WeaponText.Visible = true
+				espObj.WeaponText.Text = weaponName
+				espObj.WeaponText.TextColor3 = getCfg("Weapon.Color")
+				espObj.WeaponText.TextSize = getCfg("Weapon.TextSize") or textSize
+				applyLabelFont(espObj.WeaponText, getCfg("Weapon.Font"))
+				applyTextOutline(espObj.WeaponText, getCfg("Weapon.OutlineStyle") or textOutlineStyle, textOutlineColor)
+				espObj.WeaponText.Position = UDim2.new(0, px - 50, 0, currentBottomY)
+				currentBottomY = currentBottomY + (getCfg("Weapon.TextSize") or textSize) + (getCfg("Weapon.Gap") or 0)
+			else
+				espObj.WeaponText.Visible = false
+			end
+
+			if showIcon then
+				local iconAsset = getWeaponIcon(weaponName)
+				if iconAsset then
+					local iconW = getCfg("Weapon.IconWidth") or 36
+					local iconH = getCfg("Weapon.IconHeight") or 36
+					espObj.WeaponIcon.Image = iconAsset
+					espObj.WeaponIcon.Size = UDim2.new(0, iconW, 0, iconH)
+					espObj.WeaponIcon.Position = UDim2.new(0, px - math.floor(iconW * 0.5), 0, currentBottomY)
+					espObj.WeaponIcon.Visible = true
+					currentBottomY = currentBottomY + iconH + (getCfg("Weapon.Gap") or 0)
+				else
+					espObj.WeaponIcon.Visible = false
+				end
+			else
+				espObj.WeaponIcon.Visible = false
+			end
+		else
+			espObj.WeaponText.Visible = false
+			espObj.WeaponIcon.Visible = false
+		end
+	else
+		espObj.WeaponText.Visible = false
+		espObj.WeaponIcon.Visible = false
+	end
+
 	-- Health Bar & Health Number & Gradient.
 	if getCfg("HealthBar.Enabled") and instance:IsA("Model") and humanoid then
 		local hpPos = getCfg("HealthBar.Position")
@@ -1068,6 +1351,7 @@ local ScanDirectories = LPHNoVirtualize(function()
 end)
 
 local lastScan = 0
+local lastDbCheck = 0
 local function runtimeStep()
 	currentCamera = workspaceService.CurrentCamera or currentCamera
 	local frameCfgCache = {}
@@ -1085,6 +1369,11 @@ local function runtimeStep()
 	if now - lastScan > 1.5 then
 		lastScan = now
 		ScanDirectories()
+	end
+
+	if next(iconDatabase) == nil and now - lastDbCheck > 3 then
+		lastDbCheck = now
+		buildIconDatabase()
 	end
 
 	for inst, data in pairs(trackedInstances) do
@@ -1138,6 +1427,10 @@ function ESP:Load(config)
 	ensureRootInstances()
 	currentRunId = httpService:GenerateGUID(false)
 	lastScan = 0
+	lastDbCheck = 0
+
+	buildWeaponDatabase()
+	buildIconDatabase()
 
 	playerRemovingConnection = playersService.PlayerRemoving:Connect(function(player)
 		for inst, data in pairs(trackedInstances) do
