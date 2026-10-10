@@ -27,6 +27,7 @@ local savedCameraType = nil
 local savedCameraSubject = nil
 local savedAnchored = false
 local frozenCharacterCFrame = nil
+local savedHeadCFrame = nil
 
 -- Zoom State.
 local savedCameraFov = nil
@@ -162,6 +163,47 @@ local function sinkMovementAction()
 	return Enum.ContextActionResult.Sink
 end
 
+---Check whether an instance represents a base building or door.
+---@param inst Instance?
+---@return boolean
+local function isBuildingInstance(inst)
+	if not inst or not inst:IsA("BasePart") or inst:IsA("Terrain") then
+		return false
+	end
+
+	local current = inst
+	while current and current ~= workspaceService do
+		local lowerName = current.Name:lower()
+
+		if string.find(lowerName, "bear trap") or string.find(lowerName, "beartrap") then
+			return false
+		end
+
+		if TARGET_CONTAINER_NAMES[lowerName] or TARGET_PART_NAMES[lowerName] then
+			return true
+		end
+
+		current = current.Parent
+	end
+
+	return false
+end
+
+---Filter out base building parts from spatial query tables.
+---@param parts table
+---@return table
+local function filterBuildingArray(parts)
+	if typeof(parts) ~= "table" then return parts end
+	local filtered = {}
+	for i = 1, #parts do
+		local part = parts[i]
+		if not isBuildingInstance(part) then
+			table.insert(filtered, part)
+		end
+	end
+	return filtered
+end
+
 ---Enable freecam scriptable control and freeze character.
 local function enableFreecam()
 	currentCamera = workspaceService.CurrentCamera or currentCamera
@@ -176,16 +218,15 @@ local function enableFreecam()
 	freecamYaw = yaw
 	freecamPitch = pitch
 
-	currentCamera.CameraType = Enum.CameraType.Scriptable
-	freecamActive = true
-
 	local character = localPlayer.Character
 	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local head = character and character:FindFirstChild("Head")
 
 	if rootPart then
 		savedAnchored = rootPart.Anchored
 		frozenCharacterCFrame = rootPart.CFrame
+		savedHeadCFrame = head and head.CFrame or (rootPart.CFrame * CFrame.new(0, 1.5, 0))
 		rootPart.Anchored = true
 		rootPart.AssemblyLinearVelocity = Vector3.zero
 		rootPart.AssemblyAngularVelocity = Vector3.zero
@@ -196,6 +237,9 @@ local function enableFreecam()
 	end
 
 	setControlsEnabled(false)
+
+	currentCamera.CameraType = Enum.CameraType.Scriptable
+	freecamActive = true
 
 	contextActionService:BindActionAtPriority(
 		"FreecamMovementSink",
@@ -211,6 +255,7 @@ local function disableFreecam()
 	if not freecamActive then return end
 	freecamActive = false
 	frozenCharacterCFrame = nil
+	savedHeadCFrame = nil
 
 	contextActionService:UnbindAction("FreecamMovementSink")
 	setControlsEnabled(true)
@@ -232,36 +277,10 @@ local function disableFreecam()
 	userInputService.MouseBehavior = Enum.MouseBehavior.Default
 end
 
----Strictly validate if the part or its model matches target building names.
----@param inst Instance
----@return boolean
-local function isXRayTarget(inst)
-	if not inst:IsA("BasePart") or inst:IsA("Terrain") then
-		return false
-	end
-
-	local current = inst
-	while current and current ~= workspaceService do
-		local lowerName = current.Name:lower()
-
-		if string.find(lowerName, "bear trap") or string.find(lowerName, "beartrap") then
-			return false
-		end
-
-		if TARGET_PART_NAMES[lowerName] then
-			return true
-		end
-
-		current = current.Parent
-	end
-
-	return false
-end
-
 ---Apply X-Ray transparency to a base part.
 ---@param inst Instance
 local function applyInstanceXRay(inst)
-	if not isXRayTarget(inst) then return end
+	if not isBuildingInstance(inst) then return end
 
 	if cachedPartTransparencies[inst] == nil then
 		cachedPartTransparencies[inst] = inst.Transparency
@@ -368,13 +387,21 @@ end
 function Misc:Load()
 	setupInstantLoot()
 
-	-- Spoof Anchored property read for HumanoidRootPart during freecam.
+	-- Spoof Anchored and Camera properties to bypass anti-wallpeek.
 	local oldIndex
 	oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
-		if not checkcaller() and freecamActive and key == "Anchored" then
-			local char = localPlayer.Character
-			if char and self == char:FindFirstChild("HumanoidRootPart") then
-				return savedAnchored
+		if not checkcaller() and freecamActive then
+			if key == "Anchored" then
+				local char = localPlayer.Character
+				if char and self == char:FindFirstChild("HumanoidRootPart") then
+					return savedAnchored
+				end
+			elseif self == currentCamera or (typeof(self) == "Instance" and self:IsA("Camera")) then
+				if key == "CFrame" or key == "CoordinateFrame" or key == "Focus" then
+					if savedHeadCFrame then
+						return savedHeadCFrame
+					end
+				end
 			end
 		end
 		return oldIndex(self, key)
@@ -389,7 +416,61 @@ function Misc:Load()
 		return oldIsKeyDown(self, key)
 	end))
 
-	-- Network Remote Hook for Fall Damage.
+	-- Function hooks for Raycasts and Spatial Queries to completely neutralize Anti-Wallpeek.
+	local oldRaycast
+	oldRaycast = hookfunction(workspaceService.Raycast, newcclosure(function(self, origin, direction, params)
+		local result = oldRaycast(self, origin, direction, params)
+		if not checkcaller() and freecamActive and result and isBuildingInstance(result.Instance) then
+			return nil
+		end
+		return result
+	end))
+
+	local oldFindPartOnRayWithIgnoreList
+	oldFindPartOnRayWithIgnoreList = hookfunction(workspaceService.FindPartOnRayWithIgnoreList, newcclosure(function(self, ray, ignoreList, terrainAsBoundary, ignoreWater)
+		local part, position, normal, material = oldFindPartOnRayWithIgnoreList(self, ray, ignoreList, terrainAsBoundary, ignoreWater)
+		if not checkcaller() and freecamActive and part and isBuildingInstance(part) then
+			return nil, position, normal, material
+		end
+		return part, position, normal, material
+	end))
+
+	local oldFindPartOnRay
+	oldFindPartOnRay = hookfunction(workspaceService.FindPartOnRay, newcclosure(function(self, ray, ignoreDescendantsInstance, terrainAsBoundary, ignoreWater)
+		local part, position, normal, material = oldFindPartOnRay(self, ray, ignoreDescendantsInstance, terrainAsBoundary, ignoreWater)
+		if not checkcaller() and freecamActive and part and isBuildingInstance(part) then
+			return nil, position, normal, material
+		end
+		return part, position, normal, material
+	end))
+
+	local oldGetPartBoundsInBox
+	oldGetPartBoundsInBox = hookfunction(workspaceService.GetPartBoundsInBox, newcclosure(function(self, cframe, size, params)
+		local parts = oldGetPartBoundsInBox(self, cframe, size, params)
+		if not checkcaller() and freecamActive then
+			return filterBuildingArray(parts)
+		end
+		return parts
+	end))
+
+	local oldGetPartBoundsInRadius
+	oldGetPartBoundsInRadius = hookfunction(workspaceService.GetPartBoundsInRadius, newcclosure(function(self, position, radius, params)
+		local parts = oldGetPartBoundsInRadius(self, position, radius, params)
+		if not checkcaller() and freecamActive then
+			return filterBuildingArray(parts)
+		end
+		return parts
+	end))
+
+	local oldGetRenderCFrame
+	oldGetRenderCFrame = hookfunction(currentCamera.GetRenderCFrame, newcclosure(function(self, ...)
+		if not checkcaller() and freecamActive and savedHeadCFrame then
+			return savedHeadCFrame
+		end
+		return oldGetRenderCFrame(self, ...)
+	end))
+
+	-- Metamethod __namecall hook for remotes and namecall-based raycasts.
 	local oldNamecall
 	oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
 		if checkcaller() then
@@ -397,16 +478,38 @@ function Misc:Load()
 		end
 
 		local method = getnamecallmethod()
+
+		if freecamActive then
+			if method == "Raycast" then
+				local res = oldNamecall(self, ...)
+				if res and isBuildingInstance(res.Instance) then
+					return nil
+				end
+				return res
+			elseif method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRay" or method == "FindPartOnRayWithWhitelist" then
+				local part, pos, norm, mat = oldNamecall(self, ...)
+				if part and isBuildingInstance(part) then
+					return nil, pos, norm, mat
+				end
+				return part, pos, norm, mat
+			elseif method == "GetPartBoundsInBox" or method == "GetPartBoundsInRadius" or method == "GetPartsInPart" then
+				local parts = oldNamecall(self, ...)
+				return filterBuildingArray(parts)
+			elseif method == "GetRenderCFrame" and savedHeadCFrame then
+				return savedHeadCFrame
+			elseif method == "IsKeyDown" then
+				local key = ...
+				if BLOCKED_FREECAM_KEYS[key] then
+					return false
+				end
+			end
+		end
+
 		if method == "FireServer" and MiscConfig.NoFall then
 			local remoteName = self.Name
 			local firstArg = ...
 			if firstArg == "TFD" or firstArg == "FallDamage" or firstArg == "Fall" or remoteName:find("Fall") then
 				return
-			end
-		elseif method == "IsKeyDown" and freecamActive then
-			local key = ...
-			if BLOCKED_FREECAM_KEYS[key] then
-				return false
 			end
 		end
 
