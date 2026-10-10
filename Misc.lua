@@ -27,8 +27,14 @@ local savedCameraType = nil
 local savedCameraSubject = nil
 local savedAnchored = false
 local frozenCharacterCFrame = nil
-local heartbeatConn = nil
-local renderSteppedConn = nil
+
+-- Zoom State.
+local savedCameraFov = nil
+local isZoomActive = false
+
+-- X-Ray State.
+local originalTransparencies = setmetatable({}, { __mode = "k" })
+local xrayDescendantConn = nil
 
 local BLOCKED_FREECAM_KEYS = {
 	[Enum.KeyCode.W] = true,
@@ -41,6 +47,15 @@ local BLOCKED_FREECAM_KEYS = {
 	[Enum.KeyCode.Q] = true,
 	[Enum.KeyCode.E] = true,
 	[Enum.KeyCode.C] = true,
+}
+
+local STRUCTURE_KEYWORDS = {
+	"wall", "door", "floor", "ceiling", "roof", "foundation", "frame",
+	"window", "pillar", "stairs", "barricade", "gate", "ladder", "ramp"
+}
+
+local STRUCTURE_CONTAINERS = {
+	"Structures", "Buildings", "Bases", "Building", "BuiltObjects", "Deployables"
 }
 
 local MiscConfig = {
@@ -58,9 +73,18 @@ local MiscConfig = {
 	FreecamSpeed = 45,
 	FreecamShiftBoost = 2,
 
+	ZoomEnabled = false,
+	ZoomFOV = 25,
+
+	XRayEnabled = false,
+	XRayTransparency = 0.65,
+
 	InstantLoot = false,
 	NoFall = false
 }
+
+local heartbeatConn = nil
+local renderSteppedConn = nil
 
 ---Setup QuickLoot delay override.
 local function setupInstantLoot()
@@ -186,6 +210,76 @@ local function disableFreecam()
 	userInputService.MouseBehavior = Enum.MouseBehavior.Default
 end
 
+---Check if a BasePart belongs to player structures/bases.
+---@param part BasePart
+---@return boolean
+local function isStructurePart(part)
+	if not part:IsA("BasePart") or part:IsA("Terrain") then return false end
+
+	local parent = part.Parent
+	if not parent or parent:IsA("Workspace") then return false end
+
+	-- Проверка по контейнерам
+	for _, folderName in ipairs(STRUCTURE_CONTAINERS) do
+		local container = workspaceService:FindFirstChild(folderName)
+		if container and part:IsDescendantOf(container) then
+			return true
+		end
+	end
+
+	-- Проверка по ключевым словам названия деталей или моделей
+	local nameLower = part.Name:lower()
+	local parentLower = parent.Name:lower()
+
+	for _, kw in ipairs(STRUCTURE_KEYWORDS) do
+		if nameLower:find(kw) or parentLower:find(kw) then
+			return true
+		end
+	end
+
+	return false
+end
+
+---Apply or restore X-Ray transparency on structures.
+---@param state boolean
+local function setXRayState(state)
+	if state then
+		for _, desc in ipairs(workspaceService:GetDescendants()) do
+			if isStructurePart(desc) then
+				if originalTransparencies[desc] == nil then
+					originalTransparencies[desc] = desc.Transparency
+				end
+				desc.Transparency = MiscConfig.XRayTransparency
+			end
+		end
+
+		if not xrayDescendantConn then
+			xrayDescendantConn = workspaceService.DescendantAdded:Connect(function(desc)
+				if MiscConfig.XRayEnabled and isStructurePart(desc) then
+					task.defer(function()
+						if originalTransparencies[desc] == nil then
+							originalTransparencies[desc] = desc.Transparency
+						end
+						desc.Transparency = MiscConfig.XRayTransparency
+					end)
+				end
+			end)
+		end
+	else
+		if xrayDescendantConn then
+			xrayDescendantConn:Disconnect()
+			xrayDescendantConn = nil
+		end
+
+		for part, original in pairs(originalTransparencies) do
+			if part and part.Parent then
+				part.Transparency = original
+			end
+		end
+		table.clear(originalTransparencies)
+	end
+end
+
 function Misc:GetConfig()
 	return MiscConfig
 end
@@ -194,10 +288,18 @@ function Misc:Unload()
 	MiscConfig.SpeedEnabled = false
 	MiscConfig.FlyEnabled = false
 	MiscConfig.FreecamEnabled = false
+	MiscConfig.ZoomEnabled = false
+	MiscConfig.XRayEnabled = false
 	MiscConfig.InstantLoot = false
 	MiscConfig.NoFall = false
 
 	disableFreecam()
+	setXRayState(false)
+
+	if isZoomActive and savedCameraFov then
+		currentCamera.FieldOfView = savedCameraFov
+		isZoomActive = false
+	end
 
 	if heartbeatConn then
 		heartbeatConn:Disconnect()
@@ -225,7 +327,7 @@ function Misc:Load()
 		return oldIndex(self, key)
 	end))
 
-	-- Intercept IsKeyDown method to block movement in custom controllers.
+	-- Intercept IsKeyDown method to block movement in custom controllers during freecam.
 	local oldIsKeyDown
 	oldIsKeyDown = hookfunction(userInputService.IsKeyDown, newcclosure(function(self, key)
 		if not checkcaller() and freecamActive and BLOCKED_FREECAM_KEYS[key] then
@@ -234,7 +336,7 @@ function Misc:Load()
 		return oldIsKeyDown(self, key)
 	end))
 
-	-- Remote / Metamethod hooks.
+	-- Network Remote Hook for Fall Damage.
 	local oldNamecall
 	oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
 		if checkcaller() then
@@ -242,10 +344,10 @@ function Misc:Load()
 		end
 
 		local method = getnamecallmethod()
-		if method == "FireServer" then
+		if method == "FireServer" and MiscConfig.NoFall then
 			local remoteName = self.Name
 			local firstArg = ...
-			if (remoteName == "RemoteEvent" or self:IsA("RemoteEvent")) and firstArg == "TFD" and MiscConfig.NoFall then
+			if firstArg == "TFD" or firstArg == "FallDamage" or firstArg == "Fall" or remoteName:find("Fall") then
 				return
 			end
 		elseif method == "IsKeyDown" and freecamActive then
@@ -258,10 +360,26 @@ function Misc:Load()
 		return oldNamecall(self, ...)
 	end))
 
-	-- Freecam Render Loop.
+	-- Camera Render Loop (Freecam & Zoom).
 	renderSteppedConn = runService.RenderStepped:Connect(function(dt)
 		currentCamera = workspaceService.CurrentCamera or currentCamera
 
+		-- Zoom Handler.
+		if MiscConfig.ZoomEnabled then
+			if not isZoomActive then
+				isZoomActive = true
+				savedCameraFov = currentCamera.FieldOfView
+			end
+			currentCamera.FieldOfView = MiscConfig.ZoomFOV
+		else
+			if isZoomActive then
+				isZoomActive = false
+				currentCamera.FieldOfView = savedCameraFov or 70
+				savedCameraFov = nil
+			end
+		end
+
+		-- Freecam Handler.
 		if MiscConfig.FreecamEnabled then
 			if not freecamActive then
 				enableFreecam()
@@ -310,7 +428,7 @@ function Misc:Load()
 		end
 	end)
 
-	-- Movement / Fly Loop.
+	-- Movement, Fly & Fall Damage Dampening.
 	heartbeatConn = runService.Heartbeat:Connect(function(dt)
 		local character = localPlayer.Character
 		if not character then return end
@@ -322,6 +440,23 @@ function Misc:Load()
 		currentCamera = workspaceService.CurrentCamera or currentCamera
 		local stepDt = math.clamp(dt, 0.001, 0.033)
 
+		-- Физический No Fall Damage (гашение вертикальной скорости перед землей).
+		if MiscConfig.NoFall then
+			local vel = rootPart.AssemblyLinearVelocity
+			if vel.Y < -24 then
+				local rayParams = RaycastParams.new()
+				rayParams.FilterType = Enum.RaycastFilterType.Exclude
+				rayParams.FilterDescendantsInstances = {character}
+				rayParams.IgnoreWater = true
+
+				local hit = workspaceService:Raycast(rootPart.Position, Vector3.new(0, -9, 0), rayParams)
+				if hit then
+					rootPart.AssemblyLinearVelocity = Vector3.new(vel.X, -2, vel.Z)
+				end
+			end
+		end
+
+		-- Заморозка персонажа при включенной Freecam.
 		if MiscConfig.FreecamEnabled and freecamActive then
 			if frozenCharacterCFrame then
 				rootPart.CFrame = frozenCharacterCFrame
@@ -423,6 +558,12 @@ function Misc:Load()
 	end)
 
 	return self
+end
+
+---Hook XRay state changes.
+function Misc:SetXRay(enabled)
+	MiscConfig.XRayEnabled = enabled
+	setXRayState(enabled)
 end
 
 return Misc
