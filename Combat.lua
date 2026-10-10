@@ -1,5 +1,3 @@
-local cloneref = cloneref or function(o) return o end
-
 -- Services.
 local playersService = cloneref(game:GetService("Players"))
 local runService = cloneref(game:GetService("RunService"))
@@ -14,7 +12,9 @@ local currentCamera = workspaceService.CurrentCamera
 local Combat = {}
 Combat.__index = Combat
 
+local targetEntity = nil
 local targetPart = nil
+local hitscanOverridePos = nil
 
 local CombatConfig = {
 	Enabled = false,
@@ -26,6 +26,7 @@ local CombatConfig = {
 	DeadCheck = true,
 	DistCheck = false,
 	MaxDistance = 1000,
+	VisibleCheck = false,
 	FOV = 120,
 	ShowFOV = false,
 	FOVColor = Color3.fromRGB(170, 85, 255),
@@ -39,7 +40,11 @@ local CombatConfig = {
 	InstantReload = false,
 	AutoReload = false,
 	FastBow = false,
-	InstantEoka = false
+	InstantEoka = false,
+	-- Hitscan & Instant Hit
+	Hitscan = false,
+	HitscanDistance = 7,
+	InstantHit = false
 }
 
 local circleOutline = Drawing.new("Circle")
@@ -55,6 +60,26 @@ circleInline.Filled = false
 circleInline.ZIndex = 2
 circleInline.Visible = false
 
+---Perform raycast visibility check between two vectors.
+---@param origin Vector3
+---@param destination Vector3
+---@param ignoreList table
+---@return boolean, RaycastResult?
+local function checkLineOfSight(origin, destination, ignoreList)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.RespectCanCollide = true
+	params.FilterDescendantsInstances = ignoreList
+
+	local direction = destination - origin
+	if direction.Magnitude < 0.001 then
+		return true, nil
+	end
+
+	local result = workspaceService:Raycast(origin, direction, params)
+	return result == nil, result
+end
+
 ---Scan workspace containers for targets.
 ---@return table
 local function getTargetEntities()
@@ -68,11 +93,9 @@ local function getTargetEntities()
 	if playersFolder then
 		table.insert(containers, { folder = playersFolder, isBot = false })
 	end
-
 	if aiFolder then
 		table.insert(containers, { folder = aiFolder, isBot = true })
 	end
-
 	if #containers == 0 then
 		table.insert(containers, { folder = workspaceService, isBot = false })
 	end
@@ -114,20 +137,64 @@ local function rollHitChance()
 	return math.random(1, 100) <= CombatConfig.HitChance
 end
 
+---Find safe exposure position around target when obstructed.
+---@param cameraPos Vector3
+---@param partPos Vector3
+---@param targetModel Model
+---@return Vector3?
+local function calculateHitscan(cameraPos, partPos, targetModel)
+	local dist = CombatConfig.HitscanDistance
+	local offsets = {
+		Vector3.new(1, 0, 0).Unit * dist,
+		Vector3.new(-1, 0, 0).Unit * dist,
+		Vector3.new(0, 0, 1).Unit * dist,
+		Vector3.new(0, 0, -1).Unit * dist,
+		Vector3.new(1, 0, 1).Unit * dist,
+		Vector3.new(-1, 0, 1).Unit * dist,
+		Vector3.new(1, 0, -1).Unit * dist,
+		Vector3.new(-1, 0, -1).Unit * dist,
+		Vector3.new(0, 1, 0).Unit * math.min(dist, 7.5)
+	}
+
+	local myChar = localPlayer.Character
+	local ignoredFolder = workspaceService:FindFirstChild("Ignored")
+	local ignoreList = { targetModel, currentCamera, myChar, ignoredFolder }
+
+	for _, offset in ipairs(offsets) do
+		local samplePoint = partPos + offset
+		local targetVisible, targetRay = checkLineOfSight(partPos, samplePoint, ignoreList)
+
+		if not targetVisible and targetRay then
+			local safeDistance = math.max(0.05, targetRay.Distance - 0.2)
+			samplePoint = partPos + (offset.Unit * safeDistance)
+		end
+
+		local camVisible = checkLineOfSight(cameraPos, samplePoint, ignoreList)
+		if camVisible then
+			return samplePoint
+		end
+	end
+
+	return nil
+end
+
 ---Get nearest target bone to screen cursor.
----@return Instance?
+---@return Instance?, table?, Vector3?
 local function getClosestTarget()
-	local closestPart, closestDist = nil, math.huge
+	local closestPart, closestDist, bestEntity, resolvedHitscan = nil, math.huge, nil, nil
 	local mousePos = userInputService:GetMouseLocation()
 	local camPos = currentCamera.CFrame.Position
 	local maxFovRadius = CombatConfig.FOV
+	local myChar = localPlayer.Character
+	local ignoredFolder = workspaceService:FindFirstChild("Ignored")
+	local ignoreList = { currentCamera, myChar, ignoredFolder }
 
 	for _, entity in ipairs(getTargetEntities()) do
 		local char = entity.Model
 		local part = nil
 
 		if CombatConfig.HitPart == "Random" then
-			local limbs = {"Head", "HumanoidRootPart", "Torso", "UpperTorso"}
+			local limbs = { "Head", "HumanoidRootPart", "Torso", "UpperTorso" }
 			part = char:FindFirstChild(limbs[math.random(1, #limbs)]) or entity.RootPart
 		else
 			part = char:FindFirstChild(CombatConfig.HitPart) or entity.RootPart or char:FindFirstChild("Head")
@@ -143,12 +210,29 @@ local function getClosestTarget()
 
 		local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
 		if dist <= maxFovRadius and dist < closestDist then
+			local targetIgnore = { char, currentCamera, myChar, ignoredFolder }
+			local isVisible = checkLineOfSight(camPos, part.Position, targetIgnore)
+
+			local hitscanPos = nil
+			if not isVisible and CombatConfig.Hitscan then
+				hitscanPos = calculateHitscan(camPos, part.Position, char)
+				if hitscanPos then
+					isVisible = true
+				end
+			end
+
+			if CombatConfig.VisibleCheck and not isVisible then
+				continue
+			end
+
 			closestDist = dist
 			closestPart = part
+			bestEntity = entity
+			resolvedHitscan = hitscanPos
 		end
 	end
 
-	return closestPart
+	return closestPart, bestEntity, resolvedHitscan
 end
 
 ---Patch weapon recoil, spread, firerate, reload and viewmodels.
@@ -176,7 +260,6 @@ local function applyWeaponMods()
 					local data = require(mod)
 					if typeof(data) ~= "table" then return end
 
-					-- 1. No Pullout Delay (Instant Equip)
 					local setup = rawget(data, "Setup")
 					if typeof(setup) == "function" and debug.info(setup, "s") ~= "[C]" then
 						local origSetupEnv = getfenv(setup)
@@ -187,11 +270,10 @@ local function applyWeaponMods()
 								end
 								return task.delay(dTime, fn, ...)
 							end)
-						}, {__index = origSetupEnv.task or task})
-						setfenv(setup, setmetatable({task = fakeTask}, {__index = origSetupEnv}))
+						}, { __index = origSetupEnv.task or task })
+						setfenv(setup, setmetatable({ task = fakeTask }, { __index = origSetupEnv }))
 					end
 
-					-- 2. Recoil Hook & Fire Hook
 					local fire = rawget(data, "Fire")
 					if typeof(fire) == "function" then
 						if debug.getupvalues and debug.setupvalue then
@@ -230,7 +312,7 @@ local function applyWeaponMods()
 											return true
 										end
 										if key == "Viewmodel" and CombatConfig.ShootSprinting and typeof(val) == "table" then
-											return setmetatable({Sprinting = false}, {__index = val, __newindex = val})
+											return setmetatable({ Sprinting = false }, { __index = val, __newindex = val })
 										end
 										return val
 									end,
@@ -253,7 +335,6 @@ local function applyWeaponMods()
 						rawset(data, "Fire", modifiedFire)
 					end
 
-					-- 3. Reload While Sprinting & Instant Reload
 					local reload = rawget(data, "Reload")
 					if typeof(reload) == "function" then
 						local origReload = reload
@@ -316,7 +397,6 @@ local function applyWeaponMods()
 						end)
 					end
 
-					-- 4. Instant Eoka
 					local tryFire = rawget(data, "TryFire")
 					if typeof(tryFire) == "function" and debug.info(tryFire, "s") ~= "[C]" then
 						local origEnv = getfenv(tryFire)
@@ -328,14 +408,13 @@ local function applyWeaponMods()
 								end
 								return math.random(...)
 							end
-						}, {__index = origEnv.math or math})
-						setfenv(tryFire, setmetatable({math = fakeMath}, {__index = origEnv}))
+						}, { __index = origEnv.math or math })
+						setfenv(tryFire, setmetatable({ math = fakeMath }, { __index = origEnv }))
 					end
 				end)
 			end
 		end
 
-		-- 5. No Spread Hook
 		local physicsFolder = client:FindFirstChild("Physics")
 		local projFolder = physicsFolder and physicsFolder:FindFirstChild("Projectile")
 
@@ -356,8 +435,8 @@ local function applyWeaponMods()
 								end)
 
 								local fakeEnv = setmetatable({
-									math = setmetatable({random = fakeRandom}, {__index = spreadEnv.math or math})
-								}, {__index = spreadEnv})
+									math = setmetatable({ random = fakeRandom }, { __index = spreadEnv.math or math })
+								}, { __index = spreadEnv })
 
 								setfenv(upv, fakeEnv)
 								break
@@ -399,9 +478,11 @@ function Combat:Load()
 		circleOutline.Visible = CombatConfig.Enabled and CombatConfig.ShowFOV and CombatConfig.FOVOutline
 
 		if CombatConfig.Enabled then
-			targetPart = getClosestTarget()
+			targetPart, targetEntity, hitscanOverridePos = getClosestTarget()
 		else
 			targetPart = nil
+			targetEntity = nil
+			hitscanOverridePos = nil
 		end
 	end)
 
@@ -416,10 +497,11 @@ function Combat:Load()
 		end
 
 		if targetPart and rollHitChance() then
+			local finalPos = hitscanOverridePos or targetPart.Position
 			if key == "Target" then
 				return targetPart
 			elseif key == "Hit" then
-				return targetPart.CFrame
+				return CFrame.new(finalPos)
 			end
 		end
 
@@ -441,20 +523,29 @@ function Combat:Load()
 			return oldNamecall(self, ...)
 		end
 
-		local hitpart = targetPart
-		local hitsize = hitpart.Size
-		local orgpos = hitpart.Position
+		local finalPos = hitscanOverridePos or targetPart.Position
 
-		local hitpos = orgpos + Vector3.new(
-			(math.random() - math.random()) * (hitsize.X / 10),
-			(math.random() - math.random()) * (hitsize.Y / 10),
-			(math.random() - math.random()) * (hitsize.Z / 10)
-		)
+		-- Instant Hit: возвращаем моментальный результат попадания без ожидания цикла трассировки
+		if method == "Raycast" and CombatConfig.InstantHit then
+			local origin, direction, params = ...
+			local myChar = localPlayer.Character
+			local isSimRay = params and (params.FilterType == Enum.RaycastFilterType.Exclude)
+
+			if isSimRay and myChar and table.find(params.FilterDescendantsInstances, myChar) then
+				return {
+					Instance = targetPart,
+					Position = finalPos,
+					Normal = (origin - finalPos).Unit,
+					Material = targetPart.Material,
+					Distance = (origin - finalPos).Magnitude
+				}
+			end
+		end
 
 		if method == "Raycast" then
 			local origin, direction, params = ...
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-				local newDir = (hitpos - origin).Unit * direction.Magnitude
+				local newDir = (finalPos - origin).Unit * direction.Magnitude
 				return oldNamecall(self, origin, newDir, params)
 			end
 		end
@@ -463,7 +554,7 @@ function Combat:Load()
 			local ray = oldNamecall(self, ...)
 			local origin = ray.Origin
 			local direction = ray.Direction
-			local newDir = (hitpos - origin).Unit * direction.Magnitude
+			local newDir = (finalPos - origin).Unit * direction.Magnitude
 
 			return Ray.new(origin, newDir)
 		end
@@ -473,7 +564,7 @@ function Combat:Load()
 			if typeof(ray) == "Ray" then
 				local origin = ray.Origin
 				local direction = ray.Direction
-				local newDir = (hitpos - origin).Unit * direction.Magnitude
+				local newDir = (finalPos - origin).Unit * direction.Magnitude
 
 				return oldNamecall(self, Ray.new(origin, newDir), ignoreList, terrainCellsAreCubes, ignoreWater)
 			end
