@@ -9,7 +9,7 @@ local replicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 local contextActionService = cloneref(game:GetService("ContextActionService"))
 
 local localPlayer = playersService.LocalPlayer
-local currentCamera = workspaceService.CurrentCamera
+local originalCamera = workspaceService.CurrentCamera
 
 local Misc = {}
 Misc.__index = Misc
@@ -18,8 +18,9 @@ local FLY_PULSE_DURATION = 0.7
 local flyStartTime = 0
 local isPulsingGround = false
 
--- Freecam State.
+-- Freecam State (Virtual Camera).
 local freecamActive = false
+local freecamCamera = nil
 local freecamPos = Vector3.zero
 local freecamPitch = 0
 local freecamYaw = 0
@@ -27,7 +28,6 @@ local savedCameraType = nil
 local savedCameraSubject = nil
 local savedAnchored = false
 local frozenCharacterCFrame = nil
-local savedHeadCFrame = nil
 
 -- Zoom State.
 local savedCameraFov = nil
@@ -189,44 +189,36 @@ local function isBuildingInstance(inst)
 	return false
 end
 
----Filter out base building parts from spatial query tables.
----@param parts table
----@return table
-local function filterBuildingArray(parts)
-	if typeof(parts) ~= "table" then return parts end
-	local filtered = {}
-	for i = 1, #parts do
-		local part = parts[i]
-		if not isBuildingInstance(part) then
-			table.insert(filtered, part)
-		end
-	end
-	return filtered
-end
-
----Enable freecam scriptable control and freeze character.
+---Enable freecam using a completely separate virtual camera.
 local function enableFreecam()
-	currentCamera = workspaceService.CurrentCamera or currentCamera
-	savedCameraType = currentCamera.CameraType
-	savedCameraSubject = currentCamera.CameraSubject
+	originalCamera = workspaceService.CurrentCamera
+	if not originalCamera then return end
 
-	local camCFrame = currentCamera.CFrame
-	freecamPos = camCFrame.Position
+	savedCameraType = originalCamera.CameraType
+	savedCameraSubject = originalCamera.CameraSubject
 
-	local _, yaw, _ = camCFrame:ToOrientation()
-	local pitch = math.asin(camCFrame.LookVector.Y)
+	local startCFrame = originalCamera.CFrame
+	freecamPos = startCFrame.Position
+	local _, yaw, _ = startCFrame:ToOrientation()
+	local pitch = math.asin(startCFrame.LookVector.Y)
 	freecamYaw = yaw
 	freecamPitch = pitch
+
+	-- Создаем отдельную камеру исключительно для рендеринга свободного полета.
+	freecamCamera = Instance.new("Camera")
+	freecamCamera.Name = "FreecamVirtualCamera"
+	freecamCamera.CameraType = Enum.CameraType.Scriptable
+	freecamCamera.FieldOfView = originalCamera.FieldOfView
+	freecamCamera.CFrame = startCFrame
+	freecamCamera.Parent = workspaceService
 
 	local character = localPlayer.Character
 	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	local head = character and character:FindFirstChild("Head")
 
 	if rootPart then
 		savedAnchored = rootPart.Anchored
 		frozenCharacterCFrame = rootPart.CFrame
-		savedHeadCFrame = head and head.CFrame or (rootPart.CFrame * CFrame.new(0, 1.5, 0))
 		rootPart.Anchored = true
 		rootPart.AssemblyLinearVelocity = Vector3.zero
 		rootPart.AssemblyAngularVelocity = Vector3.zero
@@ -238,7 +230,14 @@ local function enableFreecam()
 
 	setControlsEnabled(false)
 
-	currentCamera.CameraType = Enum.CameraType.Scriptable
+	-- Отключаем слушатели на переключение CurrentCamera на время Freecam.
+	pcall(function()
+		for _, conn in ipairs(getconnections(workspaceService:GetPropertyChangedSignal("CurrentCamera"))) do
+			conn:Disable()
+		end
+	end)
+
+	workspaceService.CurrentCamera = freecamCamera
 	freecamActive = true
 
 	contextActionService:BindActionAtPriority(
@@ -255,7 +254,6 @@ local function disableFreecam()
 	if not freecamActive then return end
 	freecamActive = false
 	frozenCharacterCFrame = nil
-	savedHeadCFrame = nil
 
 	contextActionService:UnbindAction("FreecamMovementSink")
 	setControlsEnabled(true)
@@ -268,11 +266,23 @@ local function disableFreecam()
 		rootPart.AssemblyAngularVelocity = Vector3.zero
 	end
 
-	currentCamera = workspaceService.CurrentCamera or currentCamera
-	currentCamera.CameraType = savedCameraType or Enum.CameraType.Custom
+	if originalCamera and originalCamera.Parent then
+		workspaceService.CurrentCamera = originalCamera
+		originalCamera.CameraType = savedCameraType or Enum.CameraType.Custom
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		originalCamera.CameraSubject = savedCameraSubject or humanoid
+	end
 
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	currentCamera.CameraSubject = savedCameraSubject or humanoid
+	if freecamCamera then
+		freecamCamera:Destroy()
+		freecamCamera = nil
+	end
+
+	pcall(function()
+		for _, conn in ipairs(getconnections(workspaceService:GetPropertyChangedSignal("CurrentCamera"))) do
+			conn:Enable()
+		end
+	end)
 
 	userInputService.MouseBehavior = Enum.MouseBehavior.Default
 end
@@ -368,8 +378,9 @@ function Misc:Unload()
 	disableFreecam()
 	setXRayState(false)
 
-	if isZoomActive and savedCameraFov then
-		currentCamera.FieldOfView = savedCameraFov
+	local targetCam = freecamCamera or originalCamera or workspaceService.CurrentCamera
+	if isZoomActive and savedCameraFov and targetCam then
+		targetCam.FieldOfView = savedCameraFov
 		isZoomActive = false
 	end
 
@@ -387,20 +398,20 @@ end
 function Misc:Load()
 	setupInstantLoot()
 
-	-- Spoof Anchored and Camera properties to bypass anti-wallpeek.
+	-- Spoof CurrentCamera on Workspace and hide Virtual Camera from all game scripts.
 	local oldIndex
 	oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
 		if not checkcaller() and freecamActive then
+			if (self == workspaceService or (typeof(self) == "Instance" and self:IsA("Workspace"))) and (key == "CurrentCamera" or key == "currentCamera") then
+				return originalCamera
+			end
+			if self == freecamCamera then
+				return originalCamera
+			end
 			if key == "Anchored" then
 				local char = localPlayer.Character
 				if char and self == char:FindFirstChild("HumanoidRootPart") then
 					return savedAnchored
-				end
-			elseif self == currentCamera or (typeof(self) == "Instance" and self:IsA("Camera")) then
-				if key == "CFrame" or key == "CoordinateFrame" or key == "Focus" then
-					if savedHeadCFrame then
-						return savedHeadCFrame
-					end
 				end
 			end
 		end
@@ -416,61 +427,7 @@ function Misc:Load()
 		return oldIsKeyDown(self, key)
 	end))
 
-	-- Function hooks for Raycasts and Spatial Queries to completely neutralize Anti-Wallpeek.
-	local oldRaycast
-	oldRaycast = hookfunction(workspaceService.Raycast, newcclosure(function(self, origin, direction, params)
-		local result = oldRaycast(self, origin, direction, params)
-		if not checkcaller() and freecamActive and result and isBuildingInstance(result.Instance) then
-			return nil
-		end
-		return result
-	end))
-
-	local oldFindPartOnRayWithIgnoreList
-	oldFindPartOnRayWithIgnoreList = hookfunction(workspaceService.FindPartOnRayWithIgnoreList, newcclosure(function(self, ray, ignoreList, terrainAsBoundary, ignoreWater)
-		local part, position, normal, material = oldFindPartOnRayWithIgnoreList(self, ray, ignoreList, terrainAsBoundary, ignoreWater)
-		if not checkcaller() and freecamActive and part and isBuildingInstance(part) then
-			return nil, position, normal, material
-		end
-		return part, position, normal, material
-	end))
-
-	local oldFindPartOnRay
-	oldFindPartOnRay = hookfunction(workspaceService.FindPartOnRay, newcclosure(function(self, ray, ignoreDescendantsInstance, terrainAsBoundary, ignoreWater)
-		local part, position, normal, material = oldFindPartOnRay(self, ray, ignoreDescendantsInstance, terrainAsBoundary, ignoreWater)
-		if not checkcaller() and freecamActive and part and isBuildingInstance(part) then
-			return nil, position, normal, material
-		end
-		return part, position, normal, material
-	end))
-
-	local oldGetPartBoundsInBox
-	oldGetPartBoundsInBox = hookfunction(workspaceService.GetPartBoundsInBox, newcclosure(function(self, cframe, size, params)
-		local parts = oldGetPartBoundsInBox(self, cframe, size, params)
-		if not checkcaller() and freecamActive then
-			return filterBuildingArray(parts)
-		end
-		return parts
-	end))
-
-	local oldGetPartBoundsInRadius
-	oldGetPartBoundsInRadius = hookfunction(workspaceService.GetPartBoundsInRadius, newcclosure(function(self, position, radius, params)
-		local parts = oldGetPartBoundsInRadius(self, position, radius, params)
-		if not checkcaller() and freecamActive then
-			return filterBuildingArray(parts)
-		end
-		return parts
-	end))
-
-	local oldGetRenderCFrame
-	oldGetRenderCFrame = hookfunction(currentCamera.GetRenderCFrame, newcclosure(function(self, ...)
-		if not checkcaller() and freecamActive and savedHeadCFrame then
-			return savedHeadCFrame
-		end
-		return oldGetRenderCFrame(self, ...)
-	end))
-
-	-- Metamethod __namecall hook for remotes and namecall-based raycasts.
+	-- Namecall hooks to filter out freecamCamera and spoof queries.
 	local oldNamecall
 	oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
 		if checkcaller() then
@@ -478,26 +435,26 @@ function Misc:Load()
 		end
 
 		local method = getnamecallmethod()
-
 		if freecamActive then
-			if method == "Raycast" then
-				local res = oldNamecall(self, ...)
-				if res and isBuildingInstance(res.Instance) then
-					return nil
+			if self == workspaceService then
+				if method == "GetChildren" then
+					local children = oldNamecall(self, ...)
+					if freecamCamera then
+						for i = #children, 1, -1 do
+							if children[i] == freecamCamera then
+								table.remove(children, i)
+							end
+						end
+					end
+					return children
+				elseif method == "FindFirstChildOfClass" or method == "findFirstChildOfClass" then
+					local className = ...
+					if className == "Camera" then
+						return originalCamera
+					end
 				end
-				return res
-			elseif method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRay" or method == "FindPartOnRayWithWhitelist" then
-				local part, pos, norm, mat = oldNamecall(self, ...)
-				if part and isBuildingInstance(part) then
-					return nil, pos, norm, mat
-				end
-				return part, pos, norm, mat
-			elseif method == "GetPartBoundsInBox" or method == "GetPartBoundsInRadius" or method == "GetPartsInPart" then
-				local parts = oldNamecall(self, ...)
-				return filterBuildingArray(parts)
-			elseif method == "GetRenderCFrame" and savedHeadCFrame then
-				return savedHeadCFrame
-			elseif method == "IsKeyDown" then
+			end
+			if method == "IsKeyDown" then
 				local key = ...
 				if BLOCKED_FREECAM_KEYS[key] then
 					return false
@@ -518,65 +475,67 @@ function Misc:Load()
 
 	-- Camera Render Loop (Freecam & Zoom).
 	renderSteppedConn = runService.RenderStepped:Connect(function(dt)
-		currentCamera = workspaceService.CurrentCamera or currentCamera
+		local activeCam = (freecamActive and freecamCamera) or originalCamera or workspaceService.CurrentCamera
 
 		-- Zoom Handler.
-		if MiscConfig.ZoomEnabled then
+		if MiscConfig.ZoomEnabled and activeCam then
 			if not isZoomActive then
 				isZoomActive = true
-				savedCameraFov = currentCamera.FieldOfView
+				savedCameraFov = activeCam.FieldOfView
 			end
-			currentCamera.FieldOfView = MiscConfig.ZoomFOV
+			activeCam.FieldOfView = MiscConfig.ZoomFOV
 		else
-			if isZoomActive then
+			if isZoomActive and activeCam then
 				isZoomActive = false
-				currentCamera.FieldOfView = savedCameraFov or 70
+				activeCam.FieldOfView = savedCameraFov or 70
 				savedCameraFov = nil
 			end
 		end
 
-		-- Freecam Handler.
+		-- Virtual Freecam Controller.
 		if MiscConfig.FreecamEnabled then
 			if not freecamActive then
 				enableFreecam()
 			end
 
-			local character = localPlayer.Character
-			local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-			if humanoid then
-				humanoid:Move(Vector3.zero, false)
+			if freecamCamera then
+				local character = localPlayer.Character
+				local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+				if humanoid then
+					humanoid:Move(Vector3.zero, false)
+				end
+
+				if userInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+					userInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+					local delta = userInputService:GetMouseDelta()
+					freecamYaw = freecamYaw - math.rad(delta.X * 0.35)
+					freecamPitch = math.clamp(freecamPitch - math.rad(delta.Y * 0.35), math.rad(-89), math.rad(89))
+				else
+					userInputService.MouseBehavior = Enum.MouseBehavior.Default
+				end
+
+				local camRot = CFrame.fromEulerAnglesYXZ(freecamPitch, freecamYaw, 0)
+				local moveVector = Vector3.zero
+
+				if userInputService:IsKeyDown(Enum.KeyCode.W) then moveVector = moveVector - Vector3.zAxis end
+				if userInputService:IsKeyDown(Enum.KeyCode.S) then moveVector = moveVector + Vector3.zAxis end
+				if userInputService:IsKeyDown(Enum.KeyCode.A) then moveVector = moveVector - Vector3.xAxis end
+				if userInputService:IsKeyDown(Enum.KeyCode.D) then moveVector = moveVector + Vector3.xAxis end
+				if userInputService:IsKeyDown(Enum.KeyCode.Space) or userInputService:IsKeyDown(Enum.KeyCode.E) then moveVector = moveVector + Vector3.yAxis end
+				if userInputService:IsKeyDown(Enum.KeyCode.LeftControl) or userInputService:IsKeyDown(Enum.KeyCode.Q) then moveVector = moveVector - Vector3.yAxis end
+
+				local speed = MiscConfig.FreecamSpeed
+				if userInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+					speed = speed * MiscConfig.FreecamShiftBoost
+				end
+
+				if moveVector.Magnitude > 0 then
+					local worldMove = (camRot * moveVector).Unit * (speed * dt)
+					freecamPos = freecamPos + worldMove
+				end
+
+				freecamCamera.CFrame = CFrame.new(freecamPos) * camRot
 			end
-
-			if userInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
-				userInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
-				local delta = userInputService:GetMouseDelta()
-				freecamYaw = freecamYaw - math.rad(delta.X * 0.35)
-				freecamPitch = math.clamp(freecamPitch - math.rad(delta.Y * 0.35), math.rad(-89), math.rad(89))
-			else
-				userInputService.MouseBehavior = Enum.MouseBehavior.Default
-			end
-
-			local camRot = CFrame.fromEulerAnglesYXZ(freecamPitch, freecamYaw, 0)
-			local moveVector = Vector3.zero
-
-			if userInputService:IsKeyDown(Enum.KeyCode.W) then moveVector = moveVector - Vector3.zAxis end
-			if userInputService:IsKeyDown(Enum.KeyCode.S) then moveVector = moveVector + Vector3.zAxis end
-			if userInputService:IsKeyDown(Enum.KeyCode.A) then moveVector = moveVector - Vector3.xAxis end
-			if userInputService:IsKeyDown(Enum.KeyCode.D) then moveVector = moveVector + Vector3.xAxis end
-			if userInputService:IsKeyDown(Enum.KeyCode.Space) or userInputService:IsKeyDown(Enum.KeyCode.E) then moveVector = moveVector + Vector3.yAxis end
-			if userInputService:IsKeyDown(Enum.KeyCode.LeftControl) or userInputService:IsKeyDown(Enum.KeyCode.Q) then moveVector = moveVector - Vector3.yAxis end
-
-			local speed = MiscConfig.FreecamSpeed
-			if userInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
-				speed = speed * MiscConfig.FreecamShiftBoost
-			end
-
-			if moveVector.Magnitude > 0 then
-				local worldMove = (camRot * moveVector).Unit * (speed * dt)
-				freecamPos = freecamPos + worldMove
-			end
-
-			currentCamera.CFrame = CFrame.new(freecamPos) * camRot
 		else
 			if freecamActive then
 				disableFreecam()
@@ -593,7 +552,6 @@ function Misc:Load()
 		local rootPart = character:FindFirstChild("HumanoidRootPart")
 		if not (humanoid and rootPart and humanoid.Health > 0) then return end
 
-		currentCamera = workspaceService.CurrentCamera or currentCamera
 		local stepDt = math.clamp(dt, 0.001, 0.033)
 
 		-- Physical Fall Damage Dampening.
@@ -677,7 +635,8 @@ function Misc:Load()
 			end
 
 			if not isPulsingGround then
-				local camCF = currentCamera.CFrame
+				local cam = originalCamera or workspaceService.CurrentCamera
+				local camCF = cam.CFrame
 				local flyDir = Vector3.zero
 
 				if userInputService:IsKeyDown(Enum.KeyCode.W) then flyDir = flyDir + camCF.LookVector end
