@@ -37,7 +37,7 @@ local xrayActive = false
 local cachedPartTransparencies = setmetatable({}, { __mode = "k" })
 local cachedDecalTransparencies = setmetatable({}, { __mode = "k" })
 local cachedSurfaceAppearances = {}
-local xrayDescendantConn = nil
+local xrayWatchConns = {}
 
 local BLOCKED_FREECAM_KEYS = {
 	[Enum.KeyCode.W] = true,
@@ -52,20 +52,38 @@ local BLOCKED_FREECAM_KEYS = {
 	[Enum.KeyCode.C] = true,
 }
 
-local STRUCTURE_CONTAINER_NAMES = {
+-- Максимальный размер детали, которую можно считать постройкой (отсекает горы/границы карты).
+local MAX_STRUCTURE_SIZE = 60
+
+-- Точные названия контейнеров построек (без подстрокового поиска по всей иерархии).
+local STRUCTURE_ROOT_NAMES = {
 	["buildingblocks"] = true,
 	["builtobjects"] = true,
-	["structures"] = true,
 	["doors"] = true,
 	["ladders"] = true,
-	["buildings"] = true,
-	["bases"] = true,
 }
 
-local STRUCTURE_KEYWORDS = {
-	"wall", "floor", "foundation", "roof", "ceiling", "door", "window",
-	"stair", "ramp", "pillar", "ladder", "frame", "hatch", "gate",
-	"barricade", "fence"
+-- Точные названия деталей построек (целое совпадение, не подстрока).
+local STRUCTURE_PART_NAMES = {
+	["wall"] = true,
+	["halfwall"] = true,
+	["floor"] = true,
+	["triangle floor"] = true,
+	["foundation"] = true,
+	["triangle foundation"] = true,
+	["roof"] = true,
+	["ceiling"] = true,
+	["door"] = true,
+	["doorway"] = true,
+	["window"] = true,
+	["stairs"] = true,
+	["ramp"] = true,
+	["pillar"] = true,
+	["frame"] = true,
+	["gate"] = true,
+	["hatch"] = true,
+	["ladder"] = true,
+	["fence"] = true,
 }
 
 local MiscConfig = {
@@ -220,87 +238,119 @@ local function disableFreecam()
 	userInputService.MouseBehavior = Enum.MouseBehavior.Default
 end
 
----Determine whether an instance belongs to player structures or bases.
+---Check whether instance sits under a dedicated structure container, scoped and shallow.
 ---@param inst Instance
 ---@return boolean
-local function isStructureMember(inst)
-	if not inst then return false end
-	if inst:IsA("Terrain") then return false end
-
-	local model = inst:FindFirstAncestorOfClass("Model")
-	if model and (model:FindFirstChildOfClass("Humanoid") or model:FindFirstChildOfClass("Tool")) then
-		return false
-	end
-
+local function isUnderStructureRoot(inst)
 	local current = inst
-	while current and current ~= workspaceService and current ~= game do
+	local depth = 0
+
+	while current and current ~= workspaceService and depth < 8 do
 		local lower = current.Name:lower()
-		if STRUCTURE_CONTAINER_NAMES[lower] then
+
+		if STRUCTURE_ROOT_NAMES[lower] then
 			return true
 		end
-		for _, kw in ipairs(STRUCTURE_KEYWORDS) do
-			if lower:find(kw) then
-				return true
-			end
+
+		-- Особый случай: Lobby.Structures
+		if lower == "structures" and current.Parent and current.Parent.Name == "Lobby" then
+			return true
 		end
+
 		current = current.Parent
+		depth = depth + 1
 	end
 
 	return false
 end
 
----Apply X-Ray transparency to a specific instance.
+---Strict check for a valid, size-limited building part.
+---@param part BasePart
+---@return boolean
+local function isSafeStructurePart(part)
+	if not part:IsA("BasePart") or part:IsA("Terrain") then return false end
+	if part.Size.Magnitude > MAX_STRUCTURE_SIZE then return false end
+
+	local nameLower = part.Name:lower()
+	if not STRUCTURE_PART_NAMES[nameLower] then return false end
+
+	return isUnderStructureRoot(part)
+end
+
+---Apply X-Ray transparency to a specific instance safely.
 ---@param inst Instance
 local function applyInstanceXRay(inst)
-	if not isStructureMember(inst) then return end
-
-	-- SurfaceAppearance полностью блокирует прозрачность в Roblox, выгружаем его в кэш
-	if inst:IsA("SurfaceAppearance") then
-		local parentPart = inst.Parent
-		if parentPart and parentPart:IsA("BasePart") then
-			table.insert(cachedSurfaceAppearances, { Object = inst, OriginalParent = parentPart })
-			inst.Parent = nil
-		end
-		return
-	end
-
 	if inst:IsA("BasePart") then
+		if not isSafeStructurePart(inst) then return end
+
 		if cachedPartTransparencies[inst] == nil then
 			cachedPartTransparencies[inst] = inst.Transparency
 		end
 		inst.Transparency = MiscConfig.XRayTransparency
-	elseif inst:IsA("Decal") or inst:IsA("Texture") then
-		if cachedDecalTransparencies[inst] == nil then
-			cachedDecalTransparencies[inst] = inst.Transparency
+
+	elseif inst:IsA("SurfaceAppearance") then
+		local parentPart = inst.Parent
+		if parentPart and parentPart:IsA("BasePart") and isSafeStructurePart(parentPart) then
+			table.insert(cachedSurfaceAppearances, { Object = inst, OriginalParent = parentPart })
+			inst.Parent = nil
 		end
-		inst.Transparency = MiscConfig.XRayTransparency
+
+	elseif inst:IsA("Decal") or inst:IsA("Texture") then
+		local parentPart = inst.Parent
+		if parentPart and parentPart:IsA("BasePart") and isSafeStructurePart(parentPart) then
+			if cachedDecalTransparencies[inst] == nil then
+				cachedDecalTransparencies[inst] = inst.Transparency
+			end
+			inst.Transparency = MiscConfig.XRayTransparency
+		end
 	end
 end
 
----Enable or disable global structure X-Ray.
+---Collect the known structure root folders currently present in Workspace.
+---@return table<Instance>
+local function findStructureRoots()
+	local roots = {}
+
+	for _, child in ipairs(workspaceService:GetChildren()) do
+		local lower = child.Name:lower()
+		if STRUCTURE_ROOT_NAMES[lower] then
+			table.insert(roots, child)
+		elseif child.Name == "Lobby" then
+			local structures = child:FindFirstChild("Structures")
+			if structures then
+				table.insert(roots, structures)
+			end
+		end
+	end
+
+	return roots
+end
+
+---Enable or disable global structure X-Ray, scoped only to known containers.
 ---@param state boolean
 local function setXRayState(state)
 	xrayActive = state
 
 	if state then
-		for _, desc in ipairs(workspaceService:GetDescendants()) do
-			applyInstanceXRay(desc)
-		end
+		local roots = findStructureRoots()
 
-		if not xrayDescendantConn then
-			xrayDescendantConn = workspaceService.DescendantAdded:Connect(function(desc)
+		for _, root in ipairs(roots) do
+			for _, desc in ipairs(root:GetDescendants()) do
+				applyInstanceXRay(desc)
+			end
+
+			table.insert(xrayWatchConns, root.DescendantAdded:Connect(function(desc)
 				if xrayActive then
 					task.defer(applyInstanceXRay, desc)
 				end
-			end)
+			end))
 		end
 	else
-		if xrayDescendantConn then
-			xrayDescendantConn:Disconnect()
-			xrayDescendantConn = nil
+		for _, conn in ipairs(xrayWatchConns) do
+			conn:Disconnect()
 		end
+		table.clear(xrayWatchConns)
 
-		-- Возвращаем SurfaceAppearance обратно на детали
 		for _, data in ipairs(cachedSurfaceAppearances) do
 			if data.Object and data.OriginalParent and data.OriginalParent.Parent then
 				data.Object.Parent = data.OriginalParent
@@ -308,7 +358,6 @@ local function setXRayState(state)
 		end
 		table.clear(cachedSurfaceAppearances)
 
-		-- Восстанавливаем прозрачность деталей
 		for part, original in pairs(cachedPartTransparencies) do
 			if part and part.Parent then
 				part.Transparency = original
@@ -316,7 +365,6 @@ local function setXRayState(state)
 		end
 		table.clear(cachedPartTransparencies)
 
-		-- Восстанавливаем прозрачность декалей
 		for decal, original in pairs(cachedDecalTransparencies) do
 			if decal and decal.Parent then
 				decal.Transparency = original
@@ -486,7 +534,7 @@ function Misc:Load()
 		currentCamera = workspaceService.CurrentCamera or currentCamera
 		local stepDt = math.clamp(dt, 0.001, 0.033)
 
-		-- Физическая защита от урона при падении (ограничение предельной скорости + гашение перед землей).
+		-- Физическая защита от урона при падении.
 		if MiscConfig.NoFall then
 			local vel = rootPart.AssemblyLinearVelocity
 			if vel.Y < -20 then
