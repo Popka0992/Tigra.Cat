@@ -32,8 +32,11 @@ local frozenCharacterCFrame = nil
 local savedCameraFov = nil
 local isZoomActive = false
 
--- X-Ray State.
-local originalTransparencies = setmetatable({}, { __mode = "k" })
+-- X-Ray Cache.
+local xrayActive = false
+local cachedPartTransparencies = setmetatable({}, { __mode = "k" })
+local cachedDecalTransparencies = setmetatable({}, { __mode = "k" })
+local cachedSurfaceAppearances = {}
 local xrayDescendantConn = nil
 
 local BLOCKED_FREECAM_KEYS = {
@@ -49,13 +52,20 @@ local BLOCKED_FREECAM_KEYS = {
 	[Enum.KeyCode.C] = true,
 }
 
-local STRUCTURE_KEYWORDS = {
-	"wall", "door", "floor", "ceiling", "roof", "foundation", "frame",
-	"window", "pillar", "stairs", "barricade", "gate", "ladder", "ramp"
+local STRUCTURE_CONTAINER_NAMES = {
+	["buildingblocks"] = true,
+	["builtobjects"] = true,
+	["structures"] = true,
+	["doors"] = true,
+	["ladders"] = true,
+	["buildings"] = true,
+	["bases"] = true,
 }
 
-local STRUCTURE_CONTAINERS = {
-	"Structures", "Buildings", "Bases", "Building", "BuiltObjects", "Deployables"
+local STRUCTURE_KEYWORDS = {
+	"wall", "floor", "foundation", "roof", "ceiling", "door", "window",
+	"stair", "ramp", "pillar", "ladder", "frame", "hatch", "gate",
+	"barricade", "fence"
 }
 
 local MiscConfig = {
@@ -210,58 +220,77 @@ local function disableFreecam()
 	userInputService.MouseBehavior = Enum.MouseBehavior.Default
 end
 
----Check if a BasePart belongs to player structures/bases.
----@param part BasePart
+---Determine whether an instance belongs to player structures or bases.
+---@param inst Instance
 ---@return boolean
-local function isStructurePart(part)
-	if not part:IsA("BasePart") or part:IsA("Terrain") then return false end
+local function isStructureMember(inst)
+	if not inst then return false end
+	if inst:IsA("Terrain") then return false end
 
-	local parent = part.Parent
-	if not parent or parent:IsA("Workspace") then return false end
-
-	-- Проверка по контейнерам
-	for _, folderName in ipairs(STRUCTURE_CONTAINERS) do
-		local container = workspaceService:FindFirstChild(folderName)
-		if container and part:IsDescendantOf(container) then
-			return true
-		end
+	local model = inst:FindFirstAncestorOfClass("Model")
+	if model and (model:FindFirstChildOfClass("Humanoid") or model:FindFirstChildOfClass("Tool")) then
+		return false
 	end
 
-	-- Проверка по ключевым словам названия деталей или моделей
-	local nameLower = part.Name:lower()
-	local parentLower = parent.Name:lower()
-
-	for _, kw in ipairs(STRUCTURE_KEYWORDS) do
-		if nameLower:find(kw) or parentLower:find(kw) then
+	local current = inst
+	while current and current ~= workspaceService and current ~= game do
+		local lower = current.Name:lower()
+		if STRUCTURE_CONTAINER_NAMES[lower] then
 			return true
 		end
+		for _, kw in ipairs(STRUCTURE_KEYWORDS) do
+			if lower:find(kw) then
+				return true
+			end
+		end
+		current = current.Parent
 	end
 
 	return false
 end
 
----Apply or restore X-Ray transparency on structures.
+---Apply X-Ray transparency to a specific instance.
+---@param inst Instance
+local function applyInstanceXRay(inst)
+	if not isStructureMember(inst) then return end
+
+	-- SurfaceAppearance полностью блокирует прозрачность в Roblox, выгружаем его в кэш
+	if inst:IsA("SurfaceAppearance") then
+		local parentPart = inst.Parent
+		if parentPart and parentPart:IsA("BasePart") then
+			table.insert(cachedSurfaceAppearances, { Object = inst, OriginalParent = parentPart })
+			inst.Parent = nil
+		end
+		return
+	end
+
+	if inst:IsA("BasePart") then
+		if cachedPartTransparencies[inst] == nil then
+			cachedPartTransparencies[inst] = inst.Transparency
+		end
+		inst.Transparency = MiscConfig.XRayTransparency
+	elseif inst:IsA("Decal") or inst:IsA("Texture") then
+		if cachedDecalTransparencies[inst] == nil then
+			cachedDecalTransparencies[inst] = inst.Transparency
+		end
+		inst.Transparency = MiscConfig.XRayTransparency
+	end
+end
+
+---Enable or disable global structure X-Ray.
 ---@param state boolean
 local function setXRayState(state)
+	xrayActive = state
+
 	if state then
 		for _, desc in ipairs(workspaceService:GetDescendants()) do
-			if isStructurePart(desc) then
-				if originalTransparencies[desc] == nil then
-					originalTransparencies[desc] = desc.Transparency
-				end
-				desc.Transparency = MiscConfig.XRayTransparency
-			end
+			applyInstanceXRay(desc)
 		end
 
 		if not xrayDescendantConn then
 			xrayDescendantConn = workspaceService.DescendantAdded:Connect(function(desc)
-				if MiscConfig.XRayEnabled and isStructurePart(desc) then
-					task.defer(function()
-						if originalTransparencies[desc] == nil then
-							originalTransparencies[desc] = desc.Transparency
-						end
-						desc.Transparency = MiscConfig.XRayTransparency
-					end)
+				if xrayActive then
+					task.defer(applyInstanceXRay, desc)
 				end
 			end)
 		end
@@ -271,12 +300,29 @@ local function setXRayState(state)
 			xrayDescendantConn = nil
 		end
 
-		for part, original in pairs(originalTransparencies) do
+		-- Возвращаем SurfaceAppearance обратно на детали
+		for _, data in ipairs(cachedSurfaceAppearances) do
+			if data.Object and data.OriginalParent and data.OriginalParent.Parent then
+				data.Object.Parent = data.OriginalParent
+			end
+		end
+		table.clear(cachedSurfaceAppearances)
+
+		-- Восстанавливаем прозрачность деталей
+		for part, original in pairs(cachedPartTransparencies) do
 			if part and part.Parent then
 				part.Transparency = original
 			end
 		end
-		table.clear(originalTransparencies)
+		table.clear(cachedPartTransparencies)
+
+		-- Восстанавливаем прозрачность декалей
+		for decal, original in pairs(cachedDecalTransparencies) do
+			if decal and decal.Parent then
+				decal.Transparency = original
+			end
+		end
+		table.clear(cachedDecalTransparencies)
 	end
 end
 
@@ -440,18 +486,21 @@ function Misc:Load()
 		currentCamera = workspaceService.CurrentCamera or currentCamera
 		local stepDt = math.clamp(dt, 0.001, 0.033)
 
-		-- Физический No Fall Damage (гашение вертикальной скорости перед землей).
+		-- Физическая защита от урона при падении (ограничение предельной скорости + гашение перед землей).
 		if MiscConfig.NoFall then
 			local vel = rootPart.AssemblyLinearVelocity
-			if vel.Y < -24 then
+			if vel.Y < -20 then
+				rootPart.AssemblyLinearVelocity = Vector3.new(vel.X, -20, vel.Z)
+
 				local rayParams = RaycastParams.new()
 				rayParams.FilterType = Enum.RaycastFilterType.Exclude
 				rayParams.FilterDescendantsInstances = {character}
 				rayParams.IgnoreWater = true
 
-				local hit = workspaceService:Raycast(rootPart.Position, Vector3.new(0, -9, 0), rayParams)
+				local hit = workspaceService:Raycast(rootPart.Position, Vector3.new(0, -10, 0), rayParams)
 				if hit then
-					rootPart.AssemblyLinearVelocity = Vector3.new(vel.X, -2, vel.Z)
+					rootPart.AssemblyLinearVelocity = Vector3.new(vel.X, -1, vel.Z)
+					humanoid:ChangeState(Enum.HumanoidStateType.Landed)
 				end
 			end
 		end
@@ -560,7 +609,8 @@ function Misc:Load()
 	return self
 end
 
----Hook XRay state changes.
+---Toggle X-Ray state from outside.
+---@param enabled boolean
 function Misc:SetXRay(enabled)
 	MiscConfig.XRayEnabled = enabled
 	setXRayState(enabled)
