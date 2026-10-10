@@ -60,16 +60,18 @@ circleInline.Filled = false
 circleInline.ZIndex = 2
 circleInline.Visible = false
 
----Perform raycast visibility check between two vectors.
+---Perform raycast visibility check between two points.
 ---@param origin Vector3
 ---@param destination Vector3
----@param ignoreList table
+---@param targetChar Model?
 ---@return boolean, RaycastResult?
-local function checkLineOfSight(origin, destination, ignoreList)
+local function checkLineOfSight(origin, destination, targetChar)
 	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.RespectCanCollide = true
-	params.FilterDescendantsInstances = ignoreList
+
+	local myChar = localPlayer.Character
+	local ignoredFolder = workspaceService:FindFirstChild("Ignored")
+	params.FilterDescendantsInstances = { targetChar, currentCamera, myChar, ignoredFolder }
 
 	local direction = destination - origin
 	if direction.Magnitude < 0.001 then
@@ -80,7 +82,7 @@ local function checkLineOfSight(origin, destination, ignoreList)
 	return result == nil, result
 end
 
----Scan workspace containers for targets.
+---Scan workspace containers for valid targets.
 ---@return table
 local function getTargetEntities()
 	local entities = {}
@@ -137,7 +139,7 @@ local function rollHitChance()
 	return math.random(1, 100) <= CombatConfig.HitChance
 end
 
----Find safe exposure position around target when obstructed.
+---Calculate exposed hitscan vector around target.
 ---@param cameraPos Vector3
 ---@param partPos Vector3
 ---@param targetModel Model
@@ -156,21 +158,17 @@ local function calculateHitscan(cameraPos, partPos, targetModel)
 		Vector3.new(0, 1, 0).Unit * math.min(dist, 7.5)
 	}
 
-	local myChar = localPlayer.Character
-	local ignoredFolder = workspaceService:FindFirstChild("Ignored")
-	local ignoreList = { targetModel, currentCamera, myChar, ignoredFolder }
-
 	for _, offset in ipairs(offsets) do
 		local samplePoint = partPos + offset
-		local targetVisible, targetRay = checkLineOfSight(partPos, samplePoint, ignoreList)
+		local clearToTarget, targetRay = checkLineOfSight(partPos, samplePoint, targetModel)
 
-		if not targetVisible and targetRay then
+		if not clearToTarget and targetRay then
 			local safeDistance = math.max(0.05, targetRay.Distance - 0.2)
 			samplePoint = partPos + (offset.Unit * safeDistance)
 		end
 
-		local camVisible = checkLineOfSight(cameraPos, samplePoint, ignoreList)
-		if camVisible then
+		local clearToCam = checkLineOfSight(cameraPos, samplePoint, targetModel)
+		if clearToCam then
 			return samplePoint
 		end
 	end
@@ -185,9 +183,6 @@ local function getClosestTarget()
 	local mousePos = userInputService:GetMouseLocation()
 	local camPos = currentCamera.CFrame.Position
 	local maxFovRadius = CombatConfig.FOV
-	local myChar = localPlayer.Character
-	local ignoredFolder = workspaceService:FindFirstChild("Ignored")
-	local ignoreList = { currentCamera, myChar, ignoredFolder }
 
 	for _, entity in ipairs(getTargetEntities()) do
 		local char = entity.Model
@@ -210,10 +205,9 @@ local function getClosestTarget()
 
 		local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
 		if dist <= maxFovRadius and dist < closestDist then
-			local targetIgnore = { char, currentCamera, myChar, ignoredFolder }
-			local isVisible = checkLineOfSight(camPos, part.Position, targetIgnore)
-
+			local isVisible = checkLineOfSight(camPos, part.Position, char)
 			local hitscanPos = nil
+
 			if not isVisible and CombatConfig.Hitscan then
 				hitscanPos = calculateHitscan(camPos, part.Position, char)
 				if hitscanPos then
@@ -415,6 +409,7 @@ local function applyWeaponMods()
 			end
 		end
 
+		-- Projectile Module Hooks: GetSpreadDirection redirection + Instant Hit sandbox
 		local physicsFolder = client:FindFirstChild("Physics")
 		local projFolder = physicsFolder and physicsFolder:FindFirstChild("Projectile")
 
@@ -426,23 +421,81 @@ local function applyWeaponMods()
 					local projFn = require(mod)
 					if typeof(projFn) ~= "function" then return end
 
-					if debug.getupvalues then
+					-- 1. Hook GetSpreadDirection to redirect bullet toward target / hitscan position
+					if debug.getupvalues and debug.setupvalue then
 						for idx, upv in pairs(debug.getupvalues(projFn)) do
 							if typeof(upv) == "function" and debug.info(upv, "n") == "GetSpreadDirection" then
-								local spreadEnv = getfenv(upv)
+								local origSpread = upv
+								local spreadEnv = getfenv(origSpread)
+
 								local fakeRandom = newcclosure(function(...)
 									return math.random(...) * (CombatConfig.Spread / 100)
 								end)
 
-								local fakeEnv = setmetatable({
+								setfenv(origSpread, setmetatable({
 									math = setmetatable({ random = fakeRandom }, { __index = spreadEnv.math or math })
-								}, { __index = spreadEnv })
+								}, { __index = spreadEnv }))
 
-								setfenv(upv, fakeEnv)
+								local function redirectedSpread(...)
+									if not (CombatConfig.Enabled and targetPart and rollHitChance()) then
+										return origSpread(...)
+									end
+
+									local targetPos = hitscanOverridePos or targetPart.Position
+									local camPos = currentCamera.CFrame.Position
+
+									if targetEntity and targetEntity.RootPart then
+										local vel = targetEntity.RootPart.Velocity
+										if vel.Magnitude > 0.5 and vel.Magnitude < 50 then
+											local dist = (camPos - targetPos).Magnitude
+											targetPos = targetPos + (vel * Vector3.new(1, 0, 1) * (dist / 600))
+										end
+									end
+
+									return (targetPos - camPos).Unit
+								end
+
+								debug.setupvalue(projFn, idx, redirectedSpread)
 								break
 							end
 						end
 					end
+
+					-- 2. Sandbox workspace inside projFn environment for Instant Hit
+					local fakeWorkspace = Instance.new("Part")
+					local meta = getrawmetatable(fakeWorkspace)
+					setreadonly(meta, false)
+
+					meta.__index = newcclosure(function(self, key)
+						return workspaceService[key]
+					end)
+
+					meta.__namecall = newcclosure(function(self, ...)
+						local method = getnamecallmethod()
+						if method == "Raycast" and CombatConfig.Enabled and CombatConfig.InstantHit and targetPart and rollHitChance() then
+							local origin, direction, params = ...
+							local myChar = localPlayer.Character
+
+							if params and params.IgnoreWater and myChar and table.find(params.FilterDescendantsInstances, myChar) then
+								task.wait()
+								local finalPos = hitscanOverridePos or targetPart.Position
+								return {
+									Instance = targetPart,
+									Position = finalPos,
+									Normal = Vector3.new(1, 1, 1).Unit,
+									Material = targetPart.Material or Enum.Material.Plastic,
+									Distance = (origin - finalPos).Magnitude
+								}
+							end
+						end
+
+						return workspaceService[method](workspaceService, ...)
+					end)
+
+					setreadonly(meta, true)
+
+					local origEnv = getfenv(projFn)
+					setfenv(projFn, setmetatable({ workspace = fakeWorkspace }, { __index = origEnv }))
 				end)
 			end
 		end
@@ -506,71 +559,6 @@ function Combat:Load()
 		end
 
 		return oldIndex(self, key)
-	end))
-
-	local oldNamecall
-	oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-		if checkcaller() or not CombatConfig.Enabled then
-			return oldNamecall(self, ...)
-		end
-
-		local method = getnamecallmethod()
-		if not (method == "Raycast" or method == "ScreenPointToRay" or method == "ViewportPointToRay" or method:find("FindPartOnRay")) then
-			return oldNamecall(self, ...)
-		end
-
-		if not targetPart or not rollHitChance() then
-			return oldNamecall(self, ...)
-		end
-
-		local finalPos = hitscanOverridePos or targetPart.Position
-
-		-- Instant Hit: возвращаем моментальный результат попадания без ожидания цикла трассировки
-		if method == "Raycast" and CombatConfig.InstantHit then
-			local origin, direction, params = ...
-			local myChar = localPlayer.Character
-			local isSimRay = params and (params.FilterType == Enum.RaycastFilterType.Exclude)
-
-			if isSimRay and myChar and table.find(params.FilterDescendantsInstances, myChar) then
-				return {
-					Instance = targetPart,
-					Position = finalPos,
-					Normal = (origin - finalPos).Unit,
-					Material = targetPart.Material,
-					Distance = (origin - finalPos).Magnitude
-				}
-			end
-		end
-
-		if method == "Raycast" then
-			local origin, direction, params = ...
-			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-				local newDir = (finalPos - origin).Unit * direction.Magnitude
-				return oldNamecall(self, origin, newDir, params)
-			end
-		end
-
-		if method == "ScreenPointToRay" or method == "ViewportPointToRay" then
-			local ray = oldNamecall(self, ...)
-			local origin = ray.Origin
-			local direction = ray.Direction
-			local newDir = (finalPos - origin).Unit * direction.Magnitude
-
-			return Ray.new(origin, newDir)
-		end
-
-		if method:find("FindPartOnRay") then
-			local ray, ignoreList, terrainCellsAreCubes, ignoreWater = ...
-			if typeof(ray) == "Ray" then
-				local origin = ray.Origin
-				local direction = ray.Direction
-				local newDir = (finalPos - origin).Unit * direction.Magnitude
-
-				return oldNamecall(self, Ray.new(origin, newDir), ignoreList, terrainCellsAreCubes, ignoreWater)
-			end
-		end
-
-		return oldNamecall(self, ...)
 	end))
 
 	return self
