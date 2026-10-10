@@ -25,9 +25,23 @@ local freecamPitch = 0
 local freecamYaw = 0
 local savedCameraType = nil
 local savedCameraSubject = nil
+local savedAnchored = false
 local frozenCharacterCFrame = nil
 local heartbeatConn = nil
 local renderSteppedConn = nil
+
+local BLOCKED_FREECAM_KEYS = {
+	[Enum.KeyCode.W] = true,
+	[Enum.KeyCode.A] = true,
+	[Enum.KeyCode.S] = true,
+	[Enum.KeyCode.D] = true,
+	[Enum.KeyCode.Space] = true,
+	[Enum.KeyCode.LeftShift] = true,
+	[Enum.KeyCode.LeftControl] = true,
+	[Enum.KeyCode.Q] = true,
+	[Enum.KeyCode.E] = true,
+	[Enum.KeyCode.C] = true,
+}
 
 local MiscConfig = {
 	SpeedEnabled = false,
@@ -79,7 +93,25 @@ local function setupInstantLoot()
 	end)
 end
 
----Sink movement inputs so character does not move.
+---Toggle default PlayerModule controls with safe identity bracketing.
+local function setControlsEnabled(enabled)
+	pcall(function()
+		local playerScripts = localPlayer:FindFirstChild("PlayerScripts")
+		local playerModule = playerScripts and playerScripts:FindFirstChild("PlayerModule")
+		if playerModule then
+			setthreadidentity(2)
+			local controls = require(playerModule):GetControls()
+			setthreadidentity(8)
+			if enabled then
+				controls:Enable()
+			else
+				controls:Disable()
+			end
+		end
+	end)
+end
+
+---Sink movement inputs.
 local function sinkMovementAction()
 	return Enum.ContextActionResult.Sink
 end
@@ -103,9 +135,21 @@ local function enableFreecam()
 
 	local character = localPlayer.Character
 	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
 	if rootPart then
+		savedAnchored = rootPart.Anchored
 		frozenCharacterCFrame = rootPart.CFrame
+		rootPart.Anchored = true
+		rootPart.AssemblyLinearVelocity = Vector3.zero
+		rootPart.AssemblyAngularVelocity = Vector3.zero
 	end
+
+	if humanoid then
+		humanoid:Move(Vector3.zero, false)
+	end
+
+	setControlsEnabled(false)
 
 	contextActionService:BindActionAtPriority(
 		"FreecamMovementSink",
@@ -123,11 +167,19 @@ local function disableFreecam()
 	frozenCharacterCFrame = nil
 
 	contextActionService:UnbindAction("FreecamMovementSink")
+	setControlsEnabled(true)
+
+	local character = localPlayer.Character
+	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+	if rootPart then
+		rootPart.Anchored = savedAnchored
+		rootPart.AssemblyLinearVelocity = Vector3.zero
+		rootPart.AssemblyAngularVelocity = Vector3.zero
+	end
 
 	currentCamera = workspaceService.CurrentCamera or currentCamera
 	currentCamera.CameraType = savedCameraType or Enum.CameraType.Custom
 
-	local character = localPlayer.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 	currentCamera.CameraSubject = savedCameraSubject or humanoid
 
@@ -161,7 +213,28 @@ end
 function Misc:Load()
 	setupInstantLoot()
 
-	-- No Fall Damage Hook.
+	-- Spoof Anchored property read for HumanoidRootPart during freecam.
+	local oldIndex
+	oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
+		if not checkcaller() and freecamActive and key == "Anchored" then
+			local char = localPlayer.Character
+			if char and self == char:FindFirstChild("HumanoidRootPart") then
+				return savedAnchored
+			end
+		end
+		return oldIndex(self, key)
+	end))
+
+	-- Intercept IsKeyDown method to block movement in custom controllers.
+	local oldIsKeyDown
+	oldIsKeyDown = hookfunction(userInputService.IsKeyDown, newcclosure(function(self, key)
+		if not checkcaller() and freecamActive and BLOCKED_FREECAM_KEYS[key] then
+			return false
+		end
+		return oldIsKeyDown(self, key)
+	end))
+
+	-- Remote / Metamethod hooks.
 	local oldNamecall
 	oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
 		if checkcaller() then
@@ -175,6 +248,11 @@ function Misc:Load()
 			if (remoteName == "RemoteEvent" or self:IsA("RemoteEvent")) and firstArg == "TFD" and MiscConfig.NoFall then
 				return
 			end
+		elseif method == "IsKeyDown" and freecamActive then
+			local key = ...
+			if BLOCKED_FREECAM_KEYS[key] then
+				return false
+			end
 		end
 
 		return oldNamecall(self, ...)
@@ -187,6 +265,12 @@ function Misc:Load()
 		if MiscConfig.FreecamEnabled then
 			if not freecamActive then
 				enableFreecam()
+			end
+
+			local character = localPlayer.Character
+			local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+			if humanoid then
+				humanoid:Move(Vector3.zero, false)
 			end
 
 			if userInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
@@ -238,7 +322,6 @@ function Misc:Load()
 		currentCamera = workspaceService.CurrentCamera or currentCamera
 		local stepDt = math.clamp(dt, 0.001, 0.033)
 
-		-- Заморозка персонажа пока активна Freecam
 		if MiscConfig.FreecamEnabled and freecamActive then
 			if frozenCharacterCFrame then
 				rootPart.CFrame = frozenCharacterCFrame
