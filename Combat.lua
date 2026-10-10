@@ -59,12 +59,8 @@ circleInline.Filled = false
 circleInline.ZIndex = 2
 circleInline.Visible = false
 
----Perform raycast visibility check between two points.
----@param origin Vector3
----@param destination Vector3
----@param targetChar Model?
----@return boolean, RaycastResult?
-local function checkLineOfSight(origin, destination, targetChar)
+---Amongus Hook visibility check (Fn22).
+local function checkVisibility(origin, destination, targetChar)
 	local params = RaycastParams.new()
 	params.RespectCanCollide = true
 
@@ -72,17 +68,56 @@ local function checkLineOfSight(origin, destination, targetChar)
 	local ignoredFolder = workspaceService:FindFirstChild("Ignored")
 	params.FilterDescendantsInstances = { targetChar, currentCamera, myChar, ignoredFolder }
 
-	local direction = destination - origin
-	if direction.Magnitude < 0.001 then
-		return true, nil
-	end
-
-	local result = workspaceService:Raycast(origin, direction, params)
-	return result == nil, result
+	local hit = workspaceService:Raycast(origin, destination - origin, params)
+	return not hit, hit
 end
 
----Scan workspace containers for valid targets.
----@return table
+---Generate Amongus Hook hitscan offsets.
+local function getHitscanAngles()
+	local dist = CombatConfig.HitscanDistance
+	local baseAngles = {
+		Vector3.new(1, 0, 0).Unit,
+		Vector3.new(-1, 0, 0).Unit,
+		Vector3.new(0, 0, 1).Unit,
+		Vector3.new(0, 0, -1).Unit,
+		Vector3.new(1, 0, 1).Unit,
+		Vector3.new(-1, 0, 1).Unit,
+		Vector3.new(1, 0, -1).Unit,
+		Vector3.new(-1, 0, -1).Unit,
+		Vector3.new(0, 1, 0).Unit
+	}
+
+	local angles = {}
+	for idx = 1, #baseAngles do
+		local vec = baseAngles[idx]
+		if vec.Y ~= 0 then
+			angles[idx] = vec * math.min(dist, 7.5)
+		else
+			angles[idx] = vec * dist
+		end
+	end
+	return angles
+end
+
+---Amongus Hook Hitscan solver (Fn28).
+local function findHitscanPosition(camPos, targetBonePos, targetChar)
+	local angles = getHitscanAngles()
+	for idx = 1, #angles do
+		local samplePos = targetBonePos + angles[idx]
+		local clearToTarget, wallHit = checkVisibility(targetBonePos, samplePos, targetChar)
+
+		if not clearToTarget and wallHit then
+			samplePos = targetBonePos + ((samplePos - targetBonePos).Unit * (wallHit.Distance - 0.2))
+		end
+
+		if checkVisibility(camPos, samplePos, targetChar) then
+			return samplePos
+		end
+	end
+	return nil
+end
+
+---Scan workspace containers for targets.
 local function getTargetEntities()
 	local entities = {}
 	local myChar = localPlayer.Character
@@ -130,56 +165,14 @@ local function getTargetEntities()
 	return entities
 end
 
----Calculate hit chance probability.
----@return boolean
+---Roll hit chance.
 local function rollHitChance()
 	if CombatConfig.HitChance >= 100 then return true end
 	if CombatConfig.HitChance <= 0 then return false end
 	return math.random(1, 100) <= CombatConfig.HitChance
 end
 
----Calculate exposed hitscan position around target.
----@param cameraPos Vector3
----@param partPos Vector3
----@param targetModel Model
----@return Vector3?
-local function calculateHitscan(cameraPos, partPos, targetModel)
-	local dist = CombatConfig.HitscanDistance
-	local offsets = {
-		Vector3.new(1, 0, 0).Unit * dist,
-		Vector3.new(-1, 0, 0).Unit * dist,
-		Vector3.new(0, 0, 1).Unit * dist,
-		Vector3.new(0, 0, -1).Unit * dist,
-		Vector3.new(1, 0, 1).Unit * dist,
-		Vector3.new(-1, 0, 1).Unit * dist,
-		Vector3.new(1, 0, -1).Unit * dist,
-		Vector3.new(-1, 0, -1).Unit * dist,
-		Vector3.new(0, 1, 0).Unit * math.min(dist, 7.5)
-	}
-
-	for _, offset in ipairs(offsets) do
-		local samplePoint = partPos + offset
-		local clearToTarget, targetRay = checkLineOfSight(partPos, samplePoint, targetModel)
-
-		if not clearToTarget and targetRay then
-			if targetRay.Distance > 0.25 then
-				samplePoint = partPos + (offset.Unit * (targetRay.Distance - 0.2))
-			else
-				continue
-			end
-		end
-
-		local clearToCam = checkLineOfSight(cameraPos, samplePoint, targetModel)
-		if clearToCam then
-			return samplePoint
-		end
-	end
-
-	return nil
-end
-
----Get nearest target bone to screen cursor.
----@return Instance?, table?, Vector3?
+---Get nearest target bone to cursor with Hitscan resolution (Fn29).
 local function getClosestTarget()
 	local closestPart, closestDist, bestEntity, resolvedHitscan = nil, math.huge, nil, nil
 	local mousePos = userInputService:GetMouseLocation()
@@ -207,11 +200,11 @@ local function getClosestTarget()
 
 		local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
 		if dist <= maxFovRadius and dist < closestDist then
-			local isVisible = checkLineOfSight(camPos, part.Position, char)
+			local isVisible = checkVisibility(camPos, part.Position, char)
 			local hitscanPos = nil
 
 			if not isVisible and CombatConfig.Hitscan then
-				hitscanPos = calculateHitscan(camPos, part.Position, char)
+				hitscanPos = findHitscanPosition(camPos, part.Position, char)
 				if hitscanPos then
 					isVisible = true
 				end
@@ -231,7 +224,7 @@ local function getClosestTarget()
 	return closestPart, bestEntity, resolvedHitscan
 end
 
----Patch weapon recoil, spread, firerate, reload and viewmodels.
+---Patch weapon mods & hook Projectile modules for Insta Hit / Hitscan.
 local function applyWeaponMods()
 	task.spawn(function()
 		local modules = replicatedStorage:WaitForChild("Modules", 10)
@@ -422,6 +415,7 @@ local function applyWeaponMods()
 					local projFn = require(mod)
 					if typeof(projFn) ~= "function" then return end
 
+					-- 1. Hook GetSpreadDirection (Amongus hook bullet redirection)
 					if debug.getupvalues and debug.setupvalue then
 						for idx, upv in pairs(debug.getupvalues(projFn)) do
 							if typeof(upv) == "function" and debug.info(upv, "n") == "GetSpreadDirection" then
@@ -443,15 +437,6 @@ local function applyWeaponMods()
 
 									local targetPos = hitscanOverridePos or targetPart.Position
 									local camPos = currentCamera.CFrame.Position
-
-									if targetEntity and targetEntity.RootPart then
-										local vel = targetEntity.RootPart.Velocity
-										if vel.Magnitude > 0.5 and vel.Magnitude < 50 then
-											local dist = (camPos - targetPos).Magnitude
-											targetPos = targetPos + (vel * Vector3.new(1, 0, 1) * (dist / 600))
-										end
-									end
-
 									return (targetPos - camPos).Unit
 								end
 
@@ -460,6 +445,40 @@ local function applyWeaponMods()
 							end
 						end
 					end
+
+					-- 2. Amongus Hook Instant Hit via Environment Proxy (Fn40 replica)
+					local fakeWorkspace = setmetatable({}, {
+						__index = function(_, key)
+							if key == "Raycast" then
+								return function(self, origin, direction, params)
+									if CombatConfig.Enabled and CombatConfig.InstantHit and targetPart and rollHitChance() then
+										local myChar = localPlayer.Character
+										if params and params.IgnoreWater and myChar and table.find(params.FilterDescendantsInstances, myChar) then
+											task.wait()
+											local finalPos = hitscanOverridePos or targetPart.Position
+											return {
+												Instance = targetPart,
+												Position = finalPos,
+												Normal = Vector3.new(1, 1, 1).Unit,
+												Material = targetPart.Material
+											}
+										end
+									end
+									return workspaceService:Raycast(origin, direction, params)
+								end
+							end
+							return workspaceService[key]
+						end,
+						__newindex = function(_, key, val)
+							workspaceService[key] = val
+						end
+					})
+
+					local projEnv = getfenv(projFn)
+					setfenv(projFn, setmetatable({
+						workspace = fakeWorkspace,
+						Workspace = fakeWorkspace
+					}, { __index = projEnv }))
 				end)
 			end
 		end
@@ -523,61 +542,6 @@ function Combat:Load()
 		end
 
 		return oldIndex(self, key)
-	end))
-
-	local oldNamecall
-	oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-		if checkcaller() or not CombatConfig.Enabled then
-			return oldNamecall(self, ...)
-		end
-
-		local method = getnamecallmethod()
-
-		if method == "Raycast" and (self == workspaceService or self == workspace) then
-			local origin, direction, params = ...
-			local myChar = localPlayer.Character
-
-			if CombatConfig.InstantHit and targetPart and rollHitChance() then
-				if params and params.IgnoreWater and myChar and table.find(params.FilterDescendantsInstances, myChar) then
-					local finalPos = hitscanOverridePos or targetPart.Position
-					return {
-						Instance = targetPart,
-						Position = finalPos,
-						Normal = Vector3.new(0, 1, 0),
-						Material = targetPart.Material or Enum.Material.Plastic,
-						Distance = (origin - finalPos).Magnitude
-					}
-				end
-			end
-
-			if targetPart and rollHitChance() and typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-				local finalPos = hitscanOverridePos or targetPart.Position
-				local newDir = (finalPos - origin).Unit * direction.Magnitude
-				return oldNamecall(self, origin, newDir, params)
-			end
-		end
-
-		if (method == "ScreenPointToRay" or method == "ViewportPointToRay") and targetPart and rollHitChance() then
-			local ray = oldNamecall(self, ...)
-			local finalPos = hitscanOverridePos or targetPart.Position
-			local origin = ray.Origin
-			local direction = ray.Direction
-			local newDir = (finalPos - origin).Unit * direction.Magnitude
-			return Ray.new(origin, newDir)
-		end
-
-		if method:find("FindPartOnRay") and targetPart and rollHitChance() then
-			local ray, ignoreList, terrainCellsAreCubes, ignoreWater = ...
-			if typeof(ray) == "Ray" then
-				local finalPos = hitscanOverridePos or targetPart.Position
-				local origin = ray.Origin
-				local direction = ray.Direction
-				local newDir = (finalPos - origin).Unit * direction.Magnitude
-				return oldNamecall(self, Ray.new(origin, newDir), ignoreList, terrainCellsAreCubes, ignoreWater)
-			end
-		end
-
-		return oldNamecall(self, ...)
 	end))
 
 	return self
