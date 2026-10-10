@@ -5,6 +5,7 @@ local playersService = cloneref(game:GetService("Players"))
 local runService = cloneref(game:GetService("RunService"))
 local userInputService = cloneref(game:GetService("UserInputService"))
 local workspaceService = cloneref(game:GetService("Workspace"))
+local replicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 
 local localPlayer = playersService.LocalPlayer
 local currentCamera = workspaceService.CurrentCamera
@@ -25,8 +26,42 @@ local MiscConfig = {
 	FlySpeed = 45,
 	FlyTimerEnabled = true,
 	FlyTimerDuration = 3,
-	FlyTimerMode = "Pulse Ground"
+	FlyTimerMode = "Pulse Ground",
+
+	InstantLoot = false,
+	NoFall = false
 }
+
+---Setup QuickLoot delay override.
+local function setupInstantLoot()
+	task.spawn(function()
+		local modules = replicatedStorage:WaitForChild("Modules", 10)
+		if not modules then return end
+		local client = modules:WaitForChild("Client", 10)
+		if not client then return end
+		local invFolder = client:WaitForChild("Inventory", 10)
+		if not invFolder then return end
+		local invMod = invFolder:FindFirstChild("Inventory")
+		if not invMod then return end
+
+		pcall(function()
+			local invData = require(invMod)
+			local qLoot = rawget(invData, "QuickLoot")
+			if typeof(qLoot) == "function" and debug.info(qLoot, "s") ~= "[C]" then
+				local origEnv = getfenv(qLoot)
+				local fakeTask = setmetatable({
+					delay = newcclosure(function(dTime, fn, ...)
+						if MiscConfig.InstantLoot then
+							return fn(...)
+						end
+						return task.delay(dTime, fn, ...)
+					end)
+				}, {__index = origEnv.task or task})
+				setfenv(qLoot, setmetatable({task = fakeTask}, {__index = origEnv}))
+			end
+		end)
+	end)
+end
 
 function Misc:GetConfig()
 	return MiscConfig
@@ -35,9 +70,32 @@ end
 function Misc:Unload()
 	MiscConfig.SpeedEnabled = false
 	MiscConfig.FlyEnabled = false
+	MiscConfig.InstantLoot = false
+	MiscConfig.NoFall = false
 end
 
 function Misc:Load()
+	setupInstantLoot()
+
+	-- No Fall Damage Hook.
+	local oldNamecall
+	oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+		if checkcaller() then
+			return oldNamecall(self, ...)
+		end
+
+		local method = getnamecallmethod()
+		if method == "FireServer" then
+			local remoteName = self.Name
+			local firstArg = ...
+			if (remoteName == "RemoteEvent" or self:IsA("RemoteEvent")) and firstArg == "TFD" and MiscConfig.NoFall then
+				return
+			end
+		end
+
+		return oldNamecall(self, ...)
+	end))
+
 	runService.Heartbeat:Connect(function(dt)
 		local character = localPlayer.Character
 		if not character then return end
