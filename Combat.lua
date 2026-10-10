@@ -15,6 +15,8 @@ local Combat = {}
 Combat.__index = Combat
 
 local targetPart = nil
+local currentTargetData = nil
+local currentWeaponTable = nil
 
 local CombatConfig = {
 	Enabled = false,
@@ -30,6 +32,18 @@ local CombatConfig = {
 	ShowFOV = false,
 	FOVColor = Color3.fromRGB(170, 85, 255),
 	FOVOutline = true,
+
+	-- New Combat Features.
+	Prediction = true,
+	InstantHit = false,
+	Hitscan = false,
+	HitscanDistance = 7,
+	HitscanIndicator = true,
+	HitscanColor = Color3.fromRGB(255, 196, 0),
+	Snapline = false,
+	SnaplineColor = Color3.fromRGB(255, 255, 255),
+
+	-- Weapon Mods.
 	Recoil = 100,
 	Spread = 100,
 	Firerate = 1,
@@ -42,6 +56,7 @@ local CombatConfig = {
 	InstantEoka = false
 }
 
+-- Drawings.
 local circleOutline = Drawing.new("Circle")
 circleOutline.Thickness = 3
 circleOutline.Color = Color3.new(0, 0, 0)
@@ -54,6 +69,95 @@ circleInline.Thickness = 1
 circleInline.Filled = false
 circleInline.ZIndex = 2
 circleInline.Visible = false
+
+local snapline = Drawing.new("Line")
+snapline.Thickness = 1
+snapline.ZIndex = 10
+snapline.Visible = false
+
+local hitscanIndicator = Drawing.new("Text")
+hitscanIndicator.Text = "hitscanning"
+hitscanIndicator.Font = 2
+hitscanIndicator.Size = 13
+hitscanIndicator.Center = true
+hitscanIndicator.Outline = true
+hitscanIndicator.ZIndex = 30
+hitscanIndicator.Visible = false
+
+---Raycast line of sight check.
+---@return boolean, RaycastResult?
+local function checkLineOfSight(origin, targetPos, ignoreModel)
+	local params = RaycastParams.new()
+	params.RespectCanCollide = true
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = {currentCamera, localPlayer.Character, ignoreModel}
+	local result = workspaceService:Raycast(origin, targetPos - origin, params)
+	return not result, result
+end
+
+---Get current equipped weapon projectile stats.
+---@return number?, number?
+local function getProjectileStats()
+	if not currentWeaponTable then return nil, nil end
+	local stats = rawget(currentWeaponTable, "Stats")
+	if typeof(stats) ~= "table" then return nil, nil end
+	local projStats = rawget(stats, "ProjectileStats")
+	if typeof(projStats) ~= "table" then return nil, nil end
+	local vel = rawget(projStats, "Velocity")
+	local drop = rawget(projStats, "Drop")
+	if typeof(vel) == "number" and typeof(drop) == "number" then
+		return vel, drop
+	end
+	return nil, nil
+end
+
+---Calculate ballistic drop and lead position.
+---@return Vector3
+local function calculatePrediction(origin, targetPos, part)
+	local vel, drop = getProjectileStats()
+	if not vel then return targetPos end
+
+	local dist = (origin - targetPos).Magnitude
+	local flightTime = dist / (vel * 2)
+	local dropOffset = (drop / 2) * (flightTime ^ 2)
+	local lead = Vector3.zero
+
+	local root = part and (part.Parent:FindFirstChild("HumanoidRootPart") or part)
+	if root and root:IsA("BasePart") and root.AssemblyLinearVelocity.Magnitude < 50 then
+		lead = root.AssemblyLinearVelocity * Vector3.new(1, 0, 1) * flightTime
+	end
+
+	return targetPos + Vector3.new(0, dropOffset, 0) + lead
+end
+
+---Scan surrounding angles for hitscan wall penetration.
+---@return Vector3?
+local function getHitscanPoint(origin, targetPos, char)
+	local dist = math.min(CombatConfig.HitscanDistance, 7.5)
+	local angles = {
+		Vector3.new(1, 0, 0).Unit * CombatConfig.HitscanDistance,
+		Vector3.new(-1, 0, 0).Unit * CombatConfig.HitscanDistance,
+		Vector3.new(0, 0, 1).Unit * CombatConfig.HitscanDistance,
+		Vector3.new(0, 0, -1).Unit * CombatConfig.HitscanDistance,
+		Vector3.new(1, 0, 1).Unit * CombatConfig.HitscanDistance,
+		Vector3.new(-1, 0, 1).Unit * CombatConfig.HitscanDistance,
+		Vector3.new(1, 0, -1).Unit * CombatConfig.HitscanDistance,
+		Vector3.new(-1, 0, -1).Unit * CombatConfig.HitscanDistance,
+		Vector3.new(0, 1, 0).Unit * dist
+	}
+
+	for _, offset in ipairs(angles) do
+		local samplePos = targetPos + offset
+		local clear, hitResult = checkLineOfSight(targetPos, samplePos, char)
+		if not clear and hitResult then
+			samplePos = targetPos + ((samplePos - targetPos).Unit * (hitResult.Distance - 0.2))
+		end
+		if checkLineOfSight(origin, samplePos, char) then
+			return samplePos
+		end
+	end
+	return nil
+end
 
 ---Scan workspace containers for targets.
 ---@return table
@@ -115,9 +219,9 @@ local function rollHitChance()
 end
 
 ---Get nearest target bone to screen cursor.
----@return Instance?
+---@return table?
 local function getClosestTarget()
-	local closestPart, closestDist = nil, math.huge
+	local closestTarget, closestDist = nil, math.huge
 	local mousePos = userInputService:GetMouseLocation()
 	local camPos = currentCamera.CFrame.Position
 	local maxFovRadius = CombatConfig.FOV
@@ -144,11 +248,16 @@ local function getClosestTarget()
 		local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
 		if dist <= maxFovRadius and dist < closestDist then
 			closestDist = dist
-			closestPart = part
+			closestTarget = {
+				Part = part,
+				Model = char,
+				ScreenPos = Vector2.new(screenPos.X, screenPos.Y),
+				Distance = dist
+			}
 		end
 	end
 
-	return closestPart
+	return closestTarget
 end
 
 ---Patch weapon recoil, spread, firerate, reload and viewmodels.
@@ -160,12 +269,30 @@ local function applyWeaponMods()
 		local client = modules:WaitForChild("Client", 10)
 		if not client then return end
 
+		local toolsFolder = client:FindFirstChild("Tools")
+		if toolsFolder then
+			local toolsModule = toolsFolder:FindFirstChild("Tools")
+			if toolsModule then
+				pcall(function()
+					local tMod = require(toolsModule)
+					local rawCurrent = rawget(tMod, "CurrentTool")
+					if typeof(rawCurrent) == "table" then
+						currentWeaponTable = rawCurrent
+					end
+					local oldRefresh = tMod.RefreshHotbar
+					tMod.RefreshHotbar = function(...)
+						currentWeaponTable = rawget(tMod, "CurrentTool")
+						return oldRefresh(...)
+					end
+				end)
+			end
+		end
+
 		local recoilScript = client:FindFirstChild("Character")
 			and client.Character:FindFirstChild("Camera")
 			and client.Character.Camera:FindFirstChild("Recoil")
 		local recoilModule = recoilScript and require(recoilScript)
 
-		local toolsFolder = client:FindFirstChild("Tools")
 		local viewmodelFolder = toolsFolder and toolsFolder:FindFirstChild("Tool") and toolsFolder.Tool:FindFirstChild("Viewmodel")
 
 		if viewmodelFolder and recoilModule then
@@ -176,7 +303,7 @@ local function applyWeaponMods()
 					local data = require(mod)
 					if typeof(data) ~= "table" then return end
 
-					-- 1. No Pullout Delay (Instant Equip)
+					-- 1. Instant Equip
 					local setup = rawget(data, "Setup")
 					if typeof(setup) == "function" and debug.info(setup, "s") ~= "[C]" then
 						local origSetupEnv = getfenv(setup)
@@ -191,7 +318,7 @@ local function applyWeaponMods()
 						setfenv(setup, setmetatable({task = fakeTask}, {__index = origSetupEnv}))
 					end
 
-					-- 2. Recoil Hook & Fire Hook
+					-- 2. Recoil & Fire
 					local fire = rawget(data, "Fire")
 					if typeof(fire) == "function" then
 						if debug.getupvalues and debug.setupvalue then
@@ -253,7 +380,7 @@ local function applyWeaponMods()
 						rawset(data, "Fire", modifiedFire)
 					end
 
-					-- 3. Reload While Sprinting & Instant Reload
+					-- 3. Instant Reload
 					local reload = rawget(data, "Reload")
 					if typeof(reload) == "function" then
 						local origReload = reload
@@ -335,7 +462,7 @@ local function applyWeaponMods()
 			end
 		end
 
-		-- 5. No Spread Hook
+		-- 5. Spread Modification
 		local physicsFolder = client:FindFirstChild("Physics")
 		local projFolder = physicsFolder and physicsFolder:FindFirstChild("Projectile")
 
@@ -378,6 +505,8 @@ function Combat:Unload()
 	CombatConfig.Enabled = false
 	circleInline:Remove()
 	circleOutline:Remove()
+	snapline:Remove()
+	hitscanIndicator:Remove()
 end
 
 function Combat:Load()
@@ -399,9 +528,36 @@ function Combat:Load()
 		circleOutline.Visible = CombatConfig.Enabled and CombatConfig.ShowFOV and CombatConfig.FOVOutline
 
 		if CombatConfig.Enabled then
-			targetPart = getClosestTarget()
+			currentTargetData = getClosestTarget()
+			targetPart = currentTargetData and currentTargetData.Part or nil
 		else
+			currentTargetData = nil
 			targetPart = nil
+		end
+
+		-- Visuals: Snapline & Indicator
+		if CombatConfig.Enabled and currentTargetData and targetPart then
+			if CombatConfig.Snapline then
+				snapline.Visible = true
+				snapline.From = mpos
+				snapline.To = currentTargetData.ScreenPos
+				snapline.Color = CombatConfig.SnaplineColor
+			else
+				snapline.Visible = false
+			end
+
+			if CombatConfig.Hitscan and CombatConfig.HitscanIndicator then
+				local camPos = currentCamera.CFrame.Position
+				local scanPoint = getHitscanPoint(camPos, targetPart.Position, currentTargetData.Model)
+				hitscanIndicator.Visible = scanPoint ~= nil
+				hitscanIndicator.Color = CombatConfig.HitscanColor
+				hitscanIndicator.Position = currentCamera.ViewportSize / 2 + Vector2.new(0, 45)
+			else
+				hitscanIndicator.Visible = false
+			end
+		else
+			snapline.Visible = false
+			hitscanIndicator.Visible = false
 		end
 	end)
 
@@ -416,10 +572,22 @@ function Combat:Load()
 		end
 
 		if targetPart and rollHitChance() then
+			local origin = currentCamera.CFrame.Position
+			local hitpos = targetPart.Position
+
+			if CombatConfig.Hitscan and currentTargetData then
+				local scanPoint = getHitscanPoint(origin, hitpos, currentTargetData.Model)
+				if scanPoint then hitpos = scanPoint end
+			end
+
+			if CombatConfig.Prediction then
+				hitpos = calculatePrediction(origin, hitpos, targetPart)
+			end
+
 			if key == "Target" then
 				return targetPart
 			elseif key == "Hit" then
-				return targetPart.CFrame
+				return CFrame.new(hitpos)
 			end
 		end
 
@@ -441,41 +609,52 @@ function Combat:Load()
 			return oldNamecall(self, ...)
 		end
 
-		local hitpart = targetPart
-		local hitsize = hitpart.Size
-		local orgpos = hitpart.Position
+		local origin = currentCamera.CFrame.Position
+		local hitpos = targetPart.Position
 
-		local hitpos = orgpos + Vector3.new(
-			(math.random() - math.random()) * (hitsize.X / 10),
-			(math.random() - math.random()) * (hitsize.Y / 10),
-			(math.random() - math.random()) * (hitsize.Z / 10)
-		)
+		if CombatConfig.Hitscan and currentTargetData then
+			local scanPoint = getHitscanPoint(origin, hitpos, currentTargetData.Model)
+			if scanPoint then hitpos = scanPoint end
+		end
+
+		if CombatConfig.Prediction then
+			hitpos = calculatePrediction(origin, hitpos, targetPart)
+		end
+
+		-- Instant Hit / Force Hit hook
+		if method == "Raycast" and CombatConfig.InstantHit then
+			task.wait()
+			return {
+				Instance = targetPart,
+				Position = hitpos,
+				Normal = Vector3.new(0, 1, 0),
+				Material = targetPart.Material
+			}
+		end
 
 		if method == "Raycast" then
-			local origin, direction, params = ...
-			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-				local newDir = (hitpos - origin).Unit * direction.Magnitude
-				return oldNamecall(self, origin, newDir, params)
+			local rayOrigin, rayDirection, rayParams = ...
+			if typeof(rayOrigin) == "Vector3" and typeof(rayDirection) == "Vector3" then
+				local newDir = (hitpos - rayOrigin).Unit * rayDirection.Magnitude
+				return oldNamecall(self, rayOrigin, newDir, rayParams)
 			end
 		end
 
 		if method == "ScreenPointToRay" or method == "ViewportPointToRay" then
 			local ray = oldNamecall(self, ...)
-			local origin = ray.Origin
-			local direction = ray.Direction
-			local newDir = (hitpos - origin).Unit * direction.Magnitude
-
-			return Ray.new(origin, newDir)
+			local rayOrigin = ray.Origin
+			local rayDirection = ray.Direction
+			local newDir = (hitpos - rayOrigin).Unit * rayDirection.Magnitude
+			return Ray.new(rayOrigin, newDir)
 		end
 
 		if method:find("FindPartOnRay") then
 			local ray, ignoreList, terrainCellsAreCubes, ignoreWater = ...
 			if typeof(ray) == "Ray" then
-				local origin = ray.Origin
-				local direction = ray.Direction
-				local newDir = (hitpos - origin).Unit * direction.Magnitude
-
-				return oldNamecall(self, Ray.new(origin, newDir), ignoreList, terrainCellsAreCubes, ignoreWater)
+				local rayOrigin = ray.Origin
+				local rayDirection = ray.Direction
+				local newDir = (hitpos - rayOrigin).Unit * rayDirection.Magnitude
+				return oldNamecall(self, Ray.new(rayOrigin, newDir), ignoreList, terrainCellsAreCubes, ignoreWater)
 			end
 		end
 
