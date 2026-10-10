@@ -17,6 +17,16 @@ local FLY_PULSE_DURATION = 0.7
 local flyStartTime = 0
 local isPulsingGround = false
 
+-- Freecam State.
+local freecamActive = false
+local freecamPos = Vector3.zero
+local freecamPitch = 0
+local freecamYaw = 0
+local savedCameraType = nil
+local savedCameraSubject = nil
+local heartbeatConn = nil
+local renderSteppedConn = nil
+
 local MiscConfig = {
 	SpeedEnabled = false,
 	SpeedValue = 28,
@@ -27,6 +37,10 @@ local MiscConfig = {
 	FlyTimerEnabled = true,
 	FlyTimerDuration = 3,
 	FlyTimerMode = "Pulse Ground",
+
+	FreecamEnabled = false,
+	FreecamSpeed = 45,
+	FreecamShiftBoost = 2,
 
 	InstantLoot = false,
 	NoFall = false
@@ -63,6 +77,39 @@ local function setupInstantLoot()
 	end)
 end
 
+---Enable freecam scriptable control.
+local function enableFreecam()
+	currentCamera = workspaceService.CurrentCamera or currentCamera
+	savedCameraType = currentCamera.CameraType
+	savedCameraSubject = currentCamera.CameraSubject
+
+	local camCFrame = currentCamera.CFrame
+	freecamPos = camCFrame.Position
+
+	local _, yaw, _ = camCFrame:ToOrientation()
+	local pitch = math.asin(camCFrame.LookVector.Y)
+	freecamYaw = yaw
+	freecamPitch = pitch
+
+	currentCamera.CameraType = Enum.CameraType.Scriptable
+	freecamActive = true
+end
+
+---Disable freecam and restore original camera.
+local function disableFreecam()
+	if not freecamActive then return end
+	freecamActive = false
+
+	currentCamera = workspaceService.CurrentCamera or currentCamera
+	currentCamera.CameraType = savedCameraType or Enum.CameraType.Custom
+
+	local character = localPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	currentCamera.CameraSubject = savedCameraSubject or humanoid
+
+	userInputService.MouseBehavior = Enum.MouseBehavior.Default
+end
+
 function Misc:GetConfig()
 	return MiscConfig
 end
@@ -70,8 +117,21 @@ end
 function Misc:Unload()
 	MiscConfig.SpeedEnabled = false
 	MiscConfig.FlyEnabled = false
+	MiscConfig.FreecamEnabled = false
 	MiscConfig.InstantLoot = false
 	MiscConfig.NoFall = false
+
+	disableFreecam()
+
+	if heartbeatConn then
+		heartbeatConn:Disconnect()
+		heartbeatConn = nil
+	end
+
+	if renderSteppedConn then
+		renderSteppedConn:Disconnect()
+		renderSteppedConn = nil
+	end
 end
 
 function Misc:Load()
@@ -96,7 +156,55 @@ function Misc:Load()
 		return oldNamecall(self, ...)
 	end))
 
-	runService.Heartbeat:Connect(function(dt)
+	-- Freecam Render Loop.
+	renderSteppedConn = runService.RenderStepped:Connect(function(dt)
+		currentCamera = workspaceService.CurrentCamera or currentCamera
+
+		if MiscConfig.FreecamEnabled then
+			if not freecamActive then
+				enableFreecam()
+			end
+
+			-- Поворот камеры при удержании ПКМ
+			if userInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+				userInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+				local delta = userInputService:GetMouseDelta()
+				freecamYaw = freecamYaw - math.rad(delta.X * 0.35)
+				freecamPitch = math.clamp(freecamPitch - math.rad(delta.Y * 0.35), math.rad(-89), math.rad(89))
+			else
+				userInputService.MouseBehavior = Enum.MouseBehavior.Default
+			end
+
+			local camRot = CFrame.fromEulerAnglesYXZ(freecamPitch, freecamYaw, 0)
+			local moveVector = Vector3.zero
+
+			if userInputService:IsKeyDown(Enum.KeyCode.W) then moveVector = moveVector - Vector3.zAxis end
+			if userInputService:IsKeyDown(Enum.KeyCode.S) then moveVector = moveVector + Vector3.zAxis end
+			if userInputService:IsKeyDown(Enum.KeyCode.A) then moveVector = moveVector - Vector3.xAxis end
+			if userInputService:IsKeyDown(Enum.KeyCode.D) then moveVector = moveVector + Vector3.xAxis end
+			if userInputService:IsKeyDown(Enum.KeyCode.Space) or userInputService:IsKeyDown(Enum.KeyCode.E) then moveVector = moveVector + Vector3.yAxis end
+			if userInputService:IsKeyDown(Enum.KeyCode.LeftControl) or userInputService:IsKeyDown(Enum.KeyCode.Q) then moveVector = moveVector - Vector3.yAxis end
+
+			local speed = MiscConfig.FreecamSpeed
+			if userInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+				speed = speed * MiscConfig.FreecamShiftBoost
+			end
+
+			if moveVector.Magnitude > 0 then
+				local worldMove = (camRot * moveVector).Unit * (speed * dt)
+				freecamPos = freecamPos + worldMove
+			end
+
+			currentCamera.CFrame = CFrame.new(freecamPos) * camRot
+		else
+			if freecamActive then
+				disableFreecam()
+			end
+		end
+	end)
+
+	-- Movement / Fly Loop.
+	heartbeatConn = runService.Heartbeat:Connect(function(dt)
 		local character = localPlayer.Character
 		if not character then return end
 
