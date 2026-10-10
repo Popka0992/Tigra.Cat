@@ -26,7 +26,7 @@ local CombatConfig = {
 	DeadCheck = true,
 	DistCheck = false,
 	MaxDistance = 1000,
-	VisibleCheck = false,
+	VisibleCheck = true,
 	FOV = 120,
 	ShowFOV = false,
 	FOVColor = Color3.fromRGB(170, 85, 255),
@@ -59,7 +59,7 @@ circleInline.Filled = false
 circleInline.ZIndex = 2
 circleInline.Visible = false
 
----Amongus Hook visibility check (Fn22).
+---Perform raycast visibility check between two points.
 local function checkVisibility(origin, destination, targetChar)
 	local params = RaycastParams.new()
 	params.RespectCanCollide = true
@@ -99,7 +99,7 @@ local function getHitscanAngles()
 	return angles
 end
 
----Amongus Hook Hitscan solver (Fn28).
+---Amongus Hook Hitscan solver.
 local function findHitscanPosition(camPos, targetBonePos, targetChar)
 	local angles = getHitscanAngles()
 	for idx = 1, #angles do
@@ -107,7 +107,11 @@ local function findHitscanPosition(camPos, targetBonePos, targetChar)
 		local clearToTarget, wallHit = checkVisibility(targetBonePos, samplePos, targetChar)
 
 		if not clearToTarget and wallHit then
-			samplePos = targetBonePos + ((samplePos - targetBonePos).Unit * (wallHit.Distance - 0.2))
+			if wallHit.Distance > 0.25 then
+				samplePos = targetBonePos + ((samplePos - targetBonePos).Unit * (wallHit.Distance - 0.2))
+			else
+				continue
+			end
 		end
 
 		if checkVisibility(camPos, samplePos, targetChar) then
@@ -172,7 +176,7 @@ local function rollHitChance()
 	return math.random(1, 100) <= CombatConfig.HitChance
 end
 
----Get nearest target bone to cursor with Hitscan resolution (Fn29).
+---Get nearest target bone to cursor.
 local function getClosestTarget()
 	local closestPart, closestDist, bestEntity, resolvedHitscan = nil, math.huge, nil, nil
 	local mousePos = userInputService:GetMouseLocation()
@@ -224,7 +228,7 @@ local function getClosestTarget()
 	return closestPart, bestEntity, resolvedHitscan
 end
 
----Patch weapon mods & hook Projectile modules for Insta Hit / Hitscan.
+---Patch weapon mods & hook Projectile modules.
 local function applyWeaponMods()
 	task.spawn(function()
 		local modules = replicatedStorage:WaitForChild("Modules", 10)
@@ -415,7 +419,6 @@ local function applyWeaponMods()
 					local projFn = require(mod)
 					if typeof(projFn) ~= "function" then return end
 
-					-- 1. Hook GetSpreadDirection (Amongus hook bullet redirection)
 					if debug.getupvalues and debug.setupvalue then
 						for idx, upv in pairs(debug.getupvalues(projFn)) do
 							if typeof(upv) == "function" and debug.info(upv, "n") == "GetSpreadDirection" then
@@ -446,7 +449,7 @@ local function applyWeaponMods()
 						end
 					end
 
-					-- 2. Amongus Hook Instant Hit via Environment Proxy (Fn40 replica)
+					-- Safe Workspace Proxy with proper method forwarding and line of sight check
 					local fakeWorkspace = setmetatable({}, {
 						__index = function(_, key)
 							if key == "Raycast" then
@@ -454,20 +457,32 @@ local function applyWeaponMods()
 									if CombatConfig.Enabled and CombatConfig.InstantHit and targetPart and rollHitChance() then
 										local myChar = localPlayer.Character
 										if params and params.IgnoreWater and myChar and table.find(params.FilterDescendantsInstances, myChar) then
-											task.wait()
 											local finalPos = hitscanOverridePos or targetPart.Position
-											return {
-												Instance = targetPart,
-												Position = finalPos,
-												Normal = Vector3.new(1, 1, 1).Unit,
-												Material = targetPart.Material
-											}
+											local isVisible = checkVisibility(origin, finalPos, targetPart.Parent)
+
+											if isVisible then
+												task.wait()
+												return {
+													Instance = targetPart,
+													Position = finalPos,
+													Normal = Vector3.new(1, 1, 1).Unit,
+													Material = targetPart.Material,
+													Distance = (origin - finalPos).Magnitude
+												}
+											end
 										end
 									end
 									return workspaceService:Raycast(origin, direction, params)
 								end
 							end
-							return workspaceService[key]
+
+							local val = workspaceService[key]
+							if typeof(val) == "function" then
+								return function(self, ...)
+									return val(workspaceService, ...)
+								end
+							end
+							return val
 						end,
 						__newindex = function(_, key, val)
 							workspaceService[key] = val
@@ -525,6 +540,11 @@ function Combat:Load()
 	local oldIndex
 	oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
 		if self ~= mouse or checkcaller() or not CombatConfig.Enabled then
+			return oldIndex(self, key)
+		end
+
+		-- Bypass hook when inventory/crafting menus are open or cursor is free
+		if userInputService.MouseBehavior == Enum.MouseBehavior.Default or userInputService:GetFocusedTextBox() then
 			return oldIndex(self, key)
 		end
 
