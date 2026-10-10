@@ -35,8 +35,6 @@ local isZoomActive = false
 -- X-Ray Cache.
 local xrayActive = false
 local cachedPartTransparencies = setmetatable({}, { __mode = "k" })
-local cachedDecalTransparencies = setmetatable({}, { __mode = "k" })
-local cachedSurfaceAppearances = {}
 local xrayWatchConns = {}
 
 local BLOCKED_FREECAM_KEYS = {
@@ -52,38 +50,29 @@ local BLOCKED_FREECAM_KEYS = {
 	[Enum.KeyCode.C] = true,
 }
 
--- Максимальный размер детали, которую можно считать постройкой (отсекает горы/границы карты).
-local MAX_STRUCTURE_SIZE = 60
-
--- Точные названия контейнеров построек (без подстрокового поиска по всей иерархии).
-local STRUCTURE_ROOT_NAMES = {
-	["buildingblocks"] = true,
+local TARGET_ROOT_NAMES = {
 	["builtobjects"] = true,
+	["builtobject"] = true,
 	["doors"] = true,
-	["ladders"] = true,
+	["door"] = true,
 }
 
--- Точные названия деталей построек (целое совпадение, не подстрока).
-local STRUCTURE_PART_NAMES = {
-	["wall"] = true,
-	["halfwall"] = true,
-	["floor"] = true,
+local TARGET_PART_NAMES = {
+	["doorframe"] = true,
+	["window frame"] = true,
 	["triangle floor"] = true,
+	["floor"] = true,
+	["wall frame"] = true,
+	["half wall"] = true,
 	["foundation"] = true,
 	["triangle foundation"] = true,
-	["roof"] = true,
-	["ceiling"] = true,
-	["door"] = true,
-	["doorway"] = true,
-	["window"] = true,
-	["stairs"] = true,
-	["ramp"] = true,
-	["pillar"] = true,
-	["frame"] = true,
-	["gate"] = true,
-	["hatch"] = true,
-	["ladder"] = true,
-	["fence"] = true,
+	["iron door"] = true,
+	["iron double door"] = true,
+	["wood door"] = true,
+	["wood double door"] = true,
+	["steel door"] = true,
+	["steel double door"] = true,
+	["garage door"] = true,
 }
 
 local MiscConfig = {
@@ -105,10 +94,10 @@ local MiscConfig = {
 	ZoomFOV = 25,
 
 	XRayEnabled = false,
-	XRayTransparency = 0.65,
+	XRayTransparency = 1,
 
 	InstantLoot = false,
-	NoFall = false
+	NoFall = false,
 }
 
 local heartbeatConn = nil
@@ -238,95 +227,66 @@ local function disableFreecam()
 	userInputService.MouseBehavior = Enum.MouseBehavior.Default
 end
 
----Check whether instance sits under a dedicated structure container, scoped and shallow.
+---Validate if part qualifies for X-Ray modifications.
 ---@param inst Instance
 ---@return boolean
-local function isUnderStructureRoot(inst)
+local function isXRayTarget(inst)
+	if not inst:IsA("BasePart") or inst:IsA("Terrain") then
+		return false
+	end
+
 	local current = inst
-	local depth = 0
+	local underTargetRoot = false
 
-	while current and current ~= workspaceService and depth < 8 do
-		local lower = current.Name:lower()
+	while current and current ~= workspaceService do
+		local lowerName = current.Name:lower()
 
-		if STRUCTURE_ROOT_NAMES[lower] then
-			return true
+		if string.find(lowerName, "bear trap") or string.find(lowerName, "beartrap") then
+			return false
 		end
 
-		-- Особый случай: Lobby.Structures
-		if lower == "structures" and current.Parent and current.Parent.Name == "Lobby" then
+		if TARGET_ROOT_NAMES[lowerName] then
+			underTargetRoot = true
+		end
+
+		if TARGET_PART_NAMES[lowerName] then
 			return true
 		end
 
 		current = current.Parent
-		depth = depth + 1
 	end
 
-	return false
+	return underTargetRoot
 end
 
----Strict check for a valid, size-limited building part.
----@param part BasePart
----@return boolean
-local function isSafeStructurePart(part)
-	if not part:IsA("BasePart") or part:IsA("Terrain") then return false end
-	if part.Size.Magnitude > MAX_STRUCTURE_SIZE then return false end
-
-	local nameLower = part.Name:lower()
-	if not STRUCTURE_PART_NAMES[nameLower] then return false end
-
-	return isUnderStructureRoot(part)
-end
-
----Apply X-Ray transparency to a specific instance safely.
+---Apply X-Ray transparency to a base part.
 ---@param inst Instance
 local function applyInstanceXRay(inst)
-	if inst:IsA("BasePart") then
-		if not isSafeStructurePart(inst) then return end
+	if not isXRayTarget(inst) then return end
 
-		if cachedPartTransparencies[inst] == nil then
-			cachedPartTransparencies[inst] = inst.Transparency
-		end
-		inst.Transparency = MiscConfig.XRayTransparency
-
-	elseif inst:IsA("SurfaceAppearance") then
-		local parentPart = inst.Parent
-		if parentPart and parentPart:IsA("BasePart") and isSafeStructurePart(parentPart) then
-			table.insert(cachedSurfaceAppearances, { Object = inst, OriginalParent = parentPart })
-			inst.Parent = nil
-		end
-
-	elseif inst:IsA("Decal") or inst:IsA("Texture") then
-		local parentPart = inst.Parent
-		if parentPart and parentPart:IsA("BasePart") and isSafeStructurePart(parentPart) then
-			if cachedDecalTransparencies[inst] == nil then
-				cachedDecalTransparencies[inst] = inst.Transparency
-			end
-			inst.Transparency = MiscConfig.XRayTransparency
-		end
+	if cachedPartTransparencies[inst] == nil then
+		cachedPartTransparencies[inst] = inst.Transparency
 	end
+
+	inst.Transparency = MiscConfig.XRayTransparency
 end
 
----Collect the known structure root folders currently present in Workspace.
----@return table<Instance>
+---Find structural root containers in workspace.
+---@return table
 local function findStructureRoots()
 	local roots = {}
 
 	for _, child in ipairs(workspaceService:GetChildren()) do
 		local lower = child.Name:lower()
-		if STRUCTURE_ROOT_NAMES[lower] then
+		if TARGET_ROOT_NAMES[lower] then
 			table.insert(roots, child)
-		elseif child.Name == "Lobby" then
-			local structures = child:FindFirstChild("Structures")
-			if structures then
-				table.insert(roots, structures)
-			end
 		end
 	end
 
 	return roots
 end
 
----Enable or disable global structure X-Ray, scoped only to known containers.
+---Enable or disable building X-Ray.
 ---@param state boolean
 local function setXRayState(state)
 	xrayActive = state
@@ -345,18 +305,25 @@ local function setXRayState(state)
 				end
 			end))
 		end
+
+		table.insert(xrayWatchConns, workspaceService.ChildAdded:Connect(function(child)
+			if xrayActive and TARGET_ROOT_NAMES[child.Name:lower()] then
+				for _, desc in ipairs(child:GetDescendants()) do
+					applyInstanceXRay(desc)
+				end
+
+				table.insert(xrayWatchConns, child.DescendantAdded:Connect(function(desc)
+					if xrayActive then
+						task.defer(applyInstanceXRay, desc)
+					end
+				end))
+			end
+		end))
 	else
 		for _, conn in ipairs(xrayWatchConns) do
 			conn:Disconnect()
 		end
 		table.clear(xrayWatchConns)
-
-		for _, data in ipairs(cachedSurfaceAppearances) do
-			if data.Object and data.OriginalParent and data.OriginalParent.Parent then
-				data.Object.Parent = data.OriginalParent
-			end
-		end
-		table.clear(cachedSurfaceAppearances)
 
 		for part, original in pairs(cachedPartTransparencies) do
 			if part and part.Parent then
@@ -364,13 +331,6 @@ local function setXRayState(state)
 			end
 		end
 		table.clear(cachedPartTransparencies)
-
-		for decal, original in pairs(cachedDecalTransparencies) do
-			if decal and decal.Parent then
-				decal.Transparency = original
-			end
-		end
-		table.clear(cachedDecalTransparencies)
 	end
 end
 
@@ -534,7 +494,7 @@ function Misc:Load()
 		currentCamera = workspaceService.CurrentCamera or currentCamera
 		local stepDt = math.clamp(dt, 0.001, 0.033)
 
-		-- Физическая защита от урона при падении.
+		-- Physical Fall Damage Dampening.
 		if MiscConfig.NoFall then
 			local vel = rootPart.AssemblyLinearVelocity
 			if vel.Y < -20 then
@@ -553,7 +513,7 @@ function Misc:Load()
 			end
 		end
 
-		-- Заморозка персонажа при включенной Freecam.
+		-- Freeze character in Freecam.
 		if MiscConfig.FreecamEnabled and freecamActive then
 			if frozenCharacterCFrame then
 				rootPart.CFrame = frozenCharacterCFrame
@@ -662,6 +622,19 @@ end
 function Misc:SetXRay(enabled)
 	MiscConfig.XRayEnabled = enabled
 	setXRayState(enabled)
+end
+
+---Update X-Ray transparency value dynamically.
+---@param value number
+function Misc:SetXRayTransparency(value)
+	MiscConfig.XRayTransparency = value
+	if xrayActive then
+		for part in pairs(cachedPartTransparencies) do
+			if part and part.Parent then
+				part.Transparency = value
+			end
+		end
+	end
 end
 
 return Misc
