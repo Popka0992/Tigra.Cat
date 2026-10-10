@@ -43,6 +43,9 @@ local CombatConfig = {
 	InstantEoka = false,
 	Hitscan = false,
 	HitscanDistance = 7,
+	HitscanIndicator = true,
+	HitscanPoint = true,
+	HitscanVisualColor = Color3.fromRGB(255, 196, 0),
 	InstantHit = false
 }
 
@@ -58,6 +61,22 @@ circleInline.Thickness = 1
 circleInline.Filled = false
 circleInline.ZIndex = 2
 circleInline.Visible = false
+
+local hitscanIndicator = Drawing.new("Text")
+hitscanIndicator.Text = "hitscanning"
+hitscanIndicator.Size = 13
+hitscanIndicator.Center = true
+hitscanIndicator.Outline = true
+hitscanIndicator.OutlineColor = Color3.new(0, 0, 0)
+hitscanIndicator.ZIndex = 5
+hitscanIndicator.Visible = false
+
+local hitscanPoint = Drawing.new("Circle")
+hitscanPoint.Radius = 3.5
+hitscanPoint.Filled = true
+hitscanPoint.Thickness = 1
+hitscanPoint.ZIndex = 6
+hitscanPoint.Visible = false
 
 ---Perform raycast visibility check between two points.
 local function checkVisibility(origin, destination, targetChar)
@@ -449,7 +468,6 @@ local function applyWeaponMods()
 						end
 					end
 
-					-- Safe Workspace Proxy with proper method forwarding and line of sight check
 					local fakeWorkspace = setmetatable({}, {
 						__index = function(_, key)
 							if key == "Raycast" then
@@ -508,6 +526,8 @@ function Combat:Unload()
 	CombatConfig.Enabled = false
 	circleInline:Remove()
 	circleOutline:Remove()
+	hitscanIndicator:Remove()
+	hitscanPoint:Remove()
 end
 
 function Combat:Load()
@@ -535,6 +555,31 @@ function Combat:Load()
 			targetEntity = nil
 			hitscanOverridePos = nil
 		end
+
+		-- Hitscan Visualizations
+		local isHitscanning = CombatConfig.Enabled and CombatConfig.Hitscan and hitscanOverridePos ~= nil
+
+		if isHitscanning and CombatConfig.HitscanIndicator then
+			local viewportSize = currentCamera.ViewportSize
+			hitscanIndicator.Position = Vector2.new(viewportSize.X / 2, (viewportSize.Y / 2) + 38)
+			hitscanIndicator.Color = CombatConfig.HitscanVisualColor
+			hitscanIndicator.Visible = true
+		else
+			hitscanIndicator.Visible = false
+		end
+
+		if isHitscanning and CombatConfig.HitscanPoint then
+			local screenPos, onScreen = currentCamera:WorldToViewportPoint(hitscanOverridePos)
+			if onScreen then
+				hitscanPoint.Position = Vector2.new(screenPos.X, screenPos.Y)
+				hitscanPoint.Color = CombatConfig.HitscanVisualColor
+				hitscanPoint.Visible = true
+			else
+				hitscanPoint.Visible = false
+			end
+		else
+			hitscanPoint.Visible = false
+		end
 	end)
 
 	local oldIndex
@@ -543,7 +588,6 @@ function Combat:Load()
 			return oldIndex(self, key)
 		end
 
-		-- Bypass hook when inventory/crafting menus are open or cursor is free
 		if userInputService.MouseBehavior == Enum.MouseBehavior.Default or userInputService:GetFocusedTextBox() then
 			return oldIndex(self, key)
 		end
