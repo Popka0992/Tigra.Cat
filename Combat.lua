@@ -15,6 +15,7 @@ Combat.__index = Combat
 local targetEntity = nil
 local targetPart = nil
 local hitscanOverridePos = nil
+local manipulatorOriginPos = nil
 
 local CombatConfig = {
 	Enabled = false,
@@ -46,7 +47,10 @@ local CombatConfig = {
 	HitscanIndicator = true,
 	HitscanPoint = true,
 	HitscanVisualColor = Color3.fromRGB(255, 196, 0),
-	InstantHit = false
+	Manipulator = false,
+	ManipulatorDistance = 5,
+	ManipulatorVisualColor = Color3.fromRGB(0, 255, 170),
+	InstantHit = false,
 }
 
 local circleOutline = Drawing.new("Circle")
@@ -78,6 +82,13 @@ hitscanPoint.Thickness = 1
 hitscanPoint.ZIndex = 6
 hitscanPoint.Visible = false
 
+local manipulatorPoint = Drawing.new("Circle")
+manipulatorPoint.Radius = 4.5
+manipulatorPoint.Filled = true
+manipulatorPoint.Thickness = 1
+manipulatorPoint.ZIndex = 7
+manipulatorPoint.Visible = false
+
 ---Perform raycast visibility check between two points.
 local function checkVisibility(origin, destination, targetChar)
 	local params = RaycastParams.new()
@@ -91,7 +102,7 @@ local function checkVisibility(origin, destination, targetChar)
 	return not hit, hit
 end
 
----Generate Amongus Hook hitscan offsets.
+---Generate angles for Target Hitscan.
 local function getHitscanAngles()
 	local dist = CombatConfig.HitscanDistance
 	local baseAngles = {
@@ -103,7 +114,7 @@ local function getHitscanAngles()
 		Vector3.new(-1, 0, 1).Unit,
 		Vector3.new(1, 0, -1).Unit,
 		Vector3.new(-1, 0, -1).Unit,
-		Vector3.new(0, 1, 0).Unit
+		Vector3.new(0, 1, 0).Unit,
 	}
 
 	local angles = {}
@@ -118,7 +129,7 @@ local function getHitscanAngles()
 	return angles
 end
 
----Amongus Hook Hitscan solver.
+---Amongus Hook Hitscan solver (Target-Side).
 local function findHitscanPosition(camPos, targetBonePos, targetChar)
 	local angles = getHitscanAngles()
 	for idx = 1, #angles do
@@ -137,6 +148,49 @@ local function findHitscanPosition(camPos, targetBonePos, targetChar)
 			return samplePos
 		end
 	end
+	return nil
+end
+
+---Manipulator solver (Origin-Side Peek).
+local function findManipulatorOrigin(camPos, targetPos, targetChar)
+	local maxDist = CombatConfig.ManipulatorDistance
+	local camCF = currentCamera.CFrame
+	local myChar = localPlayer.Character
+
+	local testDirections = {
+		camCF.UpVector,
+		camCF.RightVector,
+		-camCF.RightVector,
+		(camCF.UpVector + camCF.RightVector).Unit,
+		(camCF.UpVector - camCF.RightVector).Unit,
+		-camCF.UpVector,
+		camCF.LookVector,
+		-camCF.LookVector,
+	}
+
+	local step = 1.25
+	local count = math.clamp(math.floor(maxDist / step), 1, 8)
+
+	for _, dir in ipairs(testDirections) do
+		for i = 1, count do
+			local currentDist = i * step
+			local sampleOrigin = camPos + (dir * currentDist)
+
+			local clearFromCam, wallHit = checkVisibility(camPos, sampleOrigin, myChar)
+			if not clearFromCam and wallHit then
+				if wallHit.Distance > 0.4 then
+					sampleOrigin = camPos + (dir * (wallHit.Distance - 0.2))
+				else
+					break
+				end
+			end
+
+			if checkVisibility(sampleOrigin, targetPos, targetChar) then
+				return sampleOrigin
+			end
+		end
+	end
+
 	return nil
 end
 
@@ -180,7 +234,7 @@ local function getTargetEntities()
 				Player = player,
 				IsBot = isBot,
 				Humanoid = humanoid,
-				RootPart = root
+				RootPart = root,
 			})
 		end
 	end
@@ -197,7 +251,8 @@ end
 
 ---Get nearest target bone to cursor.
 local function getClosestTarget()
-	local closestPart, closestDist, bestEntity, resolvedHitscan = nil, math.huge, nil, nil
+	local closestPart, closestDist, bestEntity = nil, math.huge, nil
+	local resolvedHitscan, resolvedManipulator = nil, nil
 	local mousePos = userInputService:GetMouseLocation()
 	local camPos = currentCamera.CFrame.Position
 	local maxFovRadius = CombatConfig.FOV
@@ -225,10 +280,18 @@ local function getClosestTarget()
 		if dist <= maxFovRadius and dist < closestDist then
 			local isVisible = checkVisibility(camPos, part.Position, char)
 			local hitscanPos = nil
+			local manipPos = nil
 
 			if not isVisible and CombatConfig.Hitscan then
 				hitscanPos = findHitscanPosition(camPos, part.Position, char)
 				if hitscanPos then
+					isVisible = true
+				end
+			end
+
+			if not isVisible and CombatConfig.Manipulator then
+				manipPos = findManipulatorOrigin(camPos, part.Position, char)
+				if manipPos then
 					isVisible = true
 				end
 			end
@@ -241,10 +304,11 @@ local function getClosestTarget()
 			closestPart = part
 			bestEntity = entity
 			resolvedHitscan = hitscanPos
+			resolvedManipulator = manipPos
 		end
 	end
 
-	return closestPart, bestEntity, resolvedHitscan
+	return closestPart, bestEntity, resolvedHitscan, resolvedManipulator
 end
 
 ---Patch weapon mods & hook Projectile modules.
@@ -329,7 +393,7 @@ local function applyWeaponMods()
 										return val
 									end,
 									__newindex = rawParams,
-									__metatable = ""
+									__metatable = "",
 								})
 
 								if CombatConfig.AutoReload and typeof(data.Reload) == "function" then
@@ -396,12 +460,12 @@ local function applyWeaponMods()
 													end
 													return val[vmKey]
 												end,
-												__newindex = val
+												__newindex = val,
 											})
 										end
 										return val
 									end,
-									__newindex = rawParams
+									__newindex = rawParams,
 								})
 								return origReload(proxyParams)
 							end
@@ -419,7 +483,7 @@ local function applyWeaponMods()
 									return b or a or 1
 								end
 								return math.random(...)
-							end
+							end,
 						}, { __index = origEnv.math or math })
 						setfenv(tryFire, setmetatable({ math = fakeMath }, { __index = origEnv }))
 					end
@@ -449,7 +513,7 @@ local function applyWeaponMods()
 								end)
 
 								setfenv(origSpread, setmetatable({
-									math = setmetatable({ random = fakeRandom }, { __index = spreadEnv.math or math })
+									math = setmetatable({ random = fakeRandom }, { __index = spreadEnv.math or math }),
 								}, { __index = spreadEnv }))
 
 								local function redirectedSpread(...)
@@ -458,8 +522,8 @@ local function applyWeaponMods()
 									end
 
 									local targetPos = hitscanOverridePos or targetPart.Position
-									local camPos = currentCamera.CFrame.Position
-									return (targetPos - camPos).Unit
+									local startPos = manipulatorOriginPos or currentCamera.CFrame.Position
+									return (targetPos - startPos).Unit
 								end
 
 								debug.setupvalue(projFn, idx, redirectedSpread)
@@ -485,7 +549,7 @@ local function applyWeaponMods()
 													Position = finalPos,
 													Normal = Vector3.new(1, 1, 1).Unit,
 													Material = targetPart.Material,
-													Distance = (origin - finalPos).Magnitude
+													Distance = (origin - finalPos).Magnitude,
 												}
 											end
 										end
@@ -504,13 +568,13 @@ local function applyWeaponMods()
 						end,
 						__newindex = function(_, key, val)
 							workspaceService[key] = val
-						end
+						end,
 					})
 
 					local projEnv = getfenv(projFn)
 					setfenv(projFn, setmetatable({
 						workspace = fakeWorkspace,
-						Workspace = fakeWorkspace
+						Workspace = fakeWorkspace,
 					}, { __index = projEnv }))
 				end)
 			end
@@ -528,6 +592,7 @@ function Combat:Unload()
 	circleOutline:Remove()
 	hitscanIndicator:Remove()
 	hitscanPoint:Remove()
+	manipulatorPoint:Remove()
 end
 
 function Combat:Load()
@@ -549,11 +614,12 @@ function Combat:Load()
 		circleOutline.Visible = CombatConfig.Enabled and CombatConfig.ShowFOV and CombatConfig.FOVOutline
 
 		if CombatConfig.Enabled then
-			targetPart, targetEntity, hitscanOverridePos = getClosestTarget()
+			targetPart, targetEntity, hitscanOverridePos, manipulatorOriginPos = getClosestTarget()
 		else
 			targetPart = nil
 			targetEntity = nil
 			hitscanOverridePos = nil
+			manipulatorOriginPos = nil
 		end
 
 		-- Hitscan Visualizations
@@ -579,6 +645,20 @@ function Combat:Load()
 			end
 		else
 			hitscanPoint.Visible = false
+		end
+
+		-- Manipulator Visualization
+		if CombatConfig.Enabled and CombatConfig.Manipulator and manipulatorOriginPos ~= nil then
+			local screenPos, onScreen = currentCamera:WorldToViewportPoint(manipulatorOriginPos)
+			if onScreen then
+				manipulatorPoint.Position = Vector2.new(screenPos.X, screenPos.Y)
+				manipulatorPoint.Color = CombatConfig.ManipulatorVisualColor
+				manipulatorPoint.Visible = true
+			else
+				manipulatorPoint.Visible = false
+			end
+		else
+			manipulatorPoint.Visible = false
 		end
 	end)
 
