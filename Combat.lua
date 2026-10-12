@@ -13,7 +13,7 @@ local Combat = {}
 Combat.__index = Combat
 
 -- Constants.
-local MAX_PEEK_DISTANCE = 5.5
+local MAX_PEEK_DISTANCE = 333
 
 local targetEntity = nil
 local targetPart = nil
