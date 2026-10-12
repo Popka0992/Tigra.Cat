@@ -16,7 +16,11 @@ local targetEntity = nil
 local targetPart = nil
 local hitscanOverridePos = nil
 local manipPosition = nil
+
 local isTeleporting = false
+local savedCameraCFrame = nil
+local activeRootJoint = nil
+local originalRootC0 = nil
 
 local CombatConfig = {
 	Enabled = false,
@@ -133,7 +137,7 @@ local function checkVisibility(origin, destination, targetChar)
 	return not hit, hit
 end
 
----Teleport to peek position and revert back after network tick.
+---Perform silent server-side vantage point teleport without client camera jerk.
 local function performManipTeleport()
 	if isTeleporting or not manipPosition or not CombatConfig.Manipulator or not CombatConfig.Enabled then
 		return
@@ -141,17 +145,45 @@ local function performManipTeleport()
 
 	local myChar = localPlayer.Character
 	local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
-	if not myRoot then return end
+	local humanoid = myChar and myChar:FindFirstChildOfClass("Humanoid")
+	if not myRoot or not humanoid or humanoid.Health <= 0 then return end
+
+	local torso = myChar:FindFirstChild("LowerTorso") or myChar:FindFirstChild("Torso")
+	local rootJoint = torso and (torso:FindFirstChild("Root") or torso:FindFirstChild("RootJoint"))
 
 	isTeleporting = true
+	savedCameraCFrame = currentCamera.CFrame
+
 	local originalCFrame = myRoot.CFrame
+	local deltaPos = manipPosition - originalCFrame.Position
+	local targetCFrame = CFrame.new(manipPosition, manipPosition + originalCFrame.LookVector)
 
-	myRoot.CFrame = CFrame.new(manipPosition, manipPosition + originalCFrame.LookVector)
+	-- Offset client visual mesh back so the player does not see themselves moving.
+	if rootJoint then
+		activeRootJoint = rootJoint
+		originalRootC0 = rootJoint.C0
+		local localDelta = targetCFrame:VectorToObjectSpace(-deltaPos)
+		rootJoint.C0 = originalRootC0 * CFrame.new(localDelta)
+	end
 
-	task.delay(0.08, function()
+	myRoot.CFrame = targetCFrame
+
+	-- Revert after network replication cycles.
+	task.spawn(function()
+		runService.Heartbeat:Wait()
+		runService.Heartbeat:Wait()
+
 		if myRoot and myRoot.Parent then
 			myRoot.CFrame = originalCFrame
 		end
+
+		if activeRootJoint and originalRootC0 and activeRootJoint.Parent then
+			activeRootJoint.C0 = originalRootC0
+		end
+
+		activeRootJoint = nil
+		originalRootC0 = nil
+		savedCameraCFrame = nil
 		isTeleporting = false
 	end)
 end
@@ -242,7 +274,6 @@ local function findManipulatorPosition(myRoot, targetPos, targetChar)
 	for idx = 1, #candidates do
 		local samplePos = rootPos + candidates[idx]
 
-		-- Check if movement path to peek location is unobstructed.
 		local clearToSample, wallHit = checkVisibility(rootPos, samplePos, localPlayer.Character)
 		if not clearToSample and wallHit then
 			if wallHit.Distance > 1.2 then
@@ -252,7 +283,6 @@ local function findManipulatorPosition(myRoot, targetPos, targetChar)
 			end
 		end
 
-		-- Verify clear line of fire to target bone.
 		if checkVisibility(samplePos, targetPos, targetChar) then
 			return samplePos
 		end
@@ -359,7 +389,6 @@ local function getClosestTarget()
 				end
 			end
 
-			-- Calculate manipulator vantage point if target is behind cover.
 			if CombatConfig.Manipulator and myRoot and not camCanSee then
 				manipPos = findManipulatorPosition(myRoot, part.Position, char)
 				if manipPos then
@@ -670,6 +699,9 @@ end
 
 function Combat:Unload()
 	CombatConfig.Enabled = false
+	if activeRootJoint and originalRootC0 and activeRootJoint.Parent then
+		activeRootJoint.C0 = originalRootC0
+	end
 	circleInline:Remove()
 	circleOutline:Remove()
 	hitscanIndicator:Remove()
@@ -682,16 +714,13 @@ end
 function Combat:Load()
 	applyWeaponMods()
 
-	-- Teleport when clicking to shoot while in manipulator vantage mode.
-	userInputService.InputBegan:Connect(function(input, processed)
-		if processed then return end
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			performManipTeleport()
-		end
-	end)
-
 	runService.RenderStepped:Connect(function()
 		currentCamera = workspaceService.CurrentCamera or currentCamera
+
+		-- Counter-lock camera during teleport to prevent any visual jerk.
+		if isTeleporting and savedCameraCFrame then
+			currentCamera.CFrame = savedCameraCFrame
+		end
 
 		local mpos = userInputService:GetMouseLocation()
 		local radius = CombatConfig.FOV
@@ -762,7 +791,8 @@ function Combat:Load()
 				manipPoint.Visible = true
 
 				if CombatConfig.ManipulatorLine and myRoot then
-					local rootScreen, rootOnScreen = currentCamera:WorldToViewportPoint(myRoot.Position)
+					local rootPos = myRoot.Position
+					local rootScreen, rootOnScreen = currentCamera:WorldToViewportPoint(rootPos)
 					if rootOnScreen then
 						manipLine.From = Vector2.new(rootScreen.X, rootScreen.Y)
 						manipLine.To = Vector2.new(screenPos.X, screenPos.Y)
@@ -813,5 +843,4 @@ function Combat:Load()
 	return self
 end
 
-print("welcome combat2")
 return Combat
