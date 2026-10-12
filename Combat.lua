@@ -16,6 +16,7 @@ local targetEntity = nil
 local targetPart = nil
 local hitscanOverridePos = nil
 local manipPosition = nil
+local isTeleporting = false
 
 local CombatConfig = {
 	Enabled = false,
@@ -49,7 +50,7 @@ local CombatConfig = {
 	HitscanVisualColor = Color3.fromRGB(255, 196, 0),
 	InstantHit = false,
 	Manipulator = true,
-	ManipulatorDistance = 10,
+	ManipulatorDistance = 9,
 	ManipulatorIndicator = true,
 	ManipulatorPoint = true,
 	ManipulatorLine = true,
@@ -109,31 +110,50 @@ manipLine.Visible = false
 ---Perform raycast visibility check between two points.
 local function checkVisibility(origin, destination, targetChar)
 	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.RespectCanCollide = true
 
 	local myChar = localPlayer.Character
 	local ignoredFolder = workspaceService:FindFirstChild("Ignored")
-	params.FilterDescendantsInstances = { targetChar, currentCamera, myChar, ignoredFolder }
+	local filterList = { currentCamera }
+
+	if targetChar then
+		table.insert(filterList, targetChar)
+	end
+	if myChar then
+		table.insert(filterList, myChar)
+	end
+	if ignoredFolder then
+		table.insert(filterList, ignoredFolder)
+	end
+
+	params.FilterDescendantsInstances = filterList
 
 	local hit = workspaceService:Raycast(origin, destination - origin, params)
 	return not hit, hit
 end
 
----Check if sample position is not stuck inside a solid part.
-local function isPositionEmpty(pos)
-	local params = OverlapParams.new()
-	local myChar = localPlayer.Character
-	local ignoredFolder = workspaceService:FindFirstChild("Ignored")
-	params.FilterDescendantsInstances = { myChar, currentCamera, ignoredFolder }
-	params.RespectCanCollide = true
-
-	local parts = workspaceService:GetPartBoundsInRadius(pos, 0.4, params)
-	for idx = 1, #parts do
-		if parts[idx].CanCollide then
-			return false
-		end
+---Teleport to peek position and revert back after network tick.
+local function performManipTeleport()
+	if isTeleporting or not manipPosition or not CombatConfig.Manipulator or not CombatConfig.Enabled then
+		return
 	end
-	return true
+
+	local myChar = localPlayer.Character
+	local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
+	if not myRoot then return end
+
+	isTeleporting = true
+	local originalCFrame = myRoot.CFrame
+
+	myRoot.CFrame = CFrame.new(manipPosition, manipPosition + originalCFrame.LookVector)
+
+	task.delay(0.08, function()
+		if myRoot and myRoot.Parent then
+			myRoot.CFrame = originalCFrame
+		end
+		isTeleporting = false
+	end)
 end
 
 ---Generate Amongus Hook hitscan offsets.
@@ -185,10 +205,10 @@ local function findHitscanPosition(camPos, targetBonePos, targetChar)
 	return nil
 end
 
----Find vantage points around local player to shoot target over/around cover.
+---Find manipulator vantage point around the local player.
 local function findManipulatorPosition(myRoot, targetPos, targetChar)
 	local rootPos = myRoot.Position
-	local maxDist = CombatConfig.ManipulatorDistance
+	local dist = CombatConfig.ManipulatorDistance
 	local toTarget = targetPos - rootPos
 	local flatDir = Vector3.new(toTarget.X, 0, toTarget.Z)
 
@@ -202,45 +222,39 @@ local function findManipulatorPosition(myRoot, targetPos, targetChar)
 	local upDir = Vector3.new(0, 1, 0)
 
 	local candidates = {
-		-- Upward peeks (over cover).
-		upDir * (maxDist * 0.4),
-		upDir * (maxDist * 0.7),
-		upDir * maxDist,
+		-- Upward peeks (over obstacles).
+		upDir * dist,
+		upDir * (dist * 0.6),
+		upDir * (dist * 0.35),
 
-		-- Upward + Forward peeks.
-		(upDir * 0.7 + flatDir * 0.7) * (maxDist * 0.7),
-		(upDir * 0.8 + flatDir * 0.5) * maxDist,
+		-- Left / Right peeks (around corners).
+		-rightDir * dist,
+		-rightDir * (dist * 0.6),
+		rightDir * dist,
+		rightDir * (dist * 0.6),
 
-		-- Left peeks.
-		-rightDir * (maxDist * 0.4),
-		-rightDir * (maxDist * 0.75),
-		-rightDir * maxDist,
-
-		-- Right peeks.
-		rightDir * (maxDist * 0.4),
-		rightDir * (maxDist * 0.75),
-		rightDir * maxDist,
-
-		-- Diagonal Up + Left/Right peeks.
-		(upDir * 0.6 - rightDir * 0.8) * maxDist,
-		(upDir * 0.6 + rightDir * 0.8) * maxDist,
-		(upDir * 0.8 - rightDir * 0.5) * maxDist,
-		(upDir * 0.8 + rightDir * 0.5) * maxDist,
-
-		-- Forward peeks.
-		flatDir * (maxDist * 0.5),
-		flatDir * maxDist
+		-- Diagonal peeks.
+		(upDir * 0.8 - rightDir * 0.6).Unit * dist,
+		(upDir * 0.8 + rightDir * 0.6).Unit * dist,
+		(upDir * 0.7 + flatDir * 0.7).Unit * dist
 	}
 
 	for idx = 1, #candidates do
 		local samplePos = rootPos + candidates[idx]
 
-		-- Verify sample position is not inside solid map parts.
-		if isPositionEmpty(samplePos) then
-			-- Verify clear line of fire from sample position to target.
-			if checkVisibility(samplePos, targetPos, targetChar) then
-				return samplePos
+		-- Check if movement path to peek location is unobstructed.
+		local clearToSample, wallHit = checkVisibility(rootPos, samplePos, localPlayer.Character)
+		if not clearToSample and wallHit then
+			if wallHit.Distance > 1.2 then
+				samplePos = rootPos + (candidates[idx].Unit * (wallHit.Distance - 0.4))
+			else
+				continue
 			end
+		end
+
+		-- Verify clear line of fire to target bone.
+		if checkVisibility(samplePos, targetPos, targetChar) then
+			return samplePos
 		end
 	end
 
@@ -333,7 +347,8 @@ local function getClosestTarget()
 
 		local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
 		if dist <= maxFovRadius and dist < closestDist then
-			local isVisible = checkVisibility(camPos, part.Position, char)
+			local camCanSee = checkVisibility(camPos, part.Position, char)
+			local isVisible = camCanSee
 			local hitscanPos = nil
 			local manipPos = nil
 
@@ -344,7 +359,8 @@ local function getClosestTarget()
 				end
 			end
 
-			if not isVisible and CombatConfig.Manipulator and myRoot then
+			-- Calculate manipulator vantage point if target is behind cover.
+			if CombatConfig.Manipulator and myRoot and not camCanSee then
 				manipPos = findManipulatorPosition(myRoot, part.Position, char)
 				if manipPos then
 					isVisible = true
@@ -366,6 +382,170 @@ local function getClosestTarget()
 	return closestPart, bestEntity, resolvedHitscan, resolvedManip
 end
 
+---Hook weapon modules.
+local function patchWeaponModule(mod, recoilModule)
+	if not mod:IsA("ModuleScript") then return end
+
+	pcall(function()
+		local data = require(mod)
+		if typeof(data) ~= "table" then return end
+
+		local setup = rawget(data, "Setup")
+		if typeof(setup) == "function" and debug.info(setup, "s") ~= "[C]" then
+			local origSetupEnv = getfenv(setup)
+			local fakeTask = setmetatable({
+				delay = newcclosure(function(dTime, fn, ...)
+					if CombatConfig.InstantEquip then
+						return fn(...)
+					end
+					return task.delay(dTime, fn, ...)
+				end)
+			}, { __index = origSetupEnv.task or task })
+			setfenv(setup, setmetatable({ task = fakeTask }, { __index = origSetupEnv }))
+		end
+
+		local fire = rawget(data, "Fire")
+		if typeof(fire) == "function" then
+			if debug.getupvalues and debug.setupvalue and recoilModule then
+				for idx, upv in pairs(debug.getupvalues(fire)) do
+					local upvType = typeof(upv)
+					local isRecoil = (upvType == "function" and debug.info(upv, "s"):find("Recoil"))
+						or (upvType == "Instance" and upv.Name == "Recoil")
+
+					if isRecoil then
+						debug.setupvalue(fire, idx, function(arg1, arg2, arg3, factor)
+							local origFactor = factor
+							if typeof(factor) == "number" then
+								factor = factor * (CombatConfig.Recoil / 100)
+							end
+							local r1, r2 = recoilModule()(arg1, arg2, arg3, factor)
+							return r1, r2, origFactor
+						end)
+					end
+				end
+			end
+
+			local origFire = fire
+			local function modifiedFire(...)
+				performManipTeleport()
+
+				local rawParams = ...
+				if typeof(rawParams) == "table" then
+					local proxyParams = setmetatable({}, {
+						__index = function(_, key)
+							local val = rawParams[key]
+							if key == "RPM" and typeof(val) == "number" then
+								if CombatConfig.Firerate > 1 then
+									return val / CombatConfig.Firerate
+								end
+								return val
+							end
+							if key == "Ready" and CombatConfig.FastBow then
+								return true
+							end
+							if key == "Viewmodel" and CombatConfig.ShootSprinting and typeof(val) == "table" then
+								return setmetatable({ Sprinting = false }, { __index = val, __newindex = val })
+							end
+							return val
+						end,
+						__newindex = rawParams,
+						__metatable = ""
+					})
+
+					if CombatConfig.AutoReload and typeof(data.Reload) == "function" then
+						task.delay(0, data.Reload, rawParams)
+					end
+
+					return origFire(proxyParams)
+				end
+				return origFire(...)
+			end
+
+			if setfenv and getfenv then
+				setfenv(modifiedFire, getfenv(origFire))
+			end
+			rawset(data, "Fire", modifiedFire)
+		end
+
+		local reload = rawget(data, "Reload")
+		if typeof(reload) == "function" then
+			local origReload = reload
+			rawset(data, "Reload", function(...)
+				local rawParams = ...
+				if typeof(rawParams) == "table" then
+					local firedOnce = false
+					local proxyParams = setmetatable({}, {
+						__index = function(_, key)
+							local val = rawParams[key]
+							if key == "Viewmodel" and typeof(val) == "table" then
+								return setmetatable({}, {
+									__index = function(_, vmKey)
+										if vmKey == "Sprinting" and CombatConfig.ReloadSprinting then
+											return false
+										end
+										if vmKey == "Play" and CombatConfig.InstantReload then
+											return function(vmSelf, animKey, ...)
+												local track = val:Play(animKey, ...)
+												task.defer(function()
+													pcall(function()
+														local animator = val.Animator
+														local loaded = animator and animator.LoadedAnimations
+														local resolvedTrack = track or (loaded and loaded[animKey])
+														if resolvedTrack and not firedOnce then
+															local s1 = resolvedTrack:GetMarkerReachedSignal("FinishReload")
+															local s2 = resolvedTrack:GetMarkerReachedSignal("InsertBullet")
+															local s3 = resolvedTrack:GetMarkerReachedSignal("Insert")
+
+															local chosen = (#getconnections(s1) > 0 and s1)
+																or (#getconnections(s2) > 0 and s2)
+																or (#getconnections(s3) > 0 and s3)
+
+															if chosen then
+																firedOnce = true
+																firesignal(chosen)
+																rawset(rawParams, "Reloading", false)
+																pcall(function()
+																	resolvedTrack:Stop(0)
+																end)
+															end
+														end
+													end)
+												end)
+												return track
+											end
+										end
+										return val[vmKey]
+									end,
+									__newindex = val
+								})
+							end
+							return val
+						end,
+						__newindex = rawParams
+					})
+					return origReload(proxyParams)
+				end
+				return origReload(...)
+			end)
+		end
+
+		local tryFire = rawget(data, "TryFire")
+		if typeof(tryFire) == "function" and debug.info(tryFire, "s") ~= "[C]" then
+			local origEnv = getfenv(tryFire)
+			local fakeMath = setmetatable({
+				random = function(...)
+					if CombatConfig.InstantEoka then
+						local a, b = ...
+						return b or a or 1
+					end
+					return math.random(...)
+				end
+			}, { __index = origEnv.math or math })
+			setfenv(tryFire, setmetatable({ math = fakeMath }, { __index = origEnv }))
+		end
+	end)
+end
+
 ---Patch weapon mods & hook Projectile modules.
 local function applyWeaponMods()
 	task.spawn(function()
@@ -383,190 +563,14 @@ local function applyWeaponMods()
 		local toolsFolder = client:FindFirstChild("Tools")
 		local viewmodelFolder = toolsFolder and toolsFolder:FindFirstChild("Tool") and toolsFolder.Tool:FindFirstChild("Viewmodel")
 
-		if viewmodelFolder and recoilModule then
+		if viewmodelFolder then
 			for _, mod in ipairs(viewmodelFolder:GetChildren()) do
-				if not mod:IsA("ModuleScript") then continue end
-
-				pcall(function()
-					local data = require(mod)
-					if typeof(data) ~= "table" then return end
-
-					local setup = rawget(data, "Setup")
-					if typeof(setup) == "function" and debug.info(setup, "s") ~= "[C]" then
-						local origSetupEnv = getfenv(setup)
-						local fakeTask = setmetatable({
-							delay = newcclosure(function(dTime, fn, ...)
-								if CombatConfig.InstantEquip then
-									return fn(...)
-								end
-								return task.delay(dTime, fn, ...)
-							end)
-						}, { __index = origSetupEnv.task or task })
-						setfenv(setup, setmetatable({ task = fakeTask }, { __index = origSetupEnv }))
-					end
-
-					local fire = rawget(data, "Fire")
-					if typeof(fire) == "function" then
-						if debug.getupvalues and debug.setupvalue then
-							for idx, upv in pairs(debug.getupvalues(fire)) do
-								local upvType = typeof(upv)
-								local isRecoil = (upvType == "function" and debug.info(upv, "s"):find("Recoil"))
-									or (upvType == "Instance" and upv.Name == "Recoil")
-
-								if isRecoil then
-									debug.setupvalue(fire, idx, function(arg1, arg2, arg3, factor)
-										local origFactor = factor
-										if typeof(factor) == "number" then
-											factor = factor * (CombatConfig.Recoil / 100)
-										end
-										local r1, r2 = recoilModule()(arg1, arg2, arg3, factor)
-										return r1, r2, origFactor
-									end)
-								end
-							end
-						end
-
-						local origFire = fire
-						local function modifiedFire(...)
-							local rawParams = ...
-							local myChar = localPlayer.Character
-							local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
-							local originalCFrame = nil
-
-							-- Teleport to manipulator position during fire execution.
-							if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition and myRoot then
-								originalCFrame = myRoot.CFrame
-								myRoot.CFrame = CFrame.new(manipPosition, manipPosition + originalCFrame.LookVector)
-							end
-
-							local result
-							if typeof(rawParams) == "table" then
-								local proxyParams = setmetatable({}, {
-									__index = function(_, key)
-										local val = rawParams[key]
-										if key == "RPM" and typeof(val) == "number" then
-											if CombatConfig.Firerate > 1 then
-												return val / CombatConfig.Firerate
-											end
-											return val
-										end
-										if key == "Ready" and CombatConfig.FastBow then
-											return true
-										end
-										if key == "Viewmodel" and CombatConfig.ShootSprinting and typeof(val) == "table" then
-											return setmetatable({ Sprinting = false }, { __index = val, __newindex = val })
-										end
-										return val
-									end,
-									__newindex = rawParams,
-									__metatable = ""
-								})
-
-								if CombatConfig.AutoReload and typeof(data.Reload) == "function" then
-									task.delay(0, data.Reload, rawParams)
-								end
-
-								result = origFire(proxyParams)
-							else
-								result = origFire(...)
-							end
-
-							-- Revert player position immediately after firing.
-							if originalCFrame and myRoot then
-								task.defer(function()
-									if myRoot and myRoot.Parent then
-										myRoot.CFrame = originalCFrame
-									end
-								end)
-							end
-
-							return result
-						end
-
-						if setfenv and getfenv then
-							setfenv(modifiedFire, getfenv(origFire))
-						end
-						rawset(data, "Fire", modifiedFire)
-					end
-
-					local reload = rawget(data, "Reload")
-					if typeof(reload) == "function" then
-						local origReload = reload
-						rawset(data, "Reload", function(...)
-							local rawParams = ...
-							if typeof(rawParams) == "table" then
-								local firedOnce = false
-								local proxyParams = setmetatable({}, {
-									__index = function(_, key)
-										local val = rawParams[key]
-										if key == "Viewmodel" and typeof(val) == "table" then
-											return setmetatable({}, {
-												__index = function(_, vmKey)
-													if vmKey == "Sprinting" and CombatConfig.ReloadSprinting then
-														return false
-													end
-													if vmKey == "Play" and CombatConfig.InstantReload then
-														return function(vmSelf, animKey, ...)
-															local track = val:Play(animKey, ...)
-															task.defer(function()
-																pcall(function()
-																	local animator = val.Animator
-																	local loaded = animator and animator.LoadedAnimations
-																	local resolvedTrack = track or (loaded and loaded[animKey])
-																	if resolvedTrack and not firedOnce then
-																		local s1 = resolvedTrack:GetMarkerReachedSignal("FinishReload")
-																		local s2 = resolvedTrack:GetMarkerReachedSignal("InsertBullet")
-																		local s3 = resolvedTrack:GetMarkerReachedSignal("Insert")
-
-																		local chosen = (#getconnections(s1) > 0 and s1)
-																			or (#getconnections(s2) > 0 and s2)
-																			or (#getconnections(s3) > 0 and s3)
-
-																		if chosen then
-																			firedOnce = true
-																			firesignal(chosen)
-																			rawset(rawParams, "Reloading", false)
-																			pcall(function()
-																				resolvedTrack:Stop(0)
-																			end)
-																		end
-																	end
-																end)
-															end)
-															return track
-														end
-													end
-													return val[vmKey]
-												end,
-												__newindex = val
-											})
-										end
-										return val
-									end,
-									__newindex = rawParams
-								})
-								return origReload(proxyParams)
-							end
-							return origReload(...)
-						end)
-					end
-
-					local tryFire = rawget(data, "TryFire")
-					if typeof(tryFire) == "function" and debug.info(tryFire, "s") ~= "[C]" then
-						local origEnv = getfenv(tryFire)
-						local fakeMath = setmetatable({
-							random = function(...)
-								if CombatConfig.InstantEoka then
-									local a, b = ...
-									return b or a or 1
-								end
-								return math.random(...)
-							end
-						}, { __index = origEnv.math or math })
-						setfenv(tryFire, setmetatable({ math = fakeMath }, { __index = origEnv }))
-					end
-				end)
+				patchWeaponModule(mod, recoilModule)
 			end
+			viewmodelFolder.ChildAdded:Connect(function(mod)
+				task.wait(0.1)
+				patchWeaponModule(mod, recoilModule)
+			end)
 		end
 
 		local physicsFolder = client:FindFirstChild("Physics")
@@ -677,6 +681,14 @@ end
 
 function Combat:Load()
 	applyWeaponMods()
+
+	-- Teleport when clicking to shoot while in manipulator vantage mode.
+	userInputService.InputBegan:Connect(function(input, processed)
+		if processed then return end
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			performManipTeleport()
+		end
+	end)
 
 	runService.RenderStepped:Connect(function()
 		currentCamera = workspaceService.CurrentCamera or currentCamera
@@ -801,6 +813,5 @@ function Combat:Load()
 	return self
 end
 
-print("hello combat1")
-
+print("welcome combat2")
 return Combat
