@@ -12,13 +12,11 @@ local currentCamera = workspaceService.CurrentCamera
 local Combat = {}
 Combat.__index = Combat
 
--- Constants.
-local LONE_MAX_LEASH = 3.4
-
 local targetEntity = nil
 local targetPart = nil
 local hitscanOverridePos = nil
 local manipulatorOriginPos = nil
+local isPeeking = false
 
 local CombatConfig = {
 	Enabled = false,
@@ -51,7 +49,8 @@ local CombatConfig = {
 	HitscanPoint = true,
 	HitscanVisualColor = Color3.fromRGB(255, 196, 0),
 	Manipulator = false,
-	ManipulatorDistance = 3.2,
+	ManipulatorDistance = 6,
+	ManipulatorPeekDuration = 0.12,
 	ManipulatorVisualColor = Color3.fromRGB(0, 255, 170),
 	InstantHit = false,
 }
@@ -86,7 +85,7 @@ hitscanPoint.ZIndex = 6
 hitscanPoint.Visible = false
 
 local manipIndicator = Drawing.new("Text")
-manipIndicator.Text = "manipulated"
+manipIndicator.Text = "peek ready"
 manipIndicator.Size = 13
 manipIndicator.Center = true
 manipIndicator.Outline = true
@@ -178,15 +177,16 @@ local function findHitscanPosition(camPos, targetBonePos, targetChar)
 	return nil
 end
 
----Origin-Side Manipulator solver strictly respecting server Hitreg leash and LOS.
+---Find safe peek position for character teleportation.
 local function findManipulatorOrigin(targetPos, targetChar)
 	local myChar = localPlayer.Character
 	local head = myChar and myChar:FindFirstChild("Head")
-	if not head then return nil end
+	local root = myChar and myChar:FindFirstChild("HumanoidRootPart")
+	if not (head and root) then return nil end
 
 	local headPos = head.Position
 	local camCF = currentCamera.CFrame
-	local maxDist = math.clamp(CombatConfig.ManipulatorDistance or 3.2, 0.5, LONE_MAX_LEASH)
+	local maxDist = CombatConfig.ManipulatorDistance or 6
 
 	local camLook = camCF.LookVector
 	local flatLook = Vector3.new(camLook.X, 0, camLook.Z).Unit
@@ -194,30 +194,31 @@ local function findManipulatorOrigin(targetPos, targetChar)
 	local worldUp = Vector3.yAxis
 
 	local testDirections = {
-		worldUp,
 		flatRight,
 		-flatRight,
+		worldUp,
 		(worldUp + flatRight).Unit,
 		(worldUp - flatRight).Unit,
-		(worldUp + flatLook).Unit,
 		(flatRight + flatLook).Unit,
 		(-flatRight + flatLook).Unit,
+		(worldUp + flatLook).Unit,
 	}
 
-	local steps = { 0.5, 0.75, 1.0 }
+	local steps = 6
+	local stepDist = maxDist / steps
 
-	for _, mult in ipairs(steps) do
-		local dist = maxDist * mult
-		for _, dir in ipairs(testDirections) do
-			local sampleOrigin = headPos + (dir * dist)
+	for _, dir in ipairs(testDirections) do
+		for i = 1, steps do
+			local dist = i * stepDist
+			local samplePos = headPos + (dir * dist)
 
-			-- Проверка 1: Серверный луч от головы до точки выстрела должен быть чистым.
-			local clearFromHead = checkVisibility(headPos, sampleOrigin, myChar)
-			if clearFromHead then
-				-- Проверка 2: Траектория от точки выстрела до врага должна быть чистой.
-				local clearToEnemy = checkVisibility(sampleOrigin, targetPos, targetChar)
+			-- Check path from character to peek position.
+			local clearToSample = checkVisibility(headPos, samplePos, myChar)
+			if clearToSample then
+				-- Check line of sight from peek position to target.
+				local clearToEnemy = checkVisibility(samplePos, targetPos, targetChar)
 				if clearToEnemy then
-					return sampleOrigin
+					return samplePos
 				end
 			end
 		end
@@ -412,13 +413,6 @@ local function applyWeaponMods()
 								local proxyParams = setmetatable({}, {
 									__index = function(_, key)
 										local val = rawParams[key]
-										if (key == "Origin" or key == "Position" or key == "StartPos") and CombatConfig.Enabled and CombatConfig.Manipulator and manipulatorOriginPos then
-											return manipulatorOriginPos
-										end
-										if (key == "CFrame" or key == "OriginCFrame") and CombatConfig.Enabled and CombatConfig.Manipulator and manipulatorOriginPos then
-											local targetPos = hitscanOverridePos or (targetPart and targetPart.Position) or (manipulatorOriginPos + currentCamera.CFrame.LookVector * 100)
-											return CFrame.new(manipulatorOriginPos, targetPos)
-										end
 										if key == "RPM" and typeof(val) == "number" then
 											if CombatConfig.Firerate > 1 then
 												return val / CombatConfig.Firerate
@@ -439,6 +433,39 @@ local function applyWeaponMods()
 
 								if CombatConfig.AutoReload and typeof(data.Reload) == "function" then
 									task.delay(0, data.Reload, rawParams)
+								end
+
+								-- Teleport-Peek Manipulator handler.
+								if CombatConfig.Enabled and CombatConfig.Manipulator and manipulatorOriginPos and not isPeeking then
+									local character = localPlayer.Character
+									local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+									local head = character and character:FindFirstChild("Head")
+
+									if rootPart and head then
+										isPeeking = true
+										local savedCFrame = rootPart.CFrame
+										local targetPos = (targetPart and targetPart.Position) or (manipulatorOriginPos + currentCamera.CFrame.LookVector * 100)
+
+										local headOffset = head.Position - rootPart.Position
+										local peekPos = manipulatorOriginPos - headOffset
+										local peekCFrame = CFrame.new(peekPos, Vector3.new(targetPos.X, peekPos.Y, targetPos.Z))
+
+										rootPart.CFrame = peekCFrame
+										rootPart.AssemblyLinearVelocity = Vector3.zero
+
+										local result = origFire(proxyParams)
+
+										task.delay(CombatConfig.ManipulatorPeekDuration or 0.12, function()
+											if rootPart and rootPart.Parent then
+												rootPart.CFrame = savedCFrame
+												rootPart.AssemblyLinearVelocity = Vector3.zero
+												rootPart.AssemblyAngularVelocity = Vector3.zero
+											end
+											isPeeking = false
+										end)
+
+										return result
+									end
 								end
 
 								return origFire(proxyParams)
@@ -543,27 +570,6 @@ local function applyWeaponMods()
 					local projFn = require(mod)
 					if typeof(projFn) ~= "function" then return end
 
-					-- Redirect spawn origin inside projectile instance.
-					local oldProj
-					oldProj = hookfunction(projFn, newcclosure(function(...)
-						local args = { ... }
-						if CombatConfig.Enabled and CombatConfig.Manipulator and manipulatorOriginPos then
-							local char = localPlayer.Character
-							local head = char and char:FindFirstChild("Head")
-							local originBase = head and head.Position or currentCamera.CFrame.Position
-
-							for i = 1, math.min(#args, 4) do
-								if typeof(args[i]) == "Vector3" then
-									if (args[i] - originBase).Magnitude <= 10 then
-										args[i] = manipulatorOriginPos
-										break
-									end
-								end
-							end
-						end
-						return oldProj(unpack(args))
-					end))
-
 					if debug.getupvalues and debug.setupvalue then
 						for idx, upv in pairs(debug.getupvalues(projFn)) do
 							if typeof(upv) == "function" and debug.info(upv, "n") == "GetSpreadDirection" then
@@ -584,7 +590,9 @@ local function applyWeaponMods()
 									end
 
 									local targetPos = hitscanOverridePos or targetPart.Position
-									local startPos = (CombatConfig.Manipulator and manipulatorOriginPos) or currentCamera.CFrame.Position
+									local char = localPlayer.Character
+									local head = char and char:FindFirstChild("Head")
+									local startPos = head and head.Position or currentCamera.CFrame.Position
 									return (targetPos - startPos).Unit
 								end
 
@@ -593,54 +601,6 @@ local function applyWeaponMods()
 							end
 						end
 					end
-
-					-- Workspace wrapper for Instant Hit.
-					local fakeWorkspace = setmetatable({}, {
-						__index = function(_, key)
-							if key == "Raycast" then
-								return function(self, origin, direction, params)
-									if CombatConfig.Enabled and CombatConfig.InstantHit and targetPart and rollHitChance() then
-										local myChar = localPlayer.Character
-										if params and params.IgnoreWater and myChar and table.find(params.FilterDescendantsInstances, myChar) then
-											local finalPos = hitscanOverridePos or targetPart.Position
-											local startOrigin = (CombatConfig.Manipulator and manipulatorOriginPos) or origin
-											local isVisible = checkVisibility(startOrigin, finalPos, targetPart.Parent)
-
-											if isVisible then
-												task.wait()
-												return {
-													Instance = targetPart,
-													Position = finalPos,
-													Normal = Vector3.new(1, 1, 1).Unit,
-													Material = targetPart.Material,
-													Distance = (startOrigin - finalPos).Magnitude,
-												}
-											end
-										end
-									end
-
-									return workspaceService:Raycast(origin, direction, params)
-								end
-							end
-
-							local val = workspaceService[key]
-							if typeof(val) == "function" then
-								return function(self, ...)
-									return val(workspaceService, ...)
-								end
-							end
-							return val
-						end,
-						__newindex = function(_, key, val)
-							workspaceService[key] = val
-						end,
-					})
-
-					local projEnv = getfenv(projFn)
-					setfenv(projFn, setmetatable({
-						workspace = fakeWorkspace,
-						Workspace = fakeWorkspace,
-					}, { __index = projEnv }))
 				end)
 			end
 		end
