@@ -17,8 +17,8 @@ local targetPart = nil
 local hitscanOverridePos = nil
 local manipPosition = nil
 
-local isTeleporting = false
-local savedCameraCFrame = nil
+local realCFrame = nil
+local isManipulating = false
 
 local CombatConfig = {
 	Enabled = false,
@@ -133,36 +133,6 @@ local function checkVisibility(origin, destination, targetChar)
 
 	local hit = workspaceService:Raycast(origin, destination - origin, params)
 	return not hit, hit
-end
-
----Perform silent server-side vantage point teleport without client camera jerk.
-local function performManipTeleport()
-	if isTeleporting or not manipPosition or not CombatConfig.Manipulator or not CombatConfig.Enabled then
-		return
-	end
-
-	local myChar = localPlayer.Character
-	local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
-	local humanoid = myChar and myChar:FindFirstChildOfClass("Humanoid")
-	if not myRoot or not humanoid or humanoid.Health <= 0 then return end
-
-	isTeleporting = true
-	savedCameraCFrame = currentCamera.CFrame
-
-	local originalCFrame = myRoot.CFrame
-	myRoot.CFrame = CFrame.new(manipPosition, manipPosition + originalCFrame.LookVector)
-
-	task.spawn(function()
-		runService.Heartbeat:Wait()
-		runService.Heartbeat:Wait()
-
-		if myRoot and myRoot.Parent then
-			myRoot.CFrame = originalCFrame
-		end
-
-		savedCameraCFrame = nil
-		isTeleporting = false
-	end)
 end
 
 ---Generate Amongus Hook hitscan offsets.
@@ -432,8 +402,6 @@ local function patchWeaponModule(mod, recoilModule)
 
 			local origFire = fire
 			local function modifiedFire(...)
-				performManipTeleport()
-
 				local rawParams = ...
 				if typeof(rawParams) == "table" then
 					local proxyParams = setmetatable({}, {
@@ -626,7 +594,7 @@ local function applyWeaponMods()
 									local myChar = localPlayer.Character
 									local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
 
-									-- Redirect projectile origin to peek vantage point to bypass wall collision.
+									-- Override raycast origin to vantage point so the bullet bypasses wall geometry.
 									if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition and myRoot then
 										local distFromPlayer = (origin - myRoot.Position).Magnitude
 										if distFromPlayer < (CombatConfig.ManipulatorDistance + 10) then
@@ -685,6 +653,9 @@ end
 
 function Combat:Unload()
 	CombatConfig.Enabled = false
+	pcall(function()
+		runService:UnbindFromRenderStep("CombatManipRestore")
+	end)
 	circleInline:Remove()
 	circleOutline:Remove()
 	hitscanIndicator:Remove()
@@ -697,13 +668,36 @@ end
 function Combat:Load()
 	applyWeaponMods()
 
+	-- Heartbeat: replicate spoofed position to the server during physical step.
+	runService.Heartbeat:Connect(function()
+		if not (CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition) then
+			isManipulating = false
+			return
+		end
+
+		local char = localPlayer.Character
+		local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if not (hrp and hum and hum.Health > 0) then return end
+
+		realCFrame = hrp.CFrame
+		hrp.CFrame = CFrame.new(manipPosition, manipPosition + realCFrame.LookVector)
+		isManipulating = true
+	end)
+
+	-- RenderStep (199): restore real CFrame on client before camera updates.
+	runService:BindToRenderStep("CombatManipRestore", 199, function()
+		if isManipulating and realCFrame and localPlayer.Character then
+			local hrp = localPlayer.Character:FindFirstChild("HumanoidRootPart") or localPlayer.Character.PrimaryPart
+			if hrp then
+				hrp.CFrame = realCFrame
+				isManipulating = false
+			end
+		end
+	end)
+
 	runService.RenderStepped:Connect(function()
 		currentCamera = workspaceService.CurrentCamera or currentCamera
-
-		-- Counter-lock camera during network teleport ticks.
-		if isTeleporting and savedCameraCFrame then
-			currentCamera.CFrame = savedCameraCFrame
-		end
 
 		local mpos = userInputService:GetMouseLocation()
 		local radius = CombatConfig.FOV
@@ -755,9 +749,9 @@ function Combat:Load()
 		end
 
 		-- Manipulator Visualizations.
-		local isManipulating = CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition ~= nil
+		local isVisualizingManip = CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition ~= nil
 
-		if isManipulating and CombatConfig.ManipulatorIndicator then
+		if isVisualizingManip and CombatConfig.ManipulatorIndicator then
 			local yOffset = (isHitscanning and CombatConfig.HitscanIndicator) and 54 or 38
 			manipIndicator.Position = Vector2.new(viewportSize.X / 2, (viewportSize.Y / 2) + yOffset)
 			manipIndicator.Color = CombatConfig.ManipulatorColor
@@ -766,7 +760,7 @@ function Combat:Load()
 			manipIndicator.Visible = false
 		end
 
-		if isManipulating and CombatConfig.ManipulatorPoint then
+		if isVisualizingManip and CombatConfig.ManipulatorPoint then
 			local screenPos, onScreen = currentCamera:WorldToViewportPoint(manipPosition)
 			if onScreen then
 				manipPoint.Position = Vector2.new(screenPos.X, screenPos.Y)
