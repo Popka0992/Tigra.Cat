@@ -848,4 +848,6 @@ function Combat:Load()
 	return self
 end
 
+print("Furbbot israil techlogy loaded")
+
 return Combat
