@@ -801,4 +801,6 @@ function Combat:Load()
 	return self
 end
 
+print("hello combat1")
+
 return Combat
