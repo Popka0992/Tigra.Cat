@@ -19,6 +19,7 @@ local manipPosition = nil
 
 local realCFrame = nil
 local isManipulating = false
+local manipShotTicks = 0
 
 local CombatConfig = {
 	Enabled = false,
@@ -402,6 +403,11 @@ local function patchWeaponModule(mod, recoilModule)
 
 			local origFire = fire
 			local function modifiedFire(...)
+				-- Trigger silent vantage peek strictly on firing.
+				if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition then
+					manipShotTicks = 2
+				end
+
 				local rawParams = ...
 				if typeof(rawParams) == "table" then
 					local proxyParams = setmetatable({}, {
@@ -577,7 +583,7 @@ local function applyWeaponMods()
 									end
 
 									local targetPos = hitscanOverridePos or targetPart.Position
-									local originPos = manipPosition or currentCamera.CFrame.Position
+									local originPos = (manipShotTicks > 0 and manipPosition) or currentCamera.CFrame.Position
 									return (targetPos - originPos).Unit
 								end
 
@@ -594,8 +600,7 @@ local function applyWeaponMods()
 									local myChar = localPlayer.Character
 									local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
 
-									-- Override raycast origin to vantage point so the bullet bypasses wall geometry.
-									if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition and myRoot then
+									if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition and myRoot and manipShotTicks > 0 then
 										local distFromPlayer = (origin - myRoot.Position).Magnitude
 										if distFromPlayer < (CombatConfig.ManipulatorDistance + 10) then
 											origin = manipPosition
@@ -668,24 +673,26 @@ end
 function Combat:Load()
 	applyWeaponMods()
 
-	-- Heartbeat: replicate spoofed position to the server during physical step.
+	-- Heartbeat: spoof HRP position ONLY when a shot was fired.
 	runService.Heartbeat:Connect(function()
-		if not (CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition) then
+		if manipShotTicks > 0 and manipPosition and CombatConfig.Enabled and CombatConfig.Manipulator then
+			manipShotTicks = manipShotTicks - 1
+
+			local char = localPlayer.Character
+			local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+
+			if hrp and hum and hum.Health > 0 then
+				realCFrame = hrp.CFrame
+				hrp.CFrame = CFrame.new(manipPosition, manipPosition + realCFrame.LookVector)
+				isManipulating = true
+			end
+		else
 			isManipulating = false
-			return
 		end
-
-		local char = localPlayer.Character
-		local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
-		local hum = char and char:FindFirstChildOfClass("Humanoid")
-		if not (hrp and hum and hum.Health > 0) then return end
-
-		realCFrame = hrp.CFrame
-		hrp.CFrame = CFrame.new(manipPosition, manipPosition + realCFrame.LookVector)
-		isManipulating = true
 	end)
 
-	-- RenderStep (199): restore real CFrame on client before camera updates.
+	-- RenderStep (199): instantly revert back before camera calculates view.
 	runService:BindToRenderStep("CombatManipRestore", 199, function()
 		if isManipulating and realCFrame and localPlayer.Character then
 			local hrp = localPlayer.Character:FindFirstChild("HumanoidRootPart") or localPlayer.Character.PrimaryPart
