@@ -408,7 +408,7 @@ local function patchWeaponModule(mod, recoilModule)
 
 				-- Open a 4-tick replication window on fire so the server processes the hit.
 				if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition then
-					manipTicks = 4
+					manipTicks = 7
 				end
 
 				if typeof(rawParams) == "table" then
@@ -853,5 +853,5 @@ function Combat:Load()
 
 	return self
 end
-
+print("Furbbot israil techlogy loaded123")
 return Combat
