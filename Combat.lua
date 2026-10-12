@@ -13,7 +13,7 @@ local Combat = {}
 Combat.__index = Combat
 
 -- Constants.
-local MAX_PEEK_DISTANCE = 5.5
+local MAX_PEEK_DISTANCE = 9.5
 
 local targetEntity = nil
 local targetPart = nil
@@ -52,7 +52,7 @@ local CombatConfig = {
 	HitscanPoint = true,
 	HitscanVisualColor = Color3.fromRGB(255, 196, 0),
 	Manipulator = false,
-	ManipulatorDistance = 5,
+	ManipulatorDistance = 8,
 	ManipulatorPeekDuration = 0.15,
 	ManipulatorVisualColor = Color3.fromRGB(0, 255, 170),
 	InstantHit = false
@@ -179,35 +179,58 @@ local function findManipulatorOrigin(targetPos, targetChar)
 	if not (head and root) then return nil end
 
 	local rootPos = root.Position
+	local headPos = head.Position
+	local maxDist = math.clamp(CombatConfig.ManipulatorDistance or 8, 1, MAX_PEEK_DISTANCE)
 	local camCF = currentCamera.CFrame
-	local maxDist = math.clamp(CombatConfig.ManipulatorDistance or 5, 1, MAX_PEEK_DISTANCE)
 
+	-- 1. Выглядывание ВВЕРХ (за ящиками, насыпями, заборами, камнями)
+	local upSteps = { 2.5, 4.0, 5.5, 7.0, maxDist }
+	for _, upDist in ipairs(upSteps) do
+		if upDist <= maxDist then
+			local samplePos = rootPos + Vector3.new(0, upDist, 0)
+			local sampleHead = samplePos + Vector3.new(0, 1.5, 0)
+
+			if checkVisibility(headPos, sampleHead, targetChar) then
+				if checkVisibility(sampleHead, targetPos, targetChar) then
+					return samplePos
+				end
+			end
+		end
+	end
+
+	-- 2. Выглядывание В СТОРОНЫ и по ДИАГОНАЛЯМ (углы стен, дверные проемы)
+	local camRight = camCF.RightVector
+	local flatRight = Vector3.new(camRight.X, 0, camRight.Z).Unit
 	local camLook = camCF.LookVector
 	local flatLook = Vector3.new(camLook.X, 0, camLook.Z).Unit
-	local flatRight = Vector3.new(-flatLook.Z, 0, flatLook.X).Unit
-	local worldUp = Vector3.yAxis
 
-	local testDirections = {
-		worldUp,
-		flatRight,
-		-flatRight,
-		(worldUp + flatRight).Unit,
-		(worldUp - flatRight).Unit,
-		(worldUp + flatLook).Unit,
-		(flatRight + flatLook).Unit,
-		(-flatRight + flatLook).Unit,
-	}
+	local angleSteps = 16
+	local distSteps = { 2.5, 4.5, 6.5, maxDist }
 
-	local steps = { 0.5, 0.75, 1.0 }
+	for _, dist in ipairs(distSteps) do
+		if dist <= maxDist then
+			for i = 1, angleSteps do
+				local rad = (i / angleSteps) * (math.pi * 2)
+				local dir = (flatRight * math.cos(rad) + flatLook * math.sin(rad)).Unit
 
-	for _, mult in ipairs(steps) do
-		local dist = maxDist * mult
-		for _, dir in ipairs(testDirections) do
-			local samplePos = rootPos + (dir * dist)
+				local samplePos = rootPos + (dir * dist)
+				local sampleHead = samplePos + Vector3.new(0, 1.5, 0)
 
-			local clearToEnemy = checkVisibility(samplePos + Vector3.new(0, 1.5, 0), targetPos, targetChar)
-			if clearToEnemy then
-				return samplePos
+				-- Путь к точке выглядывания должен быть свободен от стен
+				if checkVisibility(headPos, sampleHead, targetChar) then
+					if checkVisibility(sampleHead, targetPos, targetChar) then
+						return samplePos
+					end
+				end
+
+				-- Точка выглядывания с приподнятым углом
+				local elevatedPos = samplePos + Vector3.new(0, 3.0, 0)
+				local elevatedHead = elevatedPos + Vector3.new(0, 1.5, 0)
+				if checkVisibility(headPos, elevatedHead, targetChar) then
+					if checkVisibility(elevatedHead, targetPos, targetChar) then
+						return elevatedPos
+					end
+				end
 			end
 		end
 	end
@@ -573,9 +596,14 @@ local function applyWeaponMods()
 									end
 
 									local targetPos = hitscanOverridePos or targetPart.Position
-									local char = localPlayer.Character
-									local head = char and char:FindFirstChild("Head")
-									local startPos = head and head.Position or currentCamera.CFrame.Position
+									local startPos
+									if isPeeking and manipulatorOriginPos then
+										startPos = manipulatorOriginPos + Vector3.new(0, 1.5, 0)
+									else
+										local char = localPlayer.Character
+										local head = char and char:FindFirstChild("Head")
+										startPos = head and head.Position or currentCamera.CFrame.Position
+									end
 									return (targetPos - startPos).Unit
 								end
 
