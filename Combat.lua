@@ -17,7 +17,7 @@ local targetPart = nil
 local hitscanOverridePos = nil
 local manipPosition = nil
 
-local manipTicks = 0
+local manipTicks = 7
 local isSpoofed = false
 local realCFrame = nil
 local realVelocity = nil
