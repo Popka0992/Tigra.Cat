@@ -48,9 +48,11 @@ local CombatConfig = {
 	HitscanPoint = true,
 	HitscanVisualColor = Color3.fromRGB(255, 196, 0),
 	InstantHit = false,
-	Manipulator = false,
-	ManipulatorDistance = 6,
-	ManipulatorVisual = true,
+	Manipulator = true,
+	ManipulatorDistance = 10,
+	ManipulatorIndicator = true,
+	ManipulatorPoint = true,
+	ManipulatorLine = true,
 	ManipulatorColor = Color3.fromRGB(0, 255, 170)
 }
 
@@ -83,6 +85,15 @@ hitscanPoint.Thickness = 1
 hitscanPoint.ZIndex = 6
 hitscanPoint.Visible = false
 
+local manipIndicator = Drawing.new("Text")
+manipIndicator.Text = "manipulated"
+manipIndicator.Size = 13
+manipIndicator.Center = true
+manipIndicator.Outline = true
+manipIndicator.OutlineColor = Color3.new(0, 0, 0)
+manipIndicator.ZIndex = 5
+manipIndicator.Visible = false
+
 local manipPoint = Drawing.new("Circle")
 manipPoint.Radius = 4
 manipPoint.Filled = true
@@ -106,6 +117,23 @@ local function checkVisibility(origin, destination, targetChar)
 
 	local hit = workspaceService:Raycast(origin, destination - origin, params)
 	return not hit, hit
+end
+
+---Check if sample position is not stuck inside a solid part.
+local function isPositionEmpty(pos)
+	local params = OverlapParams.new()
+	local myChar = localPlayer.Character
+	local ignoredFolder = workspaceService:FindFirstChild("Ignored")
+	params.FilterDescendantsInstances = { myChar, currentCamera, ignoredFolder }
+	params.RespectCanCollide = true
+
+	local parts = workspaceService:GetPartBoundsInRadius(pos, 0.4, params)
+	for idx = 1, #parts do
+		if parts[idx].CanCollide then
+			return false
+		end
+	end
+	return true
 end
 
 ---Generate Amongus Hook hitscan offsets.
@@ -157,39 +185,62 @@ local function findHitscanPosition(camPos, targetBonePos, targetChar)
 	return nil
 end
 
----Calculate manipulator positions around the local player towards target.
+---Find vantage points around local player to shoot target over/around cover.
 local function findManipulatorPosition(myRoot, targetPos, targetChar)
 	local rootPos = myRoot.Position
-	local dist = CombatConfig.ManipulatorDistance
-	local toTarget = (targetPos - rootPos)
-	local flatDir = Vector3.new(toTarget.X, 0, toTarget.Z).Unit
-	local rightDir = Vector3.new(-flatDir.Z, 0, flatDir.X)
+	local maxDist = CombatConfig.ManipulatorDistance
+	local toTarget = targetPos - rootPos
+	local flatDir = Vector3.new(toTarget.X, 0, toTarget.Z)
+
+	if flatDir.Magnitude > 0.1 then
+		flatDir = flatDir.Unit
+	else
+		flatDir = myRoot.CFrame.LookVector
+	end
+
+	local rightDir = Vector3.new(-flatDir.Z, 0, flatDir.X).Unit
 	local upDir = Vector3.new(0, 1, 0)
 
 	local candidates = {
-		upDir * dist,
-		rightDir * dist,
-		-rightDir * dist,
-		(rightDir + upDir) * (dist * 0.7),
-		(-rightDir + upDir) * (dist * 0.7),
-		(flatDir + upDir) * (dist * 0.7),
-		flatDir * dist
+		-- Upward peeks (over cover).
+		upDir * (maxDist * 0.4),
+		upDir * (maxDist * 0.7),
+		upDir * maxDist,
+
+		-- Upward + Forward peeks.
+		(upDir * 0.7 + flatDir * 0.7) * (maxDist * 0.7),
+		(upDir * 0.8 + flatDir * 0.5) * maxDist,
+
+		-- Left peeks.
+		-rightDir * (maxDist * 0.4),
+		-rightDir * (maxDist * 0.75),
+		-rightDir * maxDist,
+
+		-- Right peeks.
+		rightDir * (maxDist * 0.4),
+		rightDir * (maxDist * 0.75),
+		rightDir * maxDist,
+
+		-- Diagonal Up + Left/Right peeks.
+		(upDir * 0.6 - rightDir * 0.8) * maxDist,
+		(upDir * 0.6 + rightDir * 0.8) * maxDist,
+		(upDir * 0.8 - rightDir * 0.5) * maxDist,
+		(upDir * 0.8 + rightDir * 0.5) * maxDist,
+
+		-- Forward peeks.
+		flatDir * (maxDist * 0.5),
+		flatDir * maxDist
 	}
 
-	for _, offset in ipairs(candidates) do
-		local samplePos = rootPos + offset
-		local clearToOffset, wallHit = checkVisibility(rootPos, samplePos, localPlayer.Character)
+	for idx = 1, #candidates do
+		local samplePos = rootPos + candidates[idx]
 
-		if not clearToOffset and wallHit then
-			if wallHit.Distance > 1 then
-				samplePos = rootPos + (offset.Unit * (wallHit.Distance - 0.3))
-			else
-				continue
+		-- Verify sample position is not inside solid map parts.
+		if isPositionEmpty(samplePos) then
+			-- Verify clear line of fire from sample position to target.
+			if checkVisibility(samplePos, targetPos, targetChar) then
+				return samplePos
 			end
-		end
-
-		if checkVisibility(samplePos, targetPos, targetChar) then
-			return samplePos
 		end
 	end
 
@@ -253,7 +304,7 @@ end
 
 ---Get nearest target bone to cursor.
 local function getClosestTarget()
-	local closestPart, closestDist, bestEntity, resolvedHitscan = nil, math.huge, nil, nil
+	local closestPart, closestDist, bestEntity, resolvedHitscan, resolvedManip = nil, math.huge, nil, nil, nil
 	local mousePos = userInputService:GetMouseLocation()
 	local camPos = currentCamera.CFrame.Position
 	local maxFovRadius = CombatConfig.FOV
@@ -284,6 +335,7 @@ local function getClosestTarget()
 		if dist <= maxFovRadius and dist < closestDist then
 			local isVisible = checkVisibility(camPos, part.Position, char)
 			local hitscanPos = nil
+			local manipPos = nil
 
 			if not isVisible and CombatConfig.Hitscan then
 				hitscanPos = findHitscanPosition(camPos, part.Position, char)
@@ -293,7 +345,8 @@ local function getClosestTarget()
 			end
 
 			if not isVisible and CombatConfig.Manipulator and myRoot then
-				if findManipulatorPosition(myRoot, part.Position, char) then
+				manipPos = findManipulatorPosition(myRoot, part.Position, char)
+				if manipPos then
 					isVisible = true
 				end
 			end
@@ -306,10 +359,11 @@ local function getClosestTarget()
 			closestPart = part
 			bestEntity = entity
 			resolvedHitscan = hitscanPos
+			resolvedManip = manipPos
 		end
 	end
 
-	return closestPart, bestEntity, resolvedHitscan
+	return closestPart, bestEntity, resolvedHitscan, resolvedManip
 end
 
 ---Patch weapon mods & hook Projectile modules.
@@ -379,7 +433,7 @@ local function applyWeaponMods()
 							local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
 							local originalCFrame = nil
 
-							-- Teleport to manipulator vantage point before bullet creation.
+							-- Teleport to manipulator position during fire execution.
 							if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition and myRoot then
 								originalCFrame = myRoot.CFrame
 								myRoot.CFrame = CFrame.new(manipPosition, manipPosition + originalCFrame.LookVector)
@@ -417,7 +471,7 @@ local function applyWeaponMods()
 								result = origFire(...)
 							end
 
-							-- Revert player position back to original.
+							-- Revert player position immediately after firing.
 							if originalCFrame and myRoot then
 								task.defer(function()
 									if myRoot and myRoot.Parent then
@@ -616,6 +670,7 @@ function Combat:Unload()
 	circleOutline:Remove()
 	hitscanIndicator:Remove()
 	hitscanPoint:Remove()
+	manipIndicator:Remove()
 	manipPoint:Remove()
 	manipLine:Remove()
 end
@@ -639,7 +694,7 @@ function Combat:Load()
 		circleOutline.Visible = CombatConfig.Enabled and CombatConfig.ShowFOV and CombatConfig.FOVOutline
 
 		if CombatConfig.Enabled then
-			targetPart, targetEntity, hitscanOverridePos = getClosestTarget()
+			targetPart, targetEntity, hitscanOverridePos, manipPosition = getClosestTarget()
 		else
 			targetPart = nil
 			targetEntity = nil
@@ -649,21 +704,12 @@ function Combat:Load()
 
 		local myChar = localPlayer.Character
 		local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
-
-		-- Solve manipulator vantage point.
-		if CombatConfig.Enabled and CombatConfig.Manipulator and targetPart and myRoot then
-			local targetChar = targetEntity and targetEntity.Model or targetPart.Parent
-			local aimPos = hitscanOverridePos or targetPart.Position
-			manipPosition = findManipulatorPosition(myRoot, aimPos, targetChar)
-		else
-			manipPosition = nil
-		end
+		local viewportSize = currentCamera.ViewportSize
 
 		-- Hitscan Visualizations.
 		local isHitscanning = CombatConfig.Enabled and CombatConfig.Hitscan and hitscanOverridePos ~= nil
 
 		if isHitscanning and CombatConfig.HitscanIndicator then
-			local viewportSize = currentCamera.ViewportSize
 			hitscanIndicator.Position = Vector2.new(viewportSize.X / 2, (viewportSize.Y / 2) + 38)
 			hitscanIndicator.Color = CombatConfig.HitscanVisualColor
 			hitscanIndicator.Visible = true
@@ -685,14 +731,25 @@ function Combat:Load()
 		end
 
 		-- Manipulator Visualizations.
-		if manipPosition and CombatConfig.ManipulatorVisual then
+		local isManipulating = CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition ~= nil
+
+		if isManipulating and CombatConfig.ManipulatorIndicator then
+			local yOffset = (isHitscanning and CombatConfig.HitscanIndicator) and 54 or 38
+			manipIndicator.Position = Vector2.new(viewportSize.X / 2, (viewportSize.Y / 2) + yOffset)
+			manipIndicator.Color = CombatConfig.ManipulatorColor
+			manipIndicator.Visible = true
+		else
+			manipIndicator.Visible = false
+		end
+
+		if isManipulating and CombatConfig.ManipulatorPoint then
 			local screenPos, onScreen = currentCamera:WorldToViewportPoint(manipPosition)
 			if onScreen then
 				manipPoint.Position = Vector2.new(screenPos.X, screenPos.Y)
 				manipPoint.Color = CombatConfig.ManipulatorColor
 				manipPoint.Visible = true
 
-				if myRoot then
+				if CombatConfig.ManipulatorLine and myRoot then
 					local rootScreen, rootOnScreen = currentCamera:WorldToViewportPoint(myRoot.Position)
 					if rootOnScreen then
 						manipLine.From = Vector2.new(rootScreen.X, rootScreen.Y)
@@ -702,6 +759,8 @@ function Combat:Load()
 					else
 						manipLine.Visible = false
 					end
+				else
+					manipLine.Visible = false
 				end
 			else
 				manipPoint.Visible = false
