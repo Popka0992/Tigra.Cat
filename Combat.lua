@@ -13,7 +13,7 @@ local Combat = {}
 Combat.__index = Combat
 
 -- Constants.
-local MAX_PEEK_DISTANCE = 333
+local MAX_PEEK_DISTANCE = 5.5
 
 local targetEntity = nil
 local targetPart = nil
@@ -55,7 +55,7 @@ local CombatConfig = {
 	ManipulatorDistance = 5,
 	ManipulatorPeekDuration = 0.15,
 	ManipulatorVisualColor = Color3.fromRGB(0, 255, 170),
-	InstantHit = false,
+	InstantHit = false
 }
 
 local circleOutline = Drawing.new("Circle")
@@ -109,7 +109,7 @@ manipulatorTracer.Transparency = 1
 manipulatorTracer.ZIndex = 5
 manipulatorTracer.Visible = false
 
----Perform raycast visibility check between two points (Amongus Hook Fn22).
+---Perform raycast visibility check between two points.
 local function checkVisibility(origin, destination, targetChar)
 	local params = RaycastParams.new()
 	params.RespectCanCollide = true
@@ -134,7 +134,7 @@ local function getHitscanAngles()
 		Vector3.new(-1, 0, 1).Unit,
 		Vector3.new(1, 0, -1).Unit,
 		Vector3.new(-1, 0, -1).Unit,
-		Vector3.new(0, 1, 0).Unit,
+		Vector3.new(0, 1, 0).Unit
 	}
 
 	local angles = {}
@@ -149,7 +149,7 @@ local function getHitscanAngles()
 	return angles
 end
 
----Amongus Hook Hitscan solver (Fn28).
+---Amongus Hook Hitscan solver.
 local function findHitscanPosition(camPos, targetBonePos, targetChar)
 	local angles = getHitscanAngles()
 	for idx = 1, #angles do
@@ -157,7 +157,11 @@ local function findHitscanPosition(camPos, targetBonePos, targetChar)
 		local clearToTarget, wallHit = checkVisibility(targetBonePos, samplePos, targetChar)
 
 		if not clearToTarget and wallHit then
-			samplePos = targetBonePos + ((samplePos - targetBonePos).Unit * (wallHit.Distance - 0.2))
+			if wallHit.Distance > 0.25 then
+				samplePos = targetBonePos + ((samplePos - targetBonePos).Unit * (wallHit.Distance - 0.2))
+			else
+				continue
+			end
 		end
 
 		if checkVisibility(camPos, samplePos, targetChar) then
@@ -201,7 +205,6 @@ local function findManipulatorOrigin(targetPos, targetChar)
 		for _, dir in ipairs(testDirections) do
 			local samplePos = rootPos + (dir * dist)
 
-			-- Точка выглядывания должна чисто видеть врага.
 			local clearToEnemy = checkVisibility(samplePos + Vector3.new(0, 1.5, 0), targetPos, targetChar)
 			if clearToEnemy then
 				return samplePos
@@ -252,7 +255,7 @@ local function getTargetEntities()
 				Player = player,
 				IsBot = isBot,
 				Humanoid = humanoid,
-				RootPart = root,
+				RootPart = root
 			})
 		end
 	end
@@ -269,8 +272,7 @@ end
 
 ---Get nearest target bone to cursor.
 local function getClosestTarget()
-	local closestPart, closestDist, bestEntity = nil, math.huge, nil
-	local resolvedHitscan, resolvedManipulator = nil, nil
+	local closestPart, closestDist, bestEntity, resolvedHitscan, resolvedManipulator = nil, math.huge, nil, nil, nil
 	local mousePos = userInputService:GetMouseLocation()
 	local camPos = currentCamera.CFrame.Position
 	local maxFovRadius = CombatConfig.FOV
@@ -299,7 +301,6 @@ local function getClosestTarget()
 			local isVisible = checkVisibility(camPos, part.Position, char)
 			local hitscanPos = nil
 
-			-- В соответствии с amongus hook: сканируем только если цель перекрыта стеной
 			if not isVisible and CombatConfig.Hitscan then
 				hitscanPos = findHitscanPosition(camPos, part.Position, char)
 				if hitscanPos then
@@ -307,7 +308,6 @@ local function getClosestTarget()
 				end
 			end
 
-			-- Manipulator расчет
 			local manipPos = nil
 			if CombatConfig.Manipulator then
 				local aimTarget = hitscanPos or part.Position
@@ -413,7 +413,7 @@ local function applyWeaponMods()
 										return val
 									end,
 									__newindex = rawParams,
-									__metatable = "",
+									__metatable = ""
 								})
 
 								if CombatConfig.AutoReload and typeof(data.Reload) == "function" then
@@ -434,7 +434,6 @@ local function applyWeaponMods()
 										rootPart.CFrame = peekCFrame
 										rootPart.AssemblyLinearVelocity = Vector3.zero
 
-										-- Небольшая пауза для подтверждения физики сервером перед выстрелом.
 										task.wait(0.03)
 
 										local result = origFire(proxyParams)
@@ -512,12 +511,12 @@ local function applyWeaponMods()
 													end
 													return val[vmKey]
 												end,
-												__newindex = val,
+												__newindex = val
 											})
 										end
 										return val
 									end,
-									__newindex = rawParams,
+									__newindex = rawParams
 								})
 								return origReload(proxyParams)
 							end
@@ -535,7 +534,7 @@ local function applyWeaponMods()
 									return b or a or 1
 								end
 								return math.random(...)
-							end,
+							end
 						}, { __index = origEnv.math or math })
 						setfenv(tryFire, setmetatable({ math = fakeMath }, { __index = origEnv }))
 					end
@@ -565,7 +564,7 @@ local function applyWeaponMods()
 								end)
 
 								setfenv(origSpread, setmetatable({
-									math = setmetatable({ random = fakeRandom }, { __index = spreadEnv.math or math }),
+									math = setmetatable({ random = fakeRandom }, { __index = spreadEnv.math or math })
 								}, { __index = spreadEnv }))
 
 								local function redirectedSpread(...)
@@ -585,6 +584,51 @@ local function applyWeaponMods()
 							end
 						end
 					end
+
+					local fakeWorkspace = setmetatable({}, {
+						__index = function(_, key)
+							if key == "Raycast" then
+								return function(self, origin, direction, params)
+									if CombatConfig.Enabled and CombatConfig.InstantHit and targetPart and rollHitChance() then
+										local myChar = localPlayer.Character
+										if params and params.IgnoreWater and myChar and table.find(params.FilterDescendantsInstances, myChar) then
+											local finalPos = hitscanOverridePos or targetPart.Position
+											local isVisible = checkVisibility(origin, finalPos, targetPart.Parent)
+
+											if isVisible then
+												task.wait()
+												return {
+													Instance = targetPart,
+													Position = finalPos,
+													Normal = Vector3.new(1, 1, 1).Unit,
+													Material = targetPart.Material,
+													Distance = (origin - finalPos).Magnitude
+												}
+											end
+										end
+									end
+									return workspaceService:Raycast(origin, direction, params)
+								end
+							end
+
+							local val = workspaceService[key]
+							if typeof(val) == "function" then
+								return function(self, ...)
+									return val(workspaceService, ...)
+								end
+							end
+							return val
+						end,
+						__newindex = function(_, key, val)
+							workspaceService[key] = val
+						end
+					})
+
+					local projEnv = getfenv(projFn)
+					setfenv(projFn, setmetatable({
+						workspace = fakeWorkspace,
+						Workspace = fakeWorkspace
+					}, { __index = projEnv }))
 				end)
 			end
 		end
@@ -633,11 +677,11 @@ function Combat:Load()
 			manipulatorOriginPos = nil
 		end
 
+		-- Hitscan Visualizations
 		local isHitscanning = CombatConfig.Enabled and CombatConfig.Hitscan and hitscanOverridePos ~= nil
 		local isManipulating = CombatConfig.Enabled and CombatConfig.Manipulator and manipulatorOriginPos ~= nil
 		local viewportSize = currentCamera.ViewportSize
 
-		-- Hitscan Visuals.
 		if isHitscanning and CombatConfig.HitscanIndicator then
 			hitscanIndicator.Position = Vector2.new(viewportSize.X / 2, (viewportSize.Y / 2) + 38)
 			hitscanIndicator.Color = CombatConfig.HitscanVisualColor
@@ -659,7 +703,7 @@ function Combat:Load()
 			hitscanPoint.Visible = false
 		end
 
-		-- Manipulator Visuals.
+		-- Manipulator Visualizations
 		if isManipulating then
 			local yOffset = isHitscanning and 54 or 38
 			manipIndicator.Position = Vector2.new(viewportSize.X / 2, (viewportSize.Y / 2) + yOffset)
