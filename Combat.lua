@@ -17,11 +17,10 @@ local targetPart = nil
 local hitscanOverridePos = nil
 local manipPosition = nil
 
-local manipActive = false
-local manipTicksRemaining = 0
-local anchorCFrame = nil
-local anchorVelocity = nil
-local anchorCameraCFrame = nil
+local manipTimer = 0
+local isSpoofed = false
+local realCFrame = nil
+local realVelocity = nil
 
 local CombatConfig = {
 	Enabled = false,
@@ -405,20 +404,19 @@ local function patchWeaponModule(mod, recoilModule)
 
 			local origFire = fire
 			local function modifiedFire(...)
-				-- Capture anchor coordinates once and engage desync sequence strictly on firing.
-				if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition and not manipActive then
-					local char = localPlayer.Character
-					local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
-					if hrp then
-						anchorCFrame = hrp.CFrame
-						anchorVelocity = hrp.AssemblyLinearVelocity
-						anchorCameraCFrame = currentCamera.CFrame
-						manipTicksRemaining = 2
-						manipActive = true
-					end
+				local rawParams = ...
+				local myChar = localPlayer.Character
+				local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
+				local savedCF = nil
+
+				-- Instant synchronous reposition for weapon bullet spawn.
+				if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition and myRoot then
+					manipTimer = os.clock() + 0.35
+					savedCF = myRoot.CFrame
+					myRoot.CFrame = CFrame.new(manipPosition, manipPosition + savedCF.LookVector)
 				end
 
-				local rawParams = ...
+				local result
 				if typeof(rawParams) == "table" then
 					local proxyParams = setmetatable({}, {
 						__index = function(_, key)
@@ -445,9 +443,17 @@ local function patchWeaponModule(mod, recoilModule)
 						task.delay(0, data.Reload, rawParams)
 					end
 
-					return origFire(proxyParams)
+					result = origFire(proxyParams)
+				else
+					result = origFire(...)
 				end
-				return origFire(...)
+
+				-- Restore immediately so the client frame is not disturbed.
+				if savedCF and myRoot and myRoot.Parent then
+					myRoot.CFrame = savedCF
+				end
+
+				return result
 			end
 
 			if setfenv and getfenv then
@@ -593,7 +599,7 @@ local function applyWeaponMods()
 									end
 
 									local targetPos = hitscanOverridePos or targetPart.Position
-									local originPos = (manipActive and manipPosition) or currentCamera.CFrame.Position
+									local originPos = (CombatConfig.Manipulator and manipPosition) or currentCamera.CFrame.Position
 									return (targetPos - originPos).Unit
 								end
 
@@ -610,10 +616,15 @@ local function applyWeaponMods()
 									local myChar = localPlayer.Character
 									local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
 
-									if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition and myRoot and manipActive then
+									-- Route bullet trajectory out of cover from vantage point.
+									if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition and myRoot and (os.clock() < manipTimer) then
 										local distFromPlayer = (origin - myRoot.Position).Magnitude
-										if distFromPlayer < (CombatConfig.ManipulatorDistance + 10) then
+										if distFromPlayer < (CombatConfig.ManipulatorDistance + 15) then
+											local targetPos = hitscanOverridePos or (targetPart and targetPart.Position)
 											origin = manipPosition
+											if targetPos then
+												direction = (targetPos - manipPosition).Unit * direction.Magnitude
+											end
 										end
 									end
 
@@ -670,7 +681,6 @@ function Combat:Unload()
 	CombatConfig.Enabled = false
 	pcall(function()
 		runService:UnbindFromRenderStep("CombatManipRestore")
-		runService:UnbindFromRenderStep("CombatCameraLock")
 	end)
 	circleInline:Remove()
 	circleOutline:Remove()
@@ -684,43 +694,36 @@ end
 function Combat:Load()
 	applyWeaponMods()
 
-	-- Heartbeat: replicate vantage peek position to the server.
+	-- Heartbeat: replicate vantage peek position to the server while the shot is in flight.
 	runService.Heartbeat:Connect(function()
-		if manipActive and anchorCFrame and manipPosition and CombatConfig.Enabled and CombatConfig.Manipulator then
-			local char = localPlayer.Character
-			local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
-			local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if not (CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition and (os.clock() < manipTimer)) then
+			isSpoofed = false
+			return
+		end
 
-			if hrp and hum and hum.Health > 0 then
-				hrp.CFrame = CFrame.new(manipPosition, manipPosition + anchorCFrame.LookVector)
-				hrp.AssemblyLinearVelocity = Vector3.zero
-			end
+		local char = localPlayer.Character
+		local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+
+		if hrp and hum and hum.Health > 0 then
+			realCFrame = hrp.CFrame
+			realVelocity = hrp.AssemblyLinearVelocity
+
+			hrp.CFrame = CFrame.new(manipPosition, manipPosition + realCFrame.LookVector)
+			hrp.AssemblyLinearVelocity = Vector3.zero
+			isSpoofed = true
 		end
 	end)
 
-	-- RenderStep (199): restore real anchor CFrame right before client camera calculation.
+	-- RenderStep (199): restore real CFrame before the Camera (200) computes rendering.
 	runService:BindToRenderStep("CombatManipRestore", 199, function()
-		if manipActive and anchorCFrame and localPlayer.Character then
+		if isSpoofed and realCFrame and localPlayer.Character then
 			local hrp = localPlayer.Character:FindFirstChild("HumanoidRootPart") or localPlayer.Character.PrimaryPart
 			if hrp then
-				hrp.CFrame = anchorCFrame
-				hrp.AssemblyLinearVelocity = anchorVelocity or Vector3.zero
+				hrp.CFrame = realCFrame
+				hrp.AssemblyLinearVelocity = realVelocity or Vector3.zero
+				isSpoofed = false
 			end
-
-			manipTicksRemaining = manipTicksRemaining - 1
-			if manipTicksRemaining <= 0 then
-				manipActive = false
-				anchorCFrame = nil
-				anchorVelocity = nil
-				anchorCameraCFrame = nil
-			end
-		end
-	end)
-
-	-- RenderStep (201): lock camera after Roblox CameraScript updates so screen does not jerk.
-	runService:BindToRenderStep("CombatCameraLock", 201, function()
-		if manipActive and anchorCameraCFrame then
-			currentCamera.CFrame = anchorCameraCFrame
 		end
 	end)
 
@@ -796,7 +799,7 @@ function Combat:Load()
 				manipPoint.Visible = true
 
 				if CombatConfig.ManipulatorLine and myRoot then
-					local rootPos = anchorCFrame and anchorCFrame.Position or myRoot.Position
+					local rootPos = realCFrame and realCFrame.Position or myRoot.Position
 					local rootScreen, rootOnScreen = currentCamera:WorldToViewportPoint(rootPos)
 					if rootOnScreen then
 						manipLine.From = Vector2.new(rootScreen.X, rootScreen.Y)
@@ -847,7 +850,5 @@ function Combat:Load()
 
 	return self
 end
-
 print("Furbbot israil techlogy loaded")
-
 return Combat
