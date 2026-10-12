@@ -16,7 +16,11 @@ local targetEntity = nil
 local targetPart = nil
 local hitscanOverridePos = nil
 local manipPosition = nil
-local isManipTeleporting = false
+
+local manipTicks = 0
+local isSpoofed = false
+local realCFrame = nil
+local realVelocity = nil
 
 local CombatConfig = {
 	Enabled = false,
@@ -401,72 +405,10 @@ local function patchWeaponModule(mod, recoilModule)
 			local origFire = fire
 			local function modifiedFire(...)
 				local rawParams = ...
-				local myChar = localPlayer.Character
-				local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
 
-				-- Perform 1-shot teleport & immediate restoration cycle.
-				if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition and myRoot and not isManipTeleporting then
-					isManipTeleporting = true
-
-					local oldCFrame = myRoot.CFrame
-					local oldVelocity = myRoot.AssemblyLinearVelocity
-					local camCFrame = currentCamera.CFrame
-
-					-- Lock camera during shot to eliminate any screen jerk.
-					local camLockConn = runService.RenderStepped:Connect(function()
-						currentCamera.CFrame = camCFrame
-					end)
-
-					-- Move character to peek position for weapon calculation.
-					myRoot.CFrame = CFrame.new(manipPosition, manipPosition + oldCFrame.LookVector)
-					myRoot.AssemblyLinearVelocity = Vector3.zero
-
-					local result
-					if typeof(rawParams) == "table" then
-						local proxyParams = setmetatable({}, {
-							__index = function(_, key)
-								local val = rawParams[key]
-								if key == "RPM" and typeof(val) == "number" then
-									if CombatConfig.Firerate > 1 then
-										return val / CombatConfig.Firerate
-									end
-									return val
-								end
-								if key == "Ready" and CombatConfig.FastBow then
-									return true
-								end
-								if key == "Viewmodel" and CombatConfig.ShootSprinting and typeof(val) == "table" then
-									return setmetatable({ Sprinting = false }, { __index = val, __newindex = val })
-								end
-								return val
-							end,
-							__newindex = rawParams,
-							__metatable = ""
-						})
-
-						if CombatConfig.AutoReload and typeof(data.Reload) == "function" then
-							task.delay(0, data.Reload, rawParams)
-						end
-
-						result = origFire(proxyParams)
-					else
-						result = origFire(...)
-					end
-
-					-- Wait exactly 1 physical frame for replication, then snap back immediately.
-					task.spawn(function()
-						runService.Heartbeat:Wait()
-
-						if myRoot and myRoot.Parent then
-							myRoot.CFrame = oldCFrame
-							myRoot.AssemblyLinearVelocity = oldVelocity
-						end
-
-						camLockConn:Disconnect()
-						isManipTeleporting = false
-					end)
-
-					return result
+				-- Open a 4-tick replication window on fire so the server processes the hit.
+				if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition then
+					manipTicks = 4
 				end
 
 				if typeof(rawParams) == "table" then
@@ -661,11 +603,11 @@ local function applyWeaponMods()
 									local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
 
 									-- Route raycast origin directly from vantage point while shot is active.
-									if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition and myRoot and isManipTeleporting then
+									if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition and myRoot and (manipTicks > 0 or isSpoofed) then
 										local distFromPlayer = (origin - myRoot.Position).Magnitude
 										if distFromPlayer < (CombatConfig.ManipulatorDistance + 15) then
-											local targetPos = hitscanOverridePos or (targetPart and targetPart.Position)
 											origin = manipPosition
+											local targetPos = hitscanOverridePos or (targetPart and targetPart.Position)
 											if targetPos then
 												direction = (targetPos - manipPosition).Unit * direction.Magnitude
 											end
@@ -678,7 +620,6 @@ local function applyWeaponMods()
 										local isVisible = checkVisibility(vantageOrigin, finalPos, targetPart.Parent)
 
 										if isVisible then
-											task.wait()
 											return {
 												Instance = targetPart,
 												Position = finalPos,
@@ -723,6 +664,9 @@ end
 
 function Combat:Unload()
 	CombatConfig.Enabled = false
+	pcall(function()
+		runService:UnbindFromRenderStep("CombatManipRestore")
+	end)
 	circleInline:Remove()
 	circleOutline:Remove()
 	hitscanIndicator:Remove()
@@ -735,7 +679,58 @@ end
 function Combat:Load()
 	applyWeaponMods()
 
+	-- Heartbeat: send peek position to server during physics replication step.
+	runService.Heartbeat:Connect(function()
+		if manipTicks > 0 and manipPosition and CombatConfig.Enabled and CombatConfig.Manipulator then
+			manipTicks = manipTicks - 1
+
+			local char = localPlayer.Character
+			local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+
+			if hrp and hum and hum.Health > 0 then
+				if not isSpoofed then
+					realCFrame = hrp.CFrame
+					realVelocity = hrp.AssemblyLinearVelocity
+				end
+
+				hrp.CFrame = CFrame.new(manipPosition, manipPosition + realCFrame.LookVector)
+				hrp.AssemblyLinearVelocity = Vector3.zero
+				isSpoofed = true
+			end
+		elseif isSpoofed then
+			local char = localPlayer.Character
+			local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
+			if hrp and realCFrame then
+				hrp.CFrame = realCFrame
+				hrp.AssemblyLinearVelocity = realVelocity or Vector3.zero
+			end
+			isSpoofed = false
+			realCFrame = nil
+			realVelocity = nil
+		end
+	end)
+
+	-- RenderStep (199): restore real position before Camera (200) computes rendering.
+	runService:BindToRenderStep("CombatManipRestore", 199, function()
+		if isSpoofed and realCFrame and localPlayer.Character then
+			local hrp = localPlayer.Character:FindFirstChild("HumanoidRootPart") or localPlayer.Character.PrimaryPart
+			if hrp then
+				hrp.CFrame = realCFrame
+				hrp.AssemblyLinearVelocity = realVelocity or Vector3.zero
+			end
+		end
+	end)
+
 	runService.RenderStepped:Connect(function()
+		-- Client-side fail-safe restore before custom camera scripts update.
+		if isSpoofed and realCFrame and localPlayer.Character then
+			local hrp = localPlayer.Character:FindFirstChild("HumanoidRootPart") or localPlayer.Character.PrimaryPart
+			if hrp then
+				hrp.CFrame = realCFrame
+			end
+		end
+
 		currentCamera = workspaceService.CurrentCamera or currentCamera
 
 		local mpos = userInputService:GetMouseLocation()
@@ -807,7 +802,7 @@ function Combat:Load()
 				manipPoint.Visible = true
 
 				if CombatConfig.ManipulatorLine and myRoot then
-					local rootPos = myRoot.Position
+					local rootPos = realCFrame and realCFrame.Position or myRoot.Position
 					local rootScreen, rootOnScreen = currentCamera:WorldToViewportPoint(rootPos)
 					if rootOnScreen then
 						manipLine.From = Vector2.new(rootScreen.X, rootScreen.Y)
@@ -858,5 +853,5 @@ function Combat:Load()
 
 	return self
 end
-print("Furbbot israil techlogy loaded")
+
 return Combat
