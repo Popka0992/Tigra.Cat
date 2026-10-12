@@ -19,8 +19,6 @@ local manipPosition = nil
 
 local isTeleporting = false
 local savedCameraCFrame = nil
-local activeRootJoint = nil
-local originalRootC0 = nil
 
 local CombatConfig = {
 	Enabled = false,
@@ -148,27 +146,12 @@ local function performManipTeleport()
 	local humanoid = myChar and myChar:FindFirstChildOfClass("Humanoid")
 	if not myRoot or not humanoid or humanoid.Health <= 0 then return end
 
-	local torso = myChar:FindFirstChild("LowerTorso") or myChar:FindFirstChild("Torso")
-	local rootJoint = torso and (torso:FindFirstChild("Root") or torso:FindFirstChild("RootJoint"))
-
 	isTeleporting = true
 	savedCameraCFrame = currentCamera.CFrame
 
 	local originalCFrame = myRoot.CFrame
-	local deltaPos = manipPosition - originalCFrame.Position
-	local targetCFrame = CFrame.new(manipPosition, manipPosition + originalCFrame.LookVector)
+	myRoot.CFrame = CFrame.new(manipPosition, manipPosition + originalCFrame.LookVector)
 
-	-- Offset client visual mesh back so the player does not see themselves moving.
-	if rootJoint then
-		activeRootJoint = rootJoint
-		originalRootC0 = rootJoint.C0
-		local localDelta = targetCFrame:VectorToObjectSpace(-deltaPos)
-		rootJoint.C0 = originalRootC0 * CFrame.new(localDelta)
-	end
-
-	myRoot.CFrame = targetCFrame
-
-	-- Revert after network replication cycles.
 	task.spawn(function()
 		runService.Heartbeat:Wait()
 		runService.Heartbeat:Wait()
@@ -177,12 +160,6 @@ local function performManipTeleport()
 			myRoot.CFrame = originalCFrame
 		end
 
-		if activeRootJoint and originalRootC0 and activeRootJoint.Parent then
-			activeRootJoint.C0 = originalRootC0
-		end
-
-		activeRootJoint = nil
-		originalRootC0 = nil
 		savedCameraCFrame = nil
 		isTeleporting = false
 	end)
@@ -254,21 +231,20 @@ local function findManipulatorPosition(myRoot, targetPos, targetChar)
 	local upDir = Vector3.new(0, 1, 0)
 
 	local candidates = {
-		-- Upward peeks (over obstacles).
 		upDir * dist,
-		upDir * (dist * 0.6),
-		upDir * (dist * 0.35),
+		upDir * (dist * 0.7),
+		upDir * (dist * 0.4),
 
-		-- Left / Right peeks (around corners).
 		-rightDir * dist,
-		-rightDir * (dist * 0.6),
+		-rightDir * (dist * 0.7),
 		rightDir * dist,
-		rightDir * (dist * 0.6),
+		rightDir * (dist * 0.7),
 
-		-- Diagonal peeks.
 		(upDir * 0.8 - rightDir * 0.6).Unit * dist,
 		(upDir * 0.8 + rightDir * 0.6).Unit * dist,
-		(upDir * 0.7 + flatDir * 0.7).Unit * dist
+		(upDir * 0.7 + flatDir * 0.7).Unit * dist,
+		(upDir * 0.5 - rightDir * 0.86).Unit * dist,
+		(upDir * 0.5 + rightDir * 0.86).Unit * dist
 	}
 
 	for idx = 1, #candidates do
@@ -647,24 +623,34 @@ local function applyWeaponMods()
 						__index = function(_, key)
 							if key == "Raycast" then
 								return function(self, origin, direction, params)
-									if CombatConfig.Enabled and CombatConfig.InstantHit and targetPart and rollHitChance() then
-										local myChar = localPlayer.Character
-										if params and params.IgnoreWater and myChar and table.find(params.FilterDescendantsInstances, myChar) then
-											local finalPos = hitscanOverridePos or targetPart.Position
-											local isVisible = checkVisibility(origin, finalPos, targetPart.Parent)
+									local myChar = localPlayer.Character
+									local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
 
-											if isVisible then
-												task.wait()
-												return {
-													Instance = targetPart,
-													Position = finalPos,
-													Normal = Vector3.new(1, 1, 1).Unit,
-													Material = targetPart.Material,
-													Distance = (origin - finalPos).Magnitude
-												}
-											end
+									-- Redirect projectile origin to peek vantage point to bypass wall collision.
+									if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition and myRoot then
+										local distFromPlayer = (origin - myRoot.Position).Magnitude
+										if distFromPlayer < (CombatConfig.ManipulatorDistance + 10) then
+											origin = manipPosition
 										end
 									end
+
+									if CombatConfig.Enabled and CombatConfig.InstantHit and targetPart and rollHitChance() then
+										local finalPos = hitscanOverridePos or targetPart.Position
+										local vantageOrigin = (CombatConfig.Manipulator and manipPosition) or origin
+										local isVisible = checkVisibility(vantageOrigin, finalPos, targetPart.Parent)
+
+										if isVisible then
+											task.wait()
+											return {
+												Instance = targetPart,
+												Position = finalPos,
+												Normal = Vector3.new(0, 1, 0),
+												Material = targetPart.Material,
+												Distance = (vantageOrigin - finalPos).Magnitude
+											}
+										end
+									end
+
 									return workspaceService:Raycast(origin, direction, params)
 								end
 							end
@@ -699,9 +685,6 @@ end
 
 function Combat:Unload()
 	CombatConfig.Enabled = false
-	if activeRootJoint and originalRootC0 and activeRootJoint.Parent then
-		activeRootJoint.C0 = originalRootC0
-	end
 	circleInline:Remove()
 	circleOutline:Remove()
 	hitscanIndicator:Remove()
@@ -717,7 +700,7 @@ function Combat:Load()
 	runService.RenderStepped:Connect(function()
 		currentCamera = workspaceService.CurrentCamera or currentCamera
 
-		-- Counter-lock camera during teleport to prevent any visual jerk.
+		-- Counter-lock camera during network teleport ticks.
 		if isTeleporting and savedCameraCFrame then
 			currentCamera.CFrame = savedCameraCFrame
 		end
