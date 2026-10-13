@@ -2634,8 +2634,8 @@ local Library do
                     Image = "rbxassetid://80020903045061",
                     BackgroundTransparency = 1,
                     AnchorPoint = Vector2New(0.5, 0.5),
-                    Position = UDim2New(0.5, 0, 0.5, 0),
-                    Size = UDim2New(0, 300, 0, 32),
+                    Position = UDim2New(0.5, 0, 2, 0),
+                    Size = UDim2New(0, 600, 0, 32),
                     ScaleType = Enum.ScaleType.Fit,
                     BorderSizePixel = 0,
                     BackgroundColor3 = FromRGB(255, 255, 255)
