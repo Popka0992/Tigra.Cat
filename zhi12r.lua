@@ -5165,8 +5165,8 @@ local Library do
                         Flag = "BannerX",
                         Default = 0.5,
                         Min = 0,
-                        Max = 1,
-                        Decimals = 1,
+                        Max = 5,
+                        Decimals = 0.01,
                         Callback = function(Value)
                             BannerX = Value
                             Banner.Position = UDim2New(BannerX, 0, BannerY, 0)
@@ -5178,24 +5178,11 @@ local Library do
                         Flag = "BannerY",
                         Default = 0.5,
                         Min = 0,
-                        Max = 1,
-                        Decimals = 1,
+                        Max = 5,
+                        Decimals = 0.01,
                         Callback = function(Value)
                             BannerY = Value
                             Banner.Position = UDim2New(BannerX, 0, BannerY, 0)
-                        end
-                    })
-
-                    MenuSection:Slider({
-                        Name = "Banner Width",
-                        Flag = "BannerWidth",
-                        Default = 300,
-                        Min = 10,
-                        Max = 786,
-                        Decimals = 1,
-                        Callback = function(Value)
-                            BannerW = Value
-                            Banner.Size = UDim2New(0, BannerW, 0, BannerH)
                         end
                     })
 
