@@ -2634,8 +2634,8 @@ local Library do
                     Image = "rbxassetid://80020903045061",
                     BackgroundTransparency = 1,
                     AnchorPoint = Vector2New(0.5, 0.5),
-                    Position = UDim2New(0.5, 0, 10, 0),
-                    Size = UDim2New(0, 3000, 0, 32),
+                    Position = UDim2New(0.5, 0, 0.5, 0),
+                    Size = UDim2New(0, 300, 0, 32),
                     ScaleType = Enum.ScaleType.Fit,
                     BorderSizePixel = 0,
                     BackgroundColor3 = FromRGB(255, 255, 255)
@@ -5133,6 +5133,58 @@ local Library do
                         Library.FadeSpeed = Value
                     end
                 })
+
+                local Banner = Window.Items["Banner"] and Window.Items["Banner"].Instance
+                local BannerX, BannerY = 0.5, 0.5
+
+                if Banner then
+                    MenuSection:Label("Banner")
+
+                    MenuSection:Textbox({
+                        Name = "Banner Image",
+                        Flag = "BannerImage",
+                        Default = "80020903045061",
+                        Placeholder = "rbxassetid://",
+                        Callback = function(Value)
+                            if not Value or StringLen(Value) == 0 then
+                                return
+                            end
+
+                            local Id = Value
+                            if not StringFind(Id, "rbxassetid://") and not StringFind(Id, "http") then
+                                Id = "rbxassetid://" .. Id
+                            end
+
+                            Banner.Image = Id
+                        end
+                    })
+
+                    MenuSection:Slider({
+                        Name = "Banner X",
+                        Flag = "BannerX",
+                        Default = 0.5,
+                        Min = 0,
+                        Max = 1,
+                        Decimals = 0.01,
+                        Callback = function(Value)
+                            BannerX = Value
+                            Banner.Position = UDim2New(BannerX, 0, BannerY, 0)
+                        end
+                    })
+
+                    MenuSection:Slider({
+                        Name = "Banner Y",
+                        Flag = "BannerY",
+                        Default = 0.5,
+                        Min = 0,
+                        Max = 1,
+                        Decimals = 0.01,
+                        Callback = function(Value)
+                            BannerY = Value
+                            Banner.Position = UDim2New(BannerX, 0, BannerY, 0)
+                        end
+                    })
+                end
 
                 local AccentLabel = MenuSection:Label("Accent Color")
                 AccentLabel:Colorpicker({
