@@ -197,8 +197,8 @@ local Library do
 
     local Themes = {
         ["Preset"] = {
-            ["Accent"] = FromRGB(166, 147, 243),
-            ["Dark Accent"] = FromRGB(110, 97, 161)
+            ["Accent"] = FromRGB(246, 157, 72),
+            ["Dark Accent"] = FromRGB(172, 110, 50)
         }
     }
 
@@ -2634,8 +2634,8 @@ local Library do
                     Image = "rbxassetid://80020903045061",
                     BackgroundTransparency = 1,
                     AnchorPoint = Vector2New(0.5, 0.5),
-                    Position = UDim2New(0.5, 0, 0.5, 0),
-                    Size = UDim2New(0, 300, 0, 32),
+                    Position = UDim2New(0.2, 0, -0.2, 0),
+                    Size = UDim2New(0, 300, 0, 153),
                     ScaleType = Enum.ScaleType.Fit,
                     BorderSizePixel = 0,
                     BackgroundColor3 = FromRGB(255, 255, 255)
@@ -5135,8 +5135,8 @@ local Library do
                 })
 
                 local Banner = Window.Items["Banner"] and Window.Items["Banner"].Instance
-                local BannerX, BannerY = 0.5, 0.5
-                local BannerW, BannerH = 300, 32
+                local BannerX, BannerY = 0.2, -0.2
+                local BannerW, BannerH = 300, 153
 
                 if Banner then
                     MenuSection:Label("Banner")
@@ -5163,7 +5163,7 @@ local Library do
                     MenuSection:Slider({
                         Name = "Banner X",
                         Flag = "BannerX",
-                        Default = 0.5,
+                        Default = 0.2,
                         Min = 0,
                         Max = 5,
                         Decimals = 0.01,
@@ -5176,7 +5176,7 @@ local Library do
                     MenuSection:Slider({
                         Name = "Banner Y",
                         Flag = "BannerY",
-                        Default = 0.5,
+                        Default = -0.2,
                         Min = -3,
                         Max = 2,
                         Decimals = 0.01,
@@ -5189,7 +5189,7 @@ local Library do
                     MenuSection:Slider({
                         Name = "Banner Height",
                         Flag = "BannerHeight",
-                        Default = 32,
+                        Default = 153,
                         Min = 10,
                         Max = 200,
                         Decimals = 1,
