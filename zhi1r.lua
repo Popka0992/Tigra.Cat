@@ -5177,8 +5177,8 @@ local Library do
                         Name = "Banner Y",
                         Flag = "BannerY",
                         Default = 0.5,
-                        Min = 0,
-                        Max = 5,
+                        Min = -3,
+                        Max = 2,
                         Decimals = 0.01,
                         Callback = function(Value)
                             BannerY = Value
