@@ -5136,6 +5136,7 @@ local Library do
 
                 local Banner = Window.Items["Banner"] and Window.Items["Banner"].Instance
                 local BannerX, BannerY = 0.5, 0.5
+                local BannerW, BannerH = 300, 32
 
                 if Banner then
                     MenuSection:Label("Banner")
@@ -5182,6 +5183,32 @@ local Library do
                         Callback = function(Value)
                             BannerY = Value
                             Banner.Position = UDim2New(BannerX, 0, BannerY, 0)
+                        end
+                    })
+
+                    MenuSection:Slider({
+                        Name = "Banner Width",
+                        Flag = "BannerWidth",
+                        Default = 300,
+                        Min = 10,
+                        Max = 786,
+                        Decimals = 0,
+                        Callback = function(Value)
+                            BannerW = Value
+                            Banner.Size = UDim2New(0, BannerW, 0, BannerH)
+                        end
+                    })
+
+                    MenuSection:Slider({
+                        Name = "Banner Height",
+                        Flag = "BannerHeight",
+                        Default = 32,
+                        Min = 10,
+                        Max = 200,
+                        Decimals = 0,
+                        Callback = function(Value)
+                            BannerH = Value
+                            Banner.Size = UDim2New(0, BannerW, 0, BannerH)
                         end
                     })
                 end
