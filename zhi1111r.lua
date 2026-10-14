@@ -2494,6 +2494,35 @@ local Library do
                     CornerRadius = UDimNew(0, 4)
                 })
                 
+                Items["Background"] = Instances:Create("Frame", {
+                    Parent = Items["MainFrame"].Instance,
+                    Name = "\0",
+                    ClipsDescendants = true,
+                    BackgroundTransparency = 1,
+                    ZIndex = 0,
+                    Size = UDim2New(1, 0, 1, 0),
+                    BorderSizePixel = 0,
+                    BackgroundColor3 = FromRGB(255, 255, 255)
+                })
+                
+                Instances:Create("UICorner", {
+                    Parent = Items["Background"].Instance,
+                    Name = "\0",
+                    CornerRadius = UDimNew(0, 4)
+                })
+                
+                Items["BackgroundImage"] = Instances:Create("ImageLabel", {
+                    Parent = Items["Background"].Instance,
+                    Name = "\0",
+                    Image = "",
+                    ZIndex = 0,
+                    BackgroundTransparency = 1,
+                    Size = UDim2New(1, 0, 1, 0),
+                    ScaleType = Enum.ScaleType.Crop,
+                    BorderSizePixel = 0,
+                    BackgroundColor3 = FromRGB(255, 255, 255)
+                })
+                
                 Items["Bottom"] = Instances:Create("Frame", {
                     Parent = Items["MainFrame"].Instance,
                     Name = "\0",
@@ -5271,6 +5300,26 @@ local Library do
                         Callback = function(Value)
                             BannerH = Value
                             SetBannerSize()
+                        end
+                    })
+                end
+
+                local BackgroundImage = Window.Items["BackgroundImage"] and Window.Items["BackgroundImage"].Instance
+
+                if BackgroundImage then
+                    MenuSection:Label("Background")
+
+                    MenuSection:Textbox({
+                        Name = "Background Image",
+                        Flag = "BackgroundImage",
+                        Default = "",
+                        Placeholder = "rbxassetid://",
+                        Callback = function(Value)
+                            local Id = ParseAssetId(Value)
+
+                            if Id then
+                                BackgroundImage.Image = Id
+                            end
                         end
                     })
                 end
