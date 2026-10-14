@@ -254,6 +254,8 @@ local Library do
                 return { "TextTransparency", "BackgroundTransparency" }
             elseif Item:IsA("ImageLabel") or Item:IsA("ImageButton") then
                 return { "BackgroundTransparency", "ImageTransparency" }
+            elseif Item:IsA("VideoFrame") then
+                return { "BackgroundTransparency" }
             elseif Item:IsA("ScrollingFrame") then
                 return { "BackgroundTransparency", "ScrollBarImageTransparency" }
             elseif Item:IsA("TextBox") then
@@ -2637,6 +2639,22 @@ local Library do
                     Position = UDim2New(0.2, 0, -0.2, 0),
                     Size = UDim2New(0, 300, 0, 153),
                     ScaleType = Enum.ScaleType.Fit,
+                    BorderSizePixel = 0,
+                    BackgroundColor3 = FromRGB(255, 255, 255)
+                })
+
+                Items["BannerVideo"] = Instances:Create("VideoFrame", {
+                    Parent = Items["Top"].Instance,
+                    Name = "\0",
+                    Video = "",
+                    Playing = true,
+                    Looped = true,
+                    Volume = 0,
+                    Visible = false,
+                    BackgroundTransparency = 1,
+                    AnchorPoint = Vector2New(0.5, 0.5),
+                    Position = UDim2New(0.2, 0, -0.2, 0),
+                    Size = UDim2New(0, 300, 0, 153),
                     BorderSizePixel = 0,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
@@ -5135,11 +5153,58 @@ local Library do
                 })
 
                 local Banner = Window.Items["Banner"] and Window.Items["Banner"].Instance
+                local BannerVideo = Window.Items["BannerVideo"] and Window.Items["BannerVideo"].Instance
                 local BannerX, BannerY = 0.2, -0.2
                 local BannerW, BannerH = 300, 153
 
+                local function SetBannerPosition()
+                    Banner.Position = UDim2New(BannerX, 0, BannerY, 0)
+
+                    if BannerVideo then
+                        BannerVideo.Position = UDim2New(BannerX, 0, BannerY, 0)
+                    end
+                end
+
+                local function SetBannerSize()
+                    Banner.Size = UDim2New(0, BannerW, 0, BannerH)
+
+                    if BannerVideo then
+                        BannerVideo.Size = UDim2New(0, BannerW, 0, BannerH)
+                    end
+                end
+
+                local function SetBannerType(IsVideo)
+                    Banner.Visible = not IsVideo
+
+                    if BannerVideo then
+                        BannerVideo.Visible = IsVideo
+                    end
+                end
+
+                local function ParseAssetId(Value)
+                    if not Value or StringLen(Value) == 0 then
+                        return nil
+                    end
+
+                    if not StringFind(Value, "rbxassetid://") and not StringFind(Value, "http") then
+                        return "rbxassetid://" .. Value
+                    end
+
+                    return Value
+                end
+
                 if Banner then
                     MenuSection:Label("Banner")
+
+                    MenuSection:Dropdown({
+                        Name = "Banner Type",
+                        Flag = "BannerType",
+                        Items = { "Image", "Video" },
+                        Default = "Image",
+                        Callback = function(Value)
+                            SetBannerType(Value == "Video")
+                        end
+                    })
 
                     MenuSection:Textbox({
                         Name = "Banner Image",
@@ -5147,16 +5212,26 @@ local Library do
                         Default = "80020903045061",
                         Placeholder = "rbxassetid://",
                         Callback = function(Value)
-                            if not Value or StringLen(Value) == 0 then
-                                return
-                            end
+                            local Id = ParseAssetId(Value)
 
-                            local Id = Value
-                            if not StringFind(Id, "rbxassetid://") and not StringFind(Id, "http") then
-                                Id = "rbxassetid://" .. Id
+                            if Id then
+                                Banner.Image = Id
                             end
+                        end
+                    })
 
-                            Banner.Image = Id
+                    MenuSection:Textbox({
+                        Name = "Banner Video",
+                        Flag = "BannerVideo",
+                        Default = "",
+                        Placeholder = "rbxassetid://",
+                        Callback = function(Value)
+                            local Id = ParseAssetId(Value)
+
+                            if Id and BannerVideo then
+                                BannerVideo.Video = Id
+                                BannerVideo.Playing = true
+                            end
                         end
                     })
 
@@ -5169,7 +5244,7 @@ local Library do
                         Decimals = 0.01,
                         Callback = function(Value)
                             BannerX = Value
-                            Banner.Position = UDim2New(BannerX, 0, BannerY, 0)
+                            SetBannerPosition()
                         end
                     })
 
@@ -5182,7 +5257,7 @@ local Library do
                         Decimals = 0.01,
                         Callback = function(Value)
                             BannerY = Value
-                            Banner.Position = UDim2New(BannerX, 0, BannerY, 0)
+                            SetBannerPosition()
                         end
                     })
 
@@ -5195,7 +5270,7 @@ local Library do
                         Decimals = 1,
                         Callback = function(Value)
                             BannerH = Value
-                            Banner.Size = UDim2New(0, BannerW, 0, BannerH)
+                            SetBannerSize()
                         end
                     })
                 end
