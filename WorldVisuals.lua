@@ -20,6 +20,9 @@ local workspaceService = cloneref(game:GetService("Workspace"))
 local runService = cloneref(game:GetService("RunService"))
 
 -- Constants.
+local BOOST_COLOR = Color3.fromRGB(130, 130, 130)
+local WHITE_COLOR = Color3.fromRGB(255, 255, 255)
+
 local SKYBOXES = {
 	["default"] = {},
 	["stormy"] = {
@@ -84,12 +87,10 @@ local originalClockTime = lightingService.ClockTime
 local originalBrightness = lightingService.Brightness
 local originalExposure = lightingService.ExposureCompensation
 
--- Cache terrain and clouds.
 local terrain = workspaceService:FindFirstChildOfClass("Terrain") or workspaceService.Terrain
 local cachedClouds = terrain and terrain:FindFirstChildOfClass("Clouds")
 local originalCloudsEnabled = cachedClouds and cachedClouds.Enabled or true
 
--- Cache sun rays to eliminate :GetChildren() allocations.
 local cachedSunRays = {}
 for _, child in ipairs(lightingService:GetChildren()) do
 	if child:IsA("SunRaysEffect") then
@@ -107,7 +108,6 @@ lightingService.ChildRemoved:Connect(function(child)
 	cachedSunRays[child] = nil
 end)
 
--- Setup visual post-processing instances.
 local customColorCorrection = lightingService:FindFirstChild("CustomColorCorrection")
 if not customColorCorrection then
 	customColorCorrection = Instance.new("ColorCorrectionEffect")
@@ -176,7 +176,7 @@ WorldVisuals.Config = {
 	ColorCorrection = false,
 	Saturation = 0,
 	Contrast = 0,
-	Tint = Color3.fromRGB(255, 255, 255),
+	Tint = WHITE_COLOR,
 	Atmosphere = false,
 	AtmosphereDensity = originalAtmosphere.Density,
 	AtmosphereOffset = originalAtmosphere.Offset,
@@ -203,7 +203,7 @@ function WorldVisuals:ApplySkybox(name)
 	customSky.MoonTextureId = data.MoonTextureId or ""
 end
 
----Updates static visual effects (Atmosphere, CC, Skybox).
+---Updates static visual effects and applies values.
 function WorldVisuals:Update()
 	local config = self.Config
 
@@ -224,7 +224,7 @@ function WorldVisuals:Update()
 		if config.ColorCorrection then
 			customColorCorrection.Saturation = tonumber(config.Saturation) or 0
 			customColorCorrection.Contrast = tonumber(config.Contrast) or 0
-			customColorCorrection.TintColor = config.Tint or Color3.fromRGB(255, 255, 255)
+			customColorCorrection.TintColor = config.Tint or WHITE_COLOR
 		end
 
 		if config.Atmosphere then
@@ -241,6 +241,32 @@ function WorldVisuals:Update()
 			customAtmosphere.Glare = originalAtmosphere.Glare
 			customAtmosphere.Color = originalAtmosphere.Color
 			customAtmosphere.Decay = originalAtmosphere.Decay
+		end
+
+		if config.TimeChanger then
+			lightingService.ClockTime = tonumber(config.ClockTime) or originalClockTime
+		end
+
+		if config.Ambient then
+			lightingService.Ambient = config.AmbientColor
+		end
+
+		if config.OutdoorAmbient then
+			lightingService.OutdoorAmbient = config.OutdoorAmbientColor
+		end
+
+		if config.Brightness then
+			lightingService.Brightness = tonumber(config.BrightnessValue) or originalBrightness
+		end
+
+		if config.Exposure then
+			lightingService.ExposureCompensation = tonumber(config.ExposureValue) or originalExposure
+		end
+
+		if config.Fog then
+			lightingService.FogColor = config.FogColor
+			lightingService.FogStart = tonumber(config.FogStart) or originalFogStart
+			lightingService.FogEnd = tonumber(config.FogEnd) or originalFogEnd
 		end
 
 		self:ApplySkybox(config.SkyChanger and config.SelectedSky or "default")
@@ -282,16 +308,16 @@ function WorldVisuals:GetConfig()
 	return self.Config
 end
 
----Starts frame-level property protection without performance drops.
+---Starts lightweight property enforcement.
 function WorldVisuals:Load()
 	self:Update()
 
-	-- Intercept game scripts trying to overwrite lighting properties.
+	-- Intercept lighting modifications directly without heavy RenderStepped loops.
 	if not isHookInstalled then
 		isHookInstalled = true
 		local oldNewIndex
 		oldNewIndex = hookmetamethod(game, "__newindex", newcclosure(function(self, key, value)
-			if not checkcaller() and self == lightingService then
+			if self == lightingService and not checkcaller() then
 				local config = WorldVisuals.Config
 				if config and config.Enabled then
 					if config.TimeChanger and (key == "ClockTime" or key == "TimeOfDay") then
@@ -318,62 +344,63 @@ function WorldVisuals:Load()
 		end))
 	end
 
-	-- Enforce active state against tweens and render steps.
-	runService.RenderStepped:Connect(function()
-		local config = WorldVisuals.Config
-		if not config.Enabled then return end
+	-- Low frequency check for C++ level changes (e.g. tweens).
+	task.spawn(function()
+		while task.wait(0.25) do
+			local config = WorldVisuals.Config
+			if not config.Enabled then continue end
 
-		if config.TimeChanger then
-			local targetTime = tonumber(config.ClockTime) or originalClockTime
-			if lightingService.ClockTime ~= targetTime then
-				lightingService.ClockTime = targetTime
+			if config.TimeChanger then
+				local targetTime = tonumber(config.ClockTime) or originalClockTime
+				if lightingService.ClockTime ~= targetTime then
+					lightingService.ClockTime = targetTime
+				end
+
+				if not config.Ambient and lightingService.Ambient.R < 0.35 then
+					lightingService.Ambient = BOOST_COLOR
+				end
+				if not config.OutdoorAmbient and lightingService.OutdoorAmbient.R < 0.35 then
+					lightingService.OutdoorAmbient = BOOST_COLOR
+				end
+				if not config.Brightness and lightingService.Brightness < 1.5 then
+					lightingService.Brightness = 2
+				end
 			end
 
-			-- Counter night dimming when custom ambient is not active.
-			if not config.Ambient and lightingService.Ambient.R < 0.35 then
-				lightingService.Ambient = Color3.fromRGB(130, 130, 130)
+			if config.Ambient and lightingService.Ambient ~= config.AmbientColor then
+				lightingService.Ambient = config.AmbientColor
 			end
-			if not config.OutdoorAmbient and lightingService.OutdoorAmbient.R < 0.35 then
-				lightingService.OutdoorAmbient = Color3.fromRGB(130, 130, 130)
-			end
-			if not config.Brightness and lightingService.Brightness < 1.5 then
-				lightingService.Brightness = 2
-			end
-		end
 
-		if config.Ambient and lightingService.Ambient ~= config.AmbientColor then
-			lightingService.Ambient = config.AmbientColor
-		end
-
-		if config.OutdoorAmbient and lightingService.OutdoorAmbient ~= config.OutdoorAmbientColor then
-			lightingService.OutdoorAmbient = config.OutdoorAmbientColor
-		end
-
-		if config.Brightness then
-			local targetBrightness = tonumber(config.BrightnessValue) or originalBrightness
-			if lightingService.Brightness ~= targetBrightness then
-				lightingService.Brightness = targetBrightness
+			if config.OutdoorAmbient and lightingService.OutdoorAmbient ~= config.OutdoorAmbientColor then
+				lightingService.OutdoorAmbient = config.OutdoorAmbientColor
 			end
-		end
 
-		if config.Exposure then
-			local targetExposure = tonumber(config.ExposureValue) or originalExposure
-			if lightingService.ExposureCompensation ~= targetExposure then
-				lightingService.ExposureCompensation = targetExposure
+			if config.Brightness then
+				local targetBrightness = tonumber(config.BrightnessValue) or originalBrightness
+				if lightingService.Brightness ~= targetBrightness then
+					lightingService.Brightness = targetBrightness
+				end
 			end
-		end
 
-		if config.Fog then
-			if lightingService.FogColor ~= config.FogColor then
-				lightingService.FogColor = config.FogColor
+			if config.Exposure then
+				local targetExposure = tonumber(config.ExposureValue) or originalExposure
+				if lightingService.ExposureCompensation ~= targetExposure then
+					lightingService.ExposureCompensation = targetExposure
+				end
 			end
-			local targetStart = tonumber(config.FogStart) or originalFogStart
-			if lightingService.FogStart ~= targetStart then
-				lightingService.FogStart = targetStart
-			end
-			local targetEnd = tonumber(config.FogEnd) or originalFogEnd
-			if lightingService.FogEnd ~= targetEnd then
-				lightingService.FogEnd = targetEnd
+
+			if config.Fog then
+				if lightingService.FogColor ~= config.FogColor then
+					lightingService.FogColor = config.FogColor
+				end
+				local targetStart = tonumber(config.FogStart) or originalFogStart
+				if lightingService.FogStart ~= targetStart then
+					lightingService.FogStart = targetStart
+				end
+				local targetEnd = tonumber(config.FogEnd) or originalFogEnd
+				if lightingService.FogEnd ~= targetEnd then
+					lightingService.FogEnd = targetEnd
+				end
 			end
 		end
 	end)
