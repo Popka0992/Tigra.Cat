@@ -197,8 +197,8 @@ local Library do
 
     local Themes = {
         ["Preset"] = {
-            ["Accent"] = FromRGB(166, 147, 243),
-            ["Dark Accent"] = FromRGB(110, 97, 161)
+            ["Accent"] = FromRGB(246, 157, 72),
+            ["Dark Accent"] = FromRGB(172, 110, 50)
         }
     }
 
@@ -254,6 +254,8 @@ local Library do
                 return { "TextTransparency", "BackgroundTransparency" }
             elseif Item:IsA("ImageLabel") or Item:IsA("ImageButton") then
                 return { "BackgroundTransparency", "ImageTransparency" }
+            elseif Item:IsA("VideoFrame") then
+                return { "BackgroundTransparency" }
             elseif Item:IsA("ScrollingFrame") then
                 return { "BackgroundTransparency", "ScrollBarImageTransparency" }
             elseif Item:IsA("TextBox") then
@@ -2492,6 +2494,35 @@ local Library do
                     CornerRadius = UDimNew(0, 4)
                 })
                 
+                Items["Background"] = Instances:Create("Frame", {
+                    Parent = Items["MainFrame"].Instance,
+                    Name = "\0",
+                    ClipsDescendants = true,
+                    BackgroundTransparency = 1,
+                    ZIndex = 0,
+                    Size = UDim2New(1, 0, 1, 0),
+                    BorderSizePixel = 0,
+                    BackgroundColor3 = FromRGB(255, 255, 255)
+                })
+                
+                Instances:Create("UICorner", {
+                    Parent = Items["Background"].Instance,
+                    Name = "\0",
+                    CornerRadius = UDimNew(0, 4)
+                })
+                
+                Items["BackgroundImage"] = Instances:Create("ImageLabel", {
+                    Parent = Items["Background"].Instance,
+                    Name = "\0",
+                    Image = "",
+                    ZIndex = 0,
+                    BackgroundTransparency = 1,
+                    Size = UDim2New(1, 0, 1, 0),
+                    ScaleType = Enum.ScaleType.Crop,
+                    BorderSizePixel = 0,
+                    BackgroundColor3 = FromRGB(255, 255, 255)
+                })
+                
                 Items["Bottom"] = Instances:Create("Frame", {
                     Parent = Items["MainFrame"].Instance,
                     Name = "\0",
@@ -2628,6 +2659,35 @@ local Library do
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })  Items["Logo"]:AddToTheme({ImageColor3 = "Accent"})
                 
+                Items["Banner"] = Instances:Create("ImageLabel", {
+                    Parent = Items["Top"].Instance,
+                    Name = "\0",
+                    Image = "rbxassetid://80020903045061",
+                    BackgroundTransparency = 1,
+                    AnchorPoint = Vector2New(0.5, 0.5),
+                    Position = UDim2New(0.2, 0, -0.2, 0),
+                    Size = UDim2New(0, 300, 0, 153),
+                    ScaleType = Enum.ScaleType.Fit,
+                    BorderSizePixel = 0,
+                    BackgroundColor3 = FromRGB(255, 255, 255)
+                })
+
+                Items["BannerVideo"] = Instances:Create("VideoFrame", {
+                    Parent = Items["Top"].Instance,
+                    Name = "\0",
+                    Video = "",
+                    Playing = true,
+                    Looped = true,
+                    Volume = 0,
+                    Visible = false,
+                    BackgroundTransparency = 1,
+                    AnchorPoint = Vector2New(0.5, 0.5),
+                    Position = UDim2New(0.2, 0, -0.2, 0),
+                    Size = UDim2New(0, 300, 0, 153),
+                    BorderSizePixel = 0,
+                    BackgroundColor3 = FromRGB(255, 255, 255)
+                })
+
                 Items["Liner"] = Instances:Create("Frame", {
                     Parent = Items["Top"].Instance,
                     Name = "\0",
@@ -5120,6 +5180,149 @@ local Library do
                         Library.FadeSpeed = Value
                     end
                 })
+
+                local Banner = Window.Items["Banner"] and Window.Items["Banner"].Instance
+                local BannerVideo = Window.Items["BannerVideo"] and Window.Items["BannerVideo"].Instance
+                local BannerX, BannerY = 0.2, -0.2
+                local BannerW, BannerH = 300, 153
+
+                local function SetBannerPosition()
+                    Banner.Position = UDim2New(BannerX, 0, BannerY, 0)
+
+                    if BannerVideo then
+                        BannerVideo.Position = UDim2New(BannerX, 0, BannerY, 0)
+                    end
+                end
+
+                local function SetBannerSize()
+                    Banner.Size = UDim2New(0, BannerW, 0, BannerH)
+
+                    if BannerVideo then
+                        BannerVideo.Size = UDim2New(0, BannerW, 0, BannerH)
+                    end
+                end
+
+                local function SetBannerType(IsVideo)
+                    Banner.Visible = not IsVideo
+
+                    if BannerVideo then
+                        BannerVideo.Visible = IsVideo
+                    end
+                end
+
+                local function ParseAssetId(Value)
+                    if not Value or StringLen(Value) == 0 then
+                        return nil
+                    end
+
+                    if not StringFind(Value, "rbxassetid://") and not StringFind(Value, "http") then
+                        return "rbxassetid://" .. Value
+                    end
+
+                    return Value
+                end
+
+                if Banner then
+                    MenuSection:Label("Banner")
+
+                    MenuSection:Dropdown({
+                        Name = "Banner Type",
+                        Flag = "BannerType",
+                        Items = { "Image", "Video" },
+                        Default = "Image",
+                        Callback = function(Value)
+                            SetBannerType(Value == "Video")
+                        end
+                    })
+
+                    MenuSection:Textbox({
+                        Name = "Banner Image",
+                        Flag = "BannerImage",
+                        Default = "80020903045061",
+                        Placeholder = "rbxassetid://",
+                        Callback = function(Value)
+                            local Id = ParseAssetId(Value)
+
+                            if Id then
+                                Banner.Image = Id
+                            end
+                        end
+                    })
+
+                    MenuSection:Textbox({
+                        Name = "Banner Video",
+                        Flag = "BannerVideo",
+                        Default = "",
+                        Placeholder = "rbxassetid://",
+                        Callback = function(Value)
+                            local Id = ParseAssetId(Value)
+
+                            if Id and BannerVideo then
+                                BannerVideo.Video = Id
+                                BannerVideo.Playing = true
+                            end
+                        end
+                    })
+
+                    MenuSection:Slider({
+                        Name = "Banner X",
+                        Flag = "BannerX",
+                        Default = 0.2,
+                        Min = 0,
+                        Max = 5,
+                        Decimals = 0.01,
+                        Callback = function(Value)
+                            BannerX = Value
+                            SetBannerPosition()
+                        end
+                    })
+
+                    MenuSection:Slider({
+                        Name = "Banner Y",
+                        Flag = "BannerY",
+                        Default = -0.2,
+                        Min = -3,
+                        Max = 2,
+                        Decimals = 0.01,
+                        Callback = function(Value)
+                            BannerY = Value
+                            SetBannerPosition()
+                        end
+                    })
+
+                    MenuSection:Slider({
+                        Name = "Banner Height",
+                        Flag = "BannerHeight",
+                        Default = 153,
+                        Min = 10,
+                        Max = 200,
+                        Decimals = 1,
+                        Callback = function(Value)
+                            BannerH = Value
+                            SetBannerSize()
+                        end
+                    })
+                end
+
+                local BackgroundImage = Window.Items["BackgroundImage"] and Window.Items["BackgroundImage"].Instance
+
+                if BackgroundImage then
+                    MenuSection:Label("Background")
+
+                    MenuSection:Textbox({
+                        Name = "Background Image",
+                        Flag = "BackgroundImage",
+                        Default = "",
+                        Placeholder = "rbxassetid://",
+                        Callback = function(Value)
+                            local Id = ParseAssetId(Value)
+
+                            if Id then
+                                BackgroundImage.Image = Id
+                            end
+                        end
+                    })
+                end
 
                 local AccentLabel = MenuSection:Label("Accent Color")
                 AccentLabel:Colorpicker({
