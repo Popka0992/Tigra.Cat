@@ -130,15 +130,6 @@ manipLine.Thickness = 1.5
 manipLine.ZIndex = 5
 manipLine.Visible = false
 
----Check if player is currently in any in-game UI or menu.
-local function isPlayerInMenu()
-	if userInputService.MouseIconEnabled then return true end
-	if userInputService.MouseBehavior == Enum.MouseBehavior.Default then return true end
-	if userInputService:GetFocusedTextBox() then return true end
-	if guiService:MenuIsOpen() then return true end
-	return false
-end
-
 ---Perform raycast visibility check using pooled parameters.
 local function checkVisibility(origin, destination, targetChar)
 	local myChar = localPlayer.Character
@@ -701,10 +692,10 @@ function Combat:Load()
 		end
 	end)
 
-	-- Update targets at fixed rate to reduce RenderStepped strain.
+	-- Continual target discovery (always active when enabled).
 	task.spawn(function()
 		while true do
-			if CombatConfig.Enabled and not isPlayerInMenu() then
+			if CombatConfig.Enabled then
 				targetPart, targetEntity, hitscanOverridePos, manipPosition = getClosestTarget()
 			else
 				targetPart = nil
@@ -808,14 +799,24 @@ function Combat:Load()
 			return oldIndex(self, key)
 		end
 
-		-- Bypass redirection when any UI, inventory, or typing is active.
-		if isPlayerInMenu() then
+		if userInputService:GetFocusedTextBox() or guiService:MenuIsOpen() then
 			return oldIndex(self, key)
 		end
 
-		-- Only redirect raycasts when left mouse button is pressed to allow opening boxes, doors, and furnaces.
-		if not userInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
-			return oldIndex(self, key)
+		-- Do not intercept if player is actively looking at a nearby interactable object (Door, Box, Furnace, etc.).
+		local myChar = localPlayer.Character
+		local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
+		local realTarget = oldIndex(self, "Target")
+
+		if realTarget and myRoot then
+			local targetPos = (realTarget:IsA("Model") and realTarget:GetPivot().Position) or realTarget.Position
+			if (targetPos - myRoot.Position).Magnitude <= 14 then
+				local charModel = realTarget:FindFirstAncestorOfClass("Model")
+				local isEnemyPlayer = charModel and playersService:GetPlayerFromCharacter(charModel)
+				if not isEnemyPlayer then
+					return oldIndex(self, key)
+				end
+			end
 		end
 
 		if targetPart and rollHitChance() then
