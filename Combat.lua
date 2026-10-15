@@ -5,6 +5,7 @@ local runService = cloneref(game:GetService("RunService"))
 local userInputService = cloneref(game:GetService("UserInputService"))
 local workspaceService = cloneref(game:GetService("Workspace"))
 local replicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
+local guiService = cloneref(game:GetService("GuiService"))
 
 local localPlayer = playersService.LocalPlayer
 local mouse = localPlayer:GetMouse()
@@ -128,6 +129,15 @@ local manipLine = Drawing.new("Line")
 manipLine.Thickness = 1.5
 manipLine.ZIndex = 5
 manipLine.Visible = false
+
+---Check if player is currently in any in-game UI or menu.
+local function isPlayerInMenu()
+	if userInputService.MouseIconEnabled then return true end
+	if userInputService.MouseBehavior == Enum.MouseBehavior.Default then return true end
+	if userInputService:GetFocusedTextBox() then return true end
+	if guiService:MenuIsOpen() then return true end
+	return false
+end
 
 ---Perform raycast visibility check using pooled parameters.
 local function checkVisibility(origin, destination, targetChar)
@@ -694,7 +704,7 @@ function Combat:Load()
 	-- Update targets at fixed rate to reduce RenderStepped strain.
 	task.spawn(function()
 		while true do
-			if CombatConfig.Enabled then
+			if CombatConfig.Enabled and not isPlayerInMenu() then
 				targetPart, targetEntity, hitscanOverridePos, manipPosition = getClosestTarget()
 			else
 				targetPart = nil
@@ -798,7 +808,13 @@ function Combat:Load()
 			return oldIndex(self, key)
 		end
 
-		if userInputService.MouseBehavior == Enum.MouseBehavior.Default or userInputService:GetFocusedTextBox() then
+		-- Bypass redirection when any UI, inventory, or typing is active.
+		if isPlayerInMenu() then
+			return oldIndex(self, key)
+		end
+
+		-- Only redirect raycasts when left mouse button is pressed to allow opening boxes, doors, and furnaces.
+		if not userInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
 			return oldIndex(self, key)
 		end
 
