@@ -1,4 +1,5 @@
 -- Services.
+local cloneref = cloneref or function(instance) return instance end
 local playersService = cloneref(game:GetService("Players"))
 local runService = cloneref(game:GetService("RunService"))
 local userInputService = cloneref(game:GetService("UserInputService"))
@@ -61,6 +62,23 @@ local CombatConfig = {
 	ManipulatorColor = Color3.fromRGB(0, 255, 170)
 }
 
+-- Reusable static RaycastParams to prevent GC allocations.
+local sharedRayParams = RaycastParams.new()
+sharedRayParams.FilterType = Enum.RaycastFilterType.Exclude
+sharedRayParams.RespectCanCollide = true
+
+local staticHitscanDirs = {
+	Vector3.new(1, 0, 0),
+	Vector3.new(-1, 0, 0),
+	Vector3.new(0, 0, 1),
+	Vector3.new(0, 0, -1),
+	Vector3.new(1, 0, 1).Unit,
+	Vector3.new(-1, 0, 1).Unit,
+	Vector3.new(1, 0, -1).Unit,
+	Vector3.new(-1, 0, -1).Unit,
+	Vector3.new(0, 1, 0)
+}
+
 local circleOutline = Drawing.new("Circle")
 circleOutline.Thickness = 3
 circleOutline.Color = Color3.new(0, 0, 0)
@@ -111,66 +129,31 @@ manipLine.Thickness = 1.5
 manipLine.ZIndex = 5
 manipLine.Visible = false
 
----Perform raycast visibility check between two points.
+---Perform raycast visibility check using pooled parameters.
 local function checkVisibility(origin, destination, targetChar)
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.RespectCanCollide = true
-
 	local myChar = localPlayer.Character
 	local ignoredFolder = workspaceService:FindFirstChild("Ignored")
+
 	local filterList = { currentCamera }
+	if targetChar then table.insert(filterList, targetChar) end
+	if myChar then table.insert(filterList, myChar) end
+	if ignoredFolder then table.insert(filterList, ignoredFolder) end
 
-	if targetChar then
-		table.insert(filterList, targetChar)
-	end
-	if myChar then
-		table.insert(filterList, myChar)
-	end
-	if ignoredFolder then
-		table.insert(filterList, ignoredFolder)
-	end
+	sharedRayParams.FilterDescendantsInstances = filterList
 
-	params.FilterDescendantsInstances = filterList
-
-	local hit = workspaceService:Raycast(origin, destination - origin, params)
+	local hit = workspaceService:Raycast(origin, destination - origin, sharedRayParams)
 	return not hit, hit
 end
 
----Generate Amongus Hook hitscan offsets.
-local function getHitscanAngles()
-	local dist = CombatConfig.HitscanDistance
-	local baseAngles = {
-		Vector3.new(1, 0, 0).Unit,
-		Vector3.new(-1, 0, 0).Unit,
-		Vector3.new(0, 0, 1).Unit,
-		Vector3.new(0, 0, -1).Unit,
-		Vector3.new(1, 0, 1).Unit,
-		Vector3.new(-1, 0, 1).Unit,
-		Vector3.new(1, 0, -1).Unit,
-		Vector3.new(-1, 0, -1).Unit,
-		Vector3.new(0, 1, 0).Unit
-	}
-
-	local angles = {}
-	for idx = 1, #baseAngles do
-		local vec = baseAngles[idx]
-		if vec.Y ~= 0 then
-			angles[idx] = vec * math.min(dist, 7.5)
-		else
-			angles[idx] = vec * dist
-		end
-	end
-	return angles
-end
-
----Amongus Hook Hitscan solver.
+---Solver for Hitscan angles without dynamic allocations.
 local function findHitscanPosition(camPos, targetBonePos, targetChar)
-	local angles = getHitscanAngles()
-	for idx = 1, #angles do
-		local samplePos = targetBonePos + angles[idx]
-		local clearToTarget, wallHit = checkVisibility(targetBonePos, samplePos, targetChar)
+	local dist = CombatConfig.HitscanDistance
+	for idx = 1, #staticHitscanDirs do
+		local dir = staticHitscanDirs[idx]
+		local offset = dir * (dir.Y ~= 0 and math.min(dist, 7.5) or dist)
+		local samplePos = targetBonePos + offset
 
+		local clearToTarget, wallHit = checkVisibility(targetBonePos, samplePos, targetChar)
 		if not clearToTarget and wallHit then
 			if wallHit.Distance > 0.25 then
 				samplePos = targetBonePos + ((samplePos - targetBonePos).Unit * (wallHit.Distance - 0.2))
@@ -186,7 +169,7 @@ local function findHitscanPosition(camPos, targetBonePos, targetChar)
 	return nil
 end
 
----Find manipulator vantage point around the local player.
+---Optimized manipulator solver.
 local function findManipulatorPosition(myRoot, targetPos, targetChar)
 	local rootPos = myRoot.Position
 	local dist = CombatConfig.ManipulatorDistance
@@ -205,18 +188,10 @@ local function findManipulatorPosition(myRoot, targetPos, targetChar)
 	local candidates = {
 		upDir * dist,
 		upDir * (dist * 0.7),
-		upDir * (dist * 0.4),
-
 		-rightDir * dist,
-		-rightDir * (dist * 0.7),
 		rightDir * dist,
-		rightDir * (dist * 0.7),
-
 		(upDir * 0.8 - rightDir * 0.6).Unit * dist,
-		(upDir * 0.8 + rightDir * 0.6).Unit * dist,
-		(upDir * 0.7 + flatDir * 0.7).Unit * dist,
-		(upDir * 0.5 - rightDir * 0.86).Unit * dist,
-		(upDir * 0.5 + rightDir * 0.86).Unit * dist
+		(upDir * 0.8 + rightDir * 0.6).Unit * dist
 	}
 
 	for idx = 1, #candidates do
@@ -243,45 +218,44 @@ end
 local function getTargetEntities()
 	local entities = {}
 	local myChar = localPlayer.Character
-	local containers = {}
 
 	local playersFolder = workspaceService:FindFirstChild("Players")
 	local aiFolder = workspaceService:FindFirstChild("AICharacters") or workspaceService:FindFirstChild("AI")
 
-	if playersFolder then
-		table.insert(containers, { folder = playersFolder, isBot = false })
-	end
-	if aiFolder then
-		table.insert(containers, { folder = aiFolder, isBot = true })
-	end
-	if #containers == 0 then
-		table.insert(containers, { folder = workspaceService, isBot = false })
-	end
-
-	for _, container in ipairs(containers) do
-		for _, obj in ipairs(container.folder:GetChildren()) do
-			if not obj:IsA("Model") or obj == myChar then continue end
+	local function processFolder(folder, isBot)
+		if not folder then return end
+		local children = folder:GetChildren()
+		for i = 1, #children do
+			local obj = children[i]
+			if obj == myChar or not obj:IsA("Model") then continue end
 
 			local humanoid = obj:FindFirstChildOfClass("Humanoid")
-			local root = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart or obj:FindFirstChild("Torso") or obj:FindFirstChild("UpperTorso")
+			local root = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart or obj:FindFirstChild("Torso")
 			if not (humanoid and root) then continue end
 			if CombatConfig.DeadCheck and humanoid.Health <= 0 then continue end
 
 			local player = playersService:GetPlayerFromCharacter(obj) or playersService:FindFirstChild(obj.Name)
-			local isBot = container.isBot or (player == nil)
+			local botStatus = isBot or (player == nil)
 
-			if isBot and not CombatConfig.TargetBots then continue end
-			if not isBot and not CombatConfig.TargetPlayers then continue end
-			if not isBot and CombatConfig.TeamCheck and player and localPlayer.Team and player.Team == localPlayer.Team then continue end
+			if botStatus and not CombatConfig.TargetBots then continue end
+			if not botStatus and not CombatConfig.TargetPlayers then continue end
+			if not botStatus and CombatConfig.TeamCheck and player and localPlayer.Team and player.Team == localPlayer.Team then continue end
 
 			table.insert(entities, {
 				Model = obj,
 				Player = player,
-				IsBot = isBot,
+				IsBot = botStatus,
 				Humanoid = humanoid,
 				RootPart = root
 			})
 		end
+	end
+
+	if playersFolder or aiFolder then
+		processFolder(playersFolder, false)
+		processFolder(aiFolder, true)
+	else
+		processFolder(workspaceService, false)
 	end
 
 	return entities
@@ -303,17 +277,12 @@ local function getClosestTarget()
 
 	local myChar = localPlayer.Character
 	local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
+	local entities = getTargetEntities()
 
-	for _, entity in ipairs(getTargetEntities()) do
+	for i = 1, #entities do
+		local entity = entities[i]
 		local char = entity.Model
-		local part = nil
-
-		if CombatConfig.HitPart == "Random" then
-			local limbs = { "Head", "HumanoidRootPart", "Torso", "UpperTorso" }
-			part = char:FindFirstChild(limbs[math.random(1, #limbs)]) or entity.RootPart
-		else
-			part = char:FindFirstChild(CombatConfig.HitPart) or entity.RootPart or char:FindFirstChild("Head")
-		end
+		local part = char:FindFirstChild(CombatConfig.HitPart) or entity.RootPart
 
 		if not part or not part:IsA("BasePart") then continue end
 
@@ -409,7 +378,6 @@ local function patchWeaponModule(mod, recoilModule)
 				local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
 				local savedCF = nil
 
-				-- Instant synchronous reposition for weapon bullet spawn.
 				if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition and myRoot then
 					manipTimer = os.clock() + 0.35
 					savedCF = myRoot.CFrame
@@ -448,7 +416,6 @@ local function patchWeaponModule(mod, recoilModule)
 					result = origFire(...)
 				end
 
-				-- Restore immediately so the client frame is not disturbed.
 				if savedCF and myRoot and myRoot.Parent then
 					myRoot.CFrame = savedCF
 				end
@@ -616,7 +583,6 @@ local function applyWeaponMods()
 									local myChar = localPlayer.Character
 									local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
 
-									-- Route bullet trajectory out of cover from vantage point.
 									if CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition and myRoot and (os.clock() < manipTimer) then
 										local distFromPlayer = (origin - myRoot.Position).Magnitude
 										if distFromPlayer < (CombatConfig.ManipulatorDistance + 15) then
@@ -694,7 +660,6 @@ end
 function Combat:Load()
 	applyWeaponMods()
 
-	-- Heartbeat: replicate vantage peek position to the server while the shot is in flight.
 	runService.Heartbeat:Connect(function()
 		if not (CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition and (os.clock() < manipTimer)) then
 			isSpoofed = false
@@ -715,7 +680,6 @@ function Combat:Load()
 		end
 	end)
 
-	-- RenderStep (199): restore real CFrame before the Camera (200) computes rendering.
 	runService:BindToRenderStep("CombatManipRestore", 199, function()
 		if isSpoofed and realCFrame and localPlayer.Character then
 			local hrp = localPlayer.Character:FindFirstChild("HumanoidRootPart") or localPlayer.Character.PrimaryPart
@@ -724,6 +688,21 @@ function Combat:Load()
 				hrp.AssemblyLinearVelocity = realVelocity or Vector3.zero
 				isSpoofed = false
 			end
+		end
+	end)
+
+	-- Update targets at fixed rate to reduce RenderStepped strain.
+	task.spawn(function()
+		while true do
+			if CombatConfig.Enabled then
+				targetPart, targetEntity, hitscanOverridePos, manipPosition = getClosestTarget()
+			else
+				targetPart = nil
+				targetEntity = nil
+				hitscanOverridePos = nil
+				manipPosition = nil
+			end
+			task.wait(0.03)
 		end
 	end)
 
@@ -742,22 +721,11 @@ function Combat:Load()
 		circleOutline.Radius = radius
 		circleOutline.Visible = CombatConfig.Enabled and CombatConfig.ShowFOV and CombatConfig.FOVOutline
 
-		if CombatConfig.Enabled then
-			targetPart, targetEntity, hitscanOverridePos, manipPosition = getClosestTarget()
-		else
-			targetPart = nil
-			targetEntity = nil
-			hitscanOverridePos = nil
-			manipPosition = nil
-		end
-
 		local myChar = localPlayer.Character
 		local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
 		local viewportSize = currentCamera.ViewportSize
 
-		-- Hitscan Visualizations.
 		local isHitscanning = CombatConfig.Enabled and CombatConfig.Hitscan and hitscanOverridePos ~= nil
-
 		if isHitscanning and CombatConfig.HitscanIndicator then
 			hitscanIndicator.Position = Vector2.new(viewportSize.X / 2, (viewportSize.Y / 2) + 38)
 			hitscanIndicator.Color = CombatConfig.HitscanVisualColor
@@ -779,9 +747,7 @@ function Combat:Load()
 			hitscanPoint.Visible = false
 		end
 
-		-- Manipulator Visualizations.
 		local isVisualizingManip = CombatConfig.Enabled and CombatConfig.Manipulator and manipPosition ~= nil
-
 		if isVisualizingManip and CombatConfig.ManipulatorIndicator then
 			local yOffset = (isHitscanning and CombatConfig.HitscanIndicator) and 54 or 38
 			manipIndicator.Position = Vector2.new(viewportSize.X / 2, (viewportSize.Y / 2) + yOffset)
@@ -828,11 +794,11 @@ function Combat:Load()
 			return oldIndex(self, key)
 		end
 
-		if userInputService.MouseBehavior == Enum.MouseBehavior.Default or userInputService:GetFocusedTextBox() then
+		if key ~= "Hit" and key ~= "Target" then
 			return oldIndex(self, key)
 		end
 
-		if key ~= "Hit" and key ~= "Target" then
+		if userInputService.MouseBehavior == Enum.MouseBehavior.Default or userInputService:GetFocusedTextBox() then
 			return oldIndex(self, key)
 		end
 
@@ -851,5 +817,4 @@ function Combat:Load()
 	return self
 end
 
-print("Furbbot israil techlogy loaded")
 return Combat
