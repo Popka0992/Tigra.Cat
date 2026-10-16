@@ -331,23 +331,6 @@ do
 	Arbuzi.SmallestPixel = Font.new(Fonts.SmallestPixel, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
 end
 
-local function bindCamera()
-	local activeCamera = workspaceService.CurrentCamera or workspaceService:FindFirstChildOfClass("Camera")
-	if not activeCamera then return end
-	camera = activeCamera
-	updateCameraCache()
-
-	if Arbuzi.Threads["CameraFOV"] then
-		pcall(function() Arbuzi.Threads["CameraFOV"]:Disconnect() end)
-	end
-	if Arbuzi.Threads["CameraVP"] then
-		pcall(function() Arbuzi.Threads["CameraVP"]:Disconnect() end)
-	end
-
-	Arbuzi.Threads["CameraFOV"] = camera:GetPropertyChangedSignal("FieldOfView"):Connect(updateCameraCache)
-	Arbuzi.Threads["CameraVP"] = camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateCameraCache)
-end
-
 function Arbuzi:CreateObjects(name, properties)
 	local instance = Instance.new(name)
 	for prop, value in pairs(properties or {}) do
@@ -784,8 +767,7 @@ function Arbuzi:InitEsp(data)
 	})
 end
 
-function Arbuzi:CalculateBox(data)
-	local rootPart = data.RootPart
+function Arbuzi:CalculateBox(character, rootPart)
 	if not rootPart or not rootPart.Parent or not camera then
 		return nil, nil, nil, nil, false
 	end
@@ -795,13 +777,8 @@ function Arbuzi:CalculateBox(data)
 		return nil, nil, nil, nil, false
 	end
 
-	if cachedFocalLength == 0 or cachedFocalLength ~= cachedFocalLength then
-		updateCameraCache()
-	end
-
 	local boundingBox = config.Boxes["Bounding Box"]
 	if boundingBox.Enabled then
-		local character = data.Character
 		local scrMinX, scrMinY = math.huge, math.huge
 		local scrMaxX, scrMaxY = -math.huge, -math.huge
 		local hasValidParts = false
@@ -857,163 +834,47 @@ function Arbuzi:CalculateBox(data)
 	end
 end
 
-function Arbuzi:AddTarget(target)
-	if not target or not target:IsA("Model") then return end
-	if target.Name == localPlayer.Name or (localPlayer.Character and target == localPlayer.Character) then return end
-	if self.Cache[target] then return end
+function Arbuzi:AddTarget(player)
+	if player == localPlayer or self.Cache[player] then return self.Cache[player] end
 
-	self.Cache[target] = { Initializing = true }
+	local data = {
+		Player = player,
+		Objects = {},
+		LastW = nil,
+		LastH = nil,
+		LastX = nil,
+		LastY = nil,
+		LastGlowTop = nil,
+		LastGlowBot = nil,
+		LastGlowT1 = nil,
+		LastGlowT2 = nil,
+		LastGradTop = nil,
+		LastGradBot = nil,
+		LastFillTop = nil,
+		LastFillBot = nil,
+		LastFillT1 = nil,
+		LastFillT2 = nil,
+		LastDist = nil,
+		LastDistColor = nil,
+		LastDisplayName = nil,
+		LastNameColor = nil,
+		LastHealthColor = nil,
+		LastHealthFloor = nil,
+		LastRatio = nil,
+		LastWeapon = nil,
+		LastWeaponColor = nil,
+		LastIcon = nil,
+		LastIconSize = nil
+	}
 
-	task.spawn(function()
-		local rootPart = target:FindFirstChild("HumanoidRootPart") or target:WaitForChild("HumanoidRootPart", 5)
-		local humanoid = target:FindFirstChildOfClass("Humanoid") or target:WaitForChild("Humanoid", 5)
-
-		if not (rootPart and humanoid and target.Parent) or not target:IsDescendantOf(workspaceService) then
-			self.Cache[target] = nil
-			return
-		end
-
-		if target.Name == localPlayer.Name or (localPlayer.Character and target == localPlayer.Character) or humanoid.Health <= 0 then
-			self.Cache[target] = nil
-			return
-		end
-
-		local data = {
-			Target = target,
-			Objects = {},
-			Conns = {},
-			Character = target,
-			RootPart = rootPart,
-			Humanoid = humanoid,
-			Health = humanoid.Health,
-			MaxHealth = humanoid.MaxHealth,
-			Alive = humanoid.Health > 0,
-			CurrentWeapon = resolveEquippedWeapon(target),
-			WalkActive = false,
-			JumpActive = false,
-			LastW = nil,
-			LastH = nil,
-			LastX = nil,
-			LastY = nil,
-			LastGlowTop = nil,
-			LastGlowBot = nil,
-			LastGlowT1 = nil,
-			LastGlowT2 = nil,
-			LastGradTop = nil,
-			LastGradBot = nil,
-			LastFillTop = nil,
-			LastFillBot = nil,
-			LastFillT1 = nil,
-			LastFillT2 = nil,
-			LastDist = nil,
-			LastDistColor = nil,
-			LastDisplayName = nil,
-			LastNameColor = nil,
-			LastHealthColor = nil,
-			LastHealthFloor = nil,
-			LastRatio = nil,
-			LastWeapon = nil,
-			LastWeaponColor = nil,
-			LastStateColor = nil,
-			LastIcon = nil,
-			LastIconSize = nil
-		}
-
-		self:InitEsp(data)
-		self.Cache[target] = data
-
-		data.Conns.Health = humanoid.HealthChanged:Connect(function(newHealth)
-			data.Health = newHealth
-			if newHealth <= 0 then
-				data.Alive = false
-				self:RemoveTarget(target)
-			else
-				data.Alive = true
-			end
-		end)
-
-		data.Conns.Died = humanoid.Died:Connect(function()
-			data.Alive = false
-			self:RemoveTarget(target)
-		end)
-
-		data.Conns.ChildAdded = target.ChildAdded:Connect(function(child)
-			if child.Name == "Worldmodel" or child:IsA("Tool") then
-				task.delay(0.05, function()
-					data.CurrentWeapon = resolveEquippedWeapon(target)
-				end)
-			end
-		end)
-
-		data.Conns.ChildRemoved = target.ChildRemoved:Connect(function(child)
-			if child.Name == "Worldmodel" or child:IsA("Tool") then
-				task.delay(0.05, function()
-					data.CurrentWeapon = resolveEquippedWeapon(target)
-				end)
-			end
-		end)
-
-		local objects = data.Objects
-		data.Conns.MoveDir = humanoid:GetPropertyChangedSignal("MoveDirection"):Connect(function()
-			local walking = humanoid.MoveDirection ~= zeroVector3
-			if walking and not data.WalkActive then
-				data.WalkActive = true
-				objects.StateFlag.Visible = false
-				objects.WalkFlag.Visible = true
-			elseif not walking and data.WalkActive then
-				data.WalkActive = false
-				objects.WalkFlag.Visible = false
-				if not data.JumpActive then
-					objects.StateFlag.Visible = true
-				end
-			end
-		end)
-
-		data.Conns.StateChange = humanoid.StateChanged:Connect(function(_, newState)
-			if newState == Enum.HumanoidStateType.Dead then
-				data.Alive = false
-				self:RemoveTarget(target)
-				return
-			end
-			local jumping = newState == Enum.HumanoidStateType.Jumping or newState == Enum.HumanoidStateType.Freefall
-			if jumping and not data.JumpActive then
-				data.JumpActive = true
-				objects.StateFlag.Visible = false
-				objects.JumpFlag.Visible = true
-			elseif not jumping and data.JumpActive then
-				data.JumpActive = false
-				objects.JumpFlag.Visible = false
-				if not data.WalkActive then
-					objects.StateFlag.Visible = true
-				end
-			end
-		end)
-
-		data.Conns.Ancestry = target.AncestryChanged:Connect(function(_, parent)
-			if not parent or not target:IsDescendantOf(workspaceService) then
-				self:RemoveTarget(target)
-			end
-		end)
-	end)
+	self:InitEsp(data)
+	self.Cache[player] = data
+	return data
 end
 
-function Arbuzi:RemoveTarget(target)
-	local data = self.Cache[target]
+function Arbuzi:RemoveTarget(player)
+	local data = self.Cache[player]
 	if not data then return end
-
-	if data.Initializing then
-		self.Cache[target] = nil
-		return
-	end
-
-	if data.Conns then
-		for _, conn in pairs(data.Conns) do
-			if typeof(conn) == "RBXScriptConnection" then
-				conn:Disconnect()
-			end
-		end
-		tableClear(data.Conns)
-	end
 
 	if data.Objects then
 		if data.Objects.TargetHolder then
@@ -1022,31 +883,39 @@ function Arbuzi:RemoveTarget(target)
 		tableClear(data.Objects)
 	end
 
-	self.Cache[target] = nil
+	self.Cache[player] = nil
 end
 
-function Arbuzi:Update(target, data)
+function Arbuzi:Update(player, data)
 	local objects = data.Objects
-	local character = data.Character
-	local rootPart = data.RootPart
-	local humanoid = data.Humanoid
+	local character = player.Character
 
-	if not data.Alive 
-		or not character 
-		or not character.Parent 
-		or not character:IsDescendantOf(workspaceService)
-		or not rootPart 
-		or not rootPart.Parent 
-		or not humanoid 
-		or not humanoid.Parent 
-		or humanoid.Health <= 0 
-		or humanoid:GetState() == Enum.HumanoidStateType.Dead 
-	then
-		self:RemoveTarget(target)
+	-- Проверка активности реального персонажа игрока.
+	if not character or not character.Parent or not character:IsDescendantOf(workspaceService) then
+		if objects.TargetHolder.Visible then objects.TargetHolder.Visible = false end
 		return
 	end
 
-	local w, h, x, y, onScreen = self:CalculateBox(data)
+	local rootPart = character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+
+	if not rootPart or not rootPart.Parent or not humanoid or not humanoid.Parent then
+		if objects.TargetHolder.Visible then objects.TargetHolder.Visible = false end
+		return
+	end
+
+	-- Проверка жизни и атрибутов смерти/сна.
+	local health = humanoid.Health
+	local maxHealth = humanoid.MaxHealth
+	if health <= 0 or humanoid:GetState() == Enum.HumanoidStateType.Dead 
+		or character:GetAttribute("Dead") == true 
+		or character:GetAttribute("IsDead") == true 
+	then
+		if objects.TargetHolder.Visible then objects.TargetHolder.Visible = false end
+		return
+	end
+
+	local w, h, x, y, onScreen = self:CalculateBox(character, rootPart)
 	if not onScreen or not w or w ~= w or h ~= h or x ~= x or y ~= y then
 		if objects.TargetHolder.Visible then objects.TargetHolder.Visible = false end
 		return
@@ -1140,8 +1009,7 @@ function Arbuzi:Update(target, data)
 
 	if textsCfg.Name.Enabled then
 		if not objects.TargetName.Visible then objects.TargetName.Visible = true end
-		local playerObj = playersService:FindFirstChild(target.Name)
-		local displayName = playerObj and playerObj.DisplayName or target.Name
+		local displayName = player.DisplayName or player.Name
 		if data.LastDisplayName ~= displayName then
 			objects.TargetName.Text = displayName
 			data.LastDisplayName = displayName
@@ -1171,10 +1039,28 @@ function Arbuzi:Update(target, data)
 		if objects.Distance.Visible then objects.Distance.Visible = false end
 	end
 
+	-- Динамическое обновление состояния движения каждый кадр.
+	local isMoving = humanoid.MoveDirection.Magnitude > 0.05
+	local humState = humanoid:GetState()
+	local isJumping = humState == Enum.HumanoidStateType.Jumping or humState == Enum.HumanoidStateType.Freefall
+
+	if isJumping then
+		objects.JumpFlag.Visible = true
+		objects.WalkFlag.Visible = false
+		objects.StateFlag.Visible = false
+	elseif isMoving then
+		objects.JumpFlag.Visible = false
+		objects.WalkFlag.Visible = true
+		objects.StateFlag.Visible = false
+	else
+		objects.JumpFlag.Visible = false
+		objects.WalkFlag.Visible = false
+		objects.StateFlag.Visible = textsCfg.State.Enabled
+	end
+
 	local healthCfg = config.Bars["Health Bar"]
 	if healthCfg.Enabled then
-		local health = data.Health or 0
-		local maxHealth = data.MaxHealth or 100
+		maxHealth = maxHealth > 0 and maxHealth or 100
 		local ratio = mathClamp(health / maxHealth, 0, 1)
 
 		if not objects.LeftBarHolder.Visible then objects.LeftBarHolder.Visible = true end
@@ -1207,11 +1093,7 @@ function Arbuzi:Update(target, data)
 		if objects.LeftBarHolder.Visible then objects.LeftBarHolder.Visible = false end
 	end
 
-	if data.CurrentWeapon == "Worldmodel" or data.CurrentWeapon == "none" or not data.CurrentWeapon then
-		data.CurrentWeapon = resolveEquippedWeapon(character)
-	end
-
-	local currentWeapon = data.CurrentWeapon or "none"
+	local currentWeapon = resolveEquippedWeapon(character)
 	local iconId = weaponIcons[currentWeapon]
 	local iconCfg = textsCfg.WeaponIcon
 	local showIcon = iconCfg and iconCfg.Enabled and iconId ~= nil
@@ -1251,8 +1133,11 @@ end
 function Arbuzi:Load()
 	if self.Loaded then return self end
 
-	bindCamera()
-	self.Threads["CameraWatcher"] = workspaceService:GetPropertyChangedSignal("CurrentCamera"):Connect(bindCamera)
+	local currentCam = workspaceService.CurrentCamera
+	if currentCam then
+		camera = currentCam
+		updateCameraCache()
+	end
 
 	self.Holder = self:CreateObjects("ScreenGui", {
 		Name = "\n",
@@ -1262,156 +1147,51 @@ function Arbuzi:Load()
 		IgnoreGuiInset = true
 	})
 
-	local function hookPlayer(player)
-		if player == localPlayer then return end
-
-		local charAdded = player.CharacterAdded:Connect(function(char)
-			for cachedTarget in pairs(self.Cache) do
-				if cachedTarget.Name == player.Name and cachedTarget ~= char then
-					self:RemoveTarget(cachedTarget)
-				end
-			end
-			self:AddTarget(char)
-		end)
-		self.Threads["CharAdded_" .. player.UserId] = charAdded
-
-		local charRemoving = player.CharacterRemoving:Connect(function(char)
-			self:RemoveTarget(char)
-		end)
-		self.Threads["CharRemoving_" .. player.UserId] = charRemoving
-
-		local charWatcher = player:GetPropertyChangedSignal("Character"):Connect(function()
-			if player.Character then
-				self:AddTarget(player.Character)
-			end
-		end)
-		self.Threads["CharWatcher_" .. player.UserId] = charWatcher
-
-		if player.Character then
-			self:AddTarget(player.Character)
-		end
-	end
-
 	for _, player in ipairs(playersService:GetPlayers()) do
-		hookPlayer(player)
+		if player ~= localPlayer then
+			self:AddTarget(player)
+		end
 	end
 
-	self.Threads["PlayerAdded"] = playersService.PlayerAdded:Connect(hookPlayer)
+	self.Threads["PlayerAdded"] = playersService.PlayerAdded:Connect(function(player)
+		if player ~= localPlayer then
+			self:AddTarget(player)
+		end
+	end)
+
 	self.Threads["PlayerRemoving"] = playersService.PlayerRemoving:Connect(function(player)
-		if self.Threads["CharAdded_" .. player.UserId] then
-			self.Threads["CharAdded_" .. player.UserId]:Disconnect()
-			self.Threads["CharAdded_" .. player.UserId] = nil
-		end
-		if self.Threads["CharRemoving_" .. player.UserId] then
-			self.Threads["CharRemoving_" .. player.UserId]:Disconnect()
-			self.Threads["CharRemoving_" .. player.UserId] = nil
-		end
-		if self.Threads["CharWatcher_" .. player.UserId] then
-			self.Threads["CharWatcher_" .. player.UserId]:Disconnect()
-			self.Threads["CharWatcher_" .. player.UserId] = nil
-		end
-		if player.Character and self.Cache[player.Character] then
-			self:RemoveTarget(player.Character)
-		end
-	end)
-
-	self.Threads["LocalPlayerRespawn"] = localPlayer.CharacterAdded:Connect(function(char)
-		if self.Cache[char] then
-			self:RemoveTarget(char)
-		end
-		task.defer(bindCamera)
-	end)
-
-	local function hookPlayersFolder(folder)
-		for _, model in ipairs(folder:GetChildren()) do
-			if model:IsA("Model") then
-				self:AddTarget(model)
-			end
-		end
-
-		self.Threads["FolderChildAdded"] = folder.ChildAdded:Connect(function(child)
-			if child:IsA("Model") then
-				self:AddTarget(child)
-			end
-		end)
-
-		self.Threads["FolderChildRemoved"] = folder.ChildRemoved:Connect(function(child)
-			self:RemoveTarget(child)
-		end)
-	end
-
-	local playersFolder = workspaceService:FindFirstChild("Players")
-	if playersFolder and playersFolder:IsA("Folder") then
-		hookPlayersFolder(playersFolder)
-	end
-
-	self.Threads["WorkspaceFolderWatcher"] = workspaceService.ChildAdded:Connect(function(child)
-		if child.Name == "Players" and child:IsA("Folder") then
-			hookPlayersFolder(child)
-		end
-	end)
-
-	-- Периодический сканер для восстановления объектов после стриминга и телепортации.
-	self.Threads["StreamingScanner"] = task.spawn(function()
-		while self.Loaded do
-			for _, player in ipairs(playersService:GetPlayers()) do
-				if player ~= localPlayer and player.Character and player.Character.Parent then
-					if not self.Cache[player.Character] then
-						self:AddTarget(player.Character)
-					end
-				end
-			end
-
-			local pFolder = workspaceService:FindFirstChild("Players")
-			if pFolder and pFolder:IsA("Folder") then
-				for _, model in ipairs(pFolder:GetChildren()) do
-					if model:IsA("Model") and not self.Cache[model] then
-						self:AddTarget(model)
-					end
-				end
-			end
-			task.wait(1)
-		end
+		self:RemoveTarget(player)
 	end)
 
 	self.PreRender = runService.RenderStepped:Connect(function()
 		if not config.Enabled then
 			for _, data in pairs(self.Cache) do
-				if typeof(data) == "table" and data.Objects and data.Objects.TargetHolder and data.Objects.TargetHolder.Visible then
+				if data.Objects and data.Objects.TargetHolder and data.Objects.TargetHolder.Visible then
 					data.Objects.TargetHolder.Visible = false
 				end
 			end
 			return
 		end
 
-		-- Проверка смены активного объекта камеры.
 		local activeCam = workspaceService.CurrentCamera
-		if activeCam and activeCam ~= camera then
-			bindCamera()
+		if activeCam then
+			camera = activeCam
+			updateCameraCache()
 		end
-
 		if not camera then return end
 
-		-- Проверка целостности холдера в CoreGui/gethui.
-		if not self.Holder or not self.Holder.Parent then
-			self.Holder = self:CreateObjects("ScreenGui", {
-				Name = "\n",
-				Parent = getGuiParent(),
-				ResetOnSpawn = false,
-				DisplayOrder = -1,
-				IgnoreGuiInset = true
-			})
-			for _, d in pairs(self.Cache) do
-				if typeof(d) == "table" and d.Objects and d.Objects.TargetHolder then
-					d.Objects.TargetHolder.Parent = self.Holder
-				end
-			end
-		end
-
 		cameraPosition = camera.CFrame.Position
-		for target, data in pairs(self.Cache) do
-			if typeof(data) == "table" and data.Objects and data.Objects.TargetHolder then
-				self:Update(target, data)
+
+		-- Прямой обход игроков: гарантирует отсутствие дубликатов и призраков.
+		for _, player in ipairs(playersService:GetPlayers()) do
+			if player ~= localPlayer then
+				local data = self.Cache[player]
+				if not data then
+					data = self:AddTarget(player)
+				end
+				if data then
+					self:Update(player, data)
+				end
 			end
 		end
 	end)
@@ -1431,8 +1211,8 @@ function Arbuzi:Unload()
 		self.PreRender = nil
 	end
 
-	for target in pairs(self.Cache) do
-		self:RemoveTarget(target)
+	for player in pairs(self.Cache) do
+		self:RemoveTarget(player)
 	end
 
 	for _, conn in pairs(self.Threads) do
