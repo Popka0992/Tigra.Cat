@@ -23,7 +23,7 @@ local replicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 local httpService = cloneref(game:GetService("HttpService"))
 local coreGui = cloneref(game:GetService("CoreGui"))
 
-local httpRequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+local httpRequest = request or (syn and syn.request) or (http and http.request) or http_request
 local localPlayer = playersService.LocalPlayer
 local camera = workspaceService.CurrentCamera
 
@@ -54,7 +54,6 @@ local toolSignatures = {}
 local weaponIcons = {}
 
 ---Scan craft menu inside PlayerGui strictly for weapon icons.
----@return boolean
 local function scanCraftingIcons()
 	local pGui = localPlayer:FindFirstChildOfClass("PlayerGui")
 	if not pGui then return false end
@@ -97,7 +96,6 @@ task.spawn(function()
 end)
 
 ---Find tools container recursively across services.
----@return Instance?
 local function getToolsFolder()
 	local prefabs = workspaceService:FindFirstChild("Prefabs", true) or replicatedStorage:FindFirstChild("Prefabs", true)
 	if prefabs then
@@ -108,7 +106,6 @@ local function getToolsFolder()
 end
 
 ---Build weapon database from prefabs.
----@return boolean
 local function indexWeaponPrefabs()
 	local tools = getToolsFolder()
 	if not tools then return false end
@@ -138,8 +135,6 @@ task.spawn(function()
 end)
 
 ---Resolve weapon name from character model.
----@param character Model
----@return string
 local function resolveEquippedWeapon(character)
 	local worldModel = character:FindFirstChild("Worldmodel")
 	if not worldModel then
@@ -197,19 +192,22 @@ local function resolveEquippedWeapon(character)
 end
 
 local function updateCameraCache()
-	if not camera then
+	if not camera or camera.Parent == nil then
 		camera = workspaceService.CurrentCamera
 	end
 	if not camera then return end
 	viewPortY = camera.ViewportSize.Y
-	cachedFocalLength = viewPortY / (2 * mathTan(mathRad(camera.FieldOfView) * 0.5))
+	if viewPortY <= 0 then viewPortY = 1080 end
+	local fov = camera.FieldOfView
+	if fov <= 0 then fov = 70 end
+	cachedFocalLength = viewPortY / (2 * mathTan(mathRad(fov) * 0.5))
 end
 
 local function getGuiParent()
 	local success, result = pcall(function()
 		return gethui()
 	end)
-	if success and result then
+	if success and result and typeof(result) == "Instance" then
 		return result
 	end
 	return coreGui
@@ -232,7 +230,7 @@ local Arbuzi = {
 		Boxes = {
 			Enabled = true,
 			["Bounding Box"] = {
-				Enabled = false,
+				Enabled = true,
 				IncludeAccessories = false,
 				BoxX = 0,
 				BoxY = 2
@@ -292,30 +290,36 @@ local config = Arbuzi.Table
 local Fonts = {}
 do
 	local function fetchSource(url)
-		local response = httpRequest({ Url = url, Method = "GET" })
-		return response and response.Body or ""
+		local success, response = pcall(function()
+			return httpRequest({ Url = url, Method = "GET" })
+		end)
+		return (success and response and response.Body) or ""
 	end
 
 	local function registerFont(name, weight, style, asset)
-		if not isfile(asset.Id) then
-			writefile(asset.Id, asset.Font)
-		end
+		local customAsset
+		pcall(function()
+			if not isfile(asset.Id) then
+				writefile(asset.Id, asset.Font)
+			end
 
-		if not isfile(name .. ".font") then
-			local info = {
-				name = name,
-				faces = {
-					{
-						name = "Normal",
-						weight = weight,
-						style = style,
-						assetId = getcustomasset(asset.Id)
+			if not isfile(name .. ".font") then
+				local info = {
+					name = name,
+					faces = {
+						{
+							name = "Normal",
+							weight = weight,
+							style = style,
+							assetId = getcustomasset(asset.Id)
+						}
 					}
 				}
-			}
-			writefile(name .. ".font", httpService:JSONEncode(info))
-		end
-		return getcustomasset(name .. ".font")
+				writefile(name .. ".font", httpService:JSONEncode(info))
+			end
+			customAsset = getcustomasset(name .. ".font")
+		end)
+		return customAsset
 	end
 
 	Fonts.Tahoma = registerFont("Tahoma", 400, "Normal", {
@@ -328,8 +332,15 @@ do
 		Font = fetchSource("https://raw.githubusercontent.com/sametexe001/luas/main/smallest_pixel-7.ttf")
 	})
 
-	Arbuzi.Tahoma = Font.new(Fonts.Tahoma, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
-	Arbuzi.SmallestPixel = Font.new(Fonts.SmallestPixel, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+	local tahomaSuccess, tahomaFont = pcall(function()
+		return Font.new(Fonts.Tahoma, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+	end)
+	Arbuzi.Tahoma = (tahomaSuccess and tahomaFont) or Font.fromEnum(Enum.Font.SourceSansBold)
+
+	local pixelSuccess, pixelFont = pcall(function()
+		return Font.new(Fonts.SmallestPixel, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+	end)
+	Arbuzi.SmallestPixel = (pixelSuccess and pixelFont) or Font.fromEnum(Enum.Font.SourceSans)
 end
 
 function Arbuzi:CreateObjects(name, properties)
@@ -839,7 +850,7 @@ end
 
 function Arbuzi:AddTarget(target)
 	if not target:IsA("Model") then return end
-	if target.Name == localPlayer.Name or (localPlayer.Character and target == localPlayer.Character) then return end
+	if target == localPlayer.Character or target.Name == localPlayer.Name then return end
 	if self.Cache[target] or self.Pending[target] then return end
 
 	self.Pending[target] = true
@@ -1061,15 +1072,18 @@ function Arbuzi:Update(target, data)
 			if objects.BoxGlow.ImageTransparency ~= 1 then objects.BoxGlow.ImageTransparency = 1 end
 		end
 
-		if not objects.BoxOutlineHolder.Visible then objects.BoxOutlineHolder.Visible = true end
-		if not objects.BoxInlineHolder.Visible then objects.BoxInlineHolder.Visible = true end
+		local showBox = boxesCfg["Bounding Box"].Enabled
+		if objects.BoxOutlineHolder.Visible ~= showBox then objects.BoxOutlineHolder.Visible = showBox end
+		if objects.BoxInlineHolder.Visible ~= showBox then objects.BoxInlineHolder.Visible = showBox end
 
-		local gradTop = boxesCfg.Gradients.Top
-		local gradBot = boxesCfg.Gradients.Bot
-		if data.LastGradTop ~= gradTop or data.LastGradBot ~= gradBot then
-			objects.BoxInlineGradient.Color = ColorSequence.new(gradTop, gradBot)
-			data.LastGradTop = gradTop
-			data.LastGradBot = gradBot
+		if showBox then
+			local gradTop = boxesCfg.Gradients.Top
+			local gradBot = boxesCfg.Gradients.Bot
+			if data.LastGradTop ~= gradTop or data.LastGradBot ~= gradBot then
+				objects.BoxInlineGradient.Color = ColorSequence.new(gradTop, gradBot)
+				data.LastGradTop = gradTop
+				data.LastGradBot = gradBot
+			end
 		end
 
 		if boxesCfg.Filled.Enabled then
@@ -1102,8 +1116,8 @@ function Arbuzi:Update(target, data)
 
 	if textsCfg.Name.Enabled then
 		if not objects.TargetName.Visible then objects.TargetName.Visible = true end
-		local playerObj = playersService:FindFirstChild(target.Name)
-		local displayName = playerObj and playerObj.DisplayName or target.Name
+		local playerObj = playersService:GetPlayerFromCharacter(target) or playersService:FindFirstChild(target.Name)
+		local displayName = playerObj and (playerObj.DisplayName or playerObj.Name) or target.Name
 		if data.LastDisplayName ~= displayName then
 			objects.TargetName.Text = displayName
 			data.LastDisplayName = displayName
@@ -1210,6 +1224,30 @@ function Arbuzi:Update(target, data)
 	end
 end
 
+local function isTargetCandidate(model)
+	if not model or not model:IsA("Model") then return false end
+	if model == localPlayer.Character or model.Name == localPlayer.Name then return false end
+
+	local player = playersService:GetPlayerFromCharacter(model)
+	if player then
+		return player ~= localPlayer
+	end
+
+	if playersService:FindFirstChild(model.Name) then
+		return true
+	end
+
+	if model.Parent and model.Parent.Name == "Players" then
+		return true
+	end
+
+	if config.Bots.Enabled then
+		return model:FindFirstChildOfClass("Humanoid") ~= nil
+	end
+
+	return false
+end
+
 function Arbuzi:Load()
 	if self.Loaded then return self end
 
@@ -1226,61 +1264,93 @@ function Arbuzi:Load()
 	end
 
 	setupCameraListeners()
-
-	-- Track camera replacement on teleport / respawn.
 	self.Threads["CameraWatcher"] = workspaceService:GetPropertyChangedSignal("CurrentCamera"):Connect(setupCameraListeners)
 
 	self.Holder = self:CreateObjects("ScreenGui", {
-		Name = "\n",
+		Name = "ArbuziEspHolder",
 		Parent = getGuiParent(),
 		ResetOnSpawn = false,
-		DisplayOrder = -1,
+		DisplayOrder = 100,
 		IgnoreGuiInset = true
 	})
 
-	local function hookPlayersFolder(folder)
-		if self.Threads["FolderChildAdded"] then self.Threads["FolderChildAdded"]:Disconnect() end
-		if self.Threads["FolderChildRemoved"] then self.Threads["FolderChildRemoved"]:Disconnect() end
-
+	local function hookTargetFolder(folder)
 		for _, model in ipairs(folder:GetChildren()) do
-			if model:IsA("Model") then
+			if isTargetCandidate(model) then
 				self:AddTarget(model)
 			end
 		end
 
-		self.Threads["FolderChildAdded"] = folder.ChildAdded:Connect(function(child)
-			if child:IsA("Model") then
+		folder.ChildAdded:Connect(function(child)
+			if isTargetCandidate(child) then
 				self:AddTarget(child)
 			end
 		end)
 
-		self.Threads["FolderChildRemoved"] = folder.ChildRemoved:Connect(function(child)
+		folder.ChildRemoved:Connect(function(child)
 			self:RemoveTarget(child)
 		end)
 	end
 
-	local playersFolder = workspaceService:FindFirstChild("Players")
-	if playersFolder then
-		hookPlayersFolder(playersFolder)
+	-- 1. Scan players through Players service.
+	for _, player in ipairs(playersService:GetPlayers()) do
+		if player ~= localPlayer then
+			if player.Character then
+				self:AddTarget(player.Character)
+			end
+			player.CharacterAdded:Connect(function(char)
+				self:AddTarget(char)
+			end)
+		end
 	end
 
-	self.Threads["WorkspaceFolderWatcher"] = workspaceService.ChildAdded:Connect(function(child)
-		if child.Name == "Players" and child:IsA("Folder") then
-			hookPlayersFolder(child)
+	playersService.PlayerAdded:Connect(function(player)
+		if player ~= localPlayer then
+			player.CharacterAdded:Connect(function(char)
+				self:AddTarget(char)
+			end)
 		end
 	end)
 
-	-- Fallback loop to rescan players that streamed in late.
+	-- 2. Scan workspace custom folders.
+	local pFolder = workspaceService:FindFirstChild("Players")
+	if pFolder then hookTargetFolder(pFolder) end
+
+	local cFolder = workspaceService:FindFirstChild("Characters")
+	if cFolder then hookTargetFolder(cFolder) end
+
+	workspaceService.ChildAdded:Connect(function(child)
+		if child:IsA("Folder") and (child.Name == "Players" or child.Name == "Characters") then
+			hookTargetFolder(child)
+		elseif isTargetCandidate(child) then
+			self:AddTarget(child)
+		end
+	end)
+
+	-- 3. Rescan fallback for streaming/lobby.
 	self.Threads["RescanRoutine"] = task.spawn(function()
 		while self.Loaded do
-			local currentFolder = workspaceService:FindFirstChild("Players")
+			for _, player in ipairs(playersService:GetPlayers()) do
+				if player ~= localPlayer and player.Character and not self.Cache[player.Character] then
+					self:AddTarget(player.Character)
+				end
+			end
+
+			local currentFolder = workspaceService:FindFirstChild("Players") or workspaceService:FindFirstChild("Characters")
 			if currentFolder then
 				for _, model in ipairs(currentFolder:GetChildren()) do
-					if model:IsA("Model") and not self.Cache[model] and not self.Pending[model] then
+					if isTargetCandidate(model) and not self.Cache[model] then
 						self:AddTarget(model)
 					end
 				end
 			end
+
+			for _, model in ipairs(workspaceService:GetChildren()) do
+				if isTargetCandidate(model) and not self.Cache[model] then
+					self:AddTarget(model)
+				end
+			end
+
 			task.wait(1.5)
 		end
 	end)
@@ -1295,9 +1365,10 @@ function Arbuzi:Load()
 			return
 		end
 
-		if not camera then
+		if not camera or camera.Parent == nil then
 			camera = workspaceService.CurrentCamera
 			if not camera then return end
+			updateCameraCache()
 		end
 
 		cameraPosition = camera.CFrame.Position
@@ -1343,4 +1414,5 @@ function Arbuzi:Unload()
 	shared.Arbuzi = nil
 end
 
+Arbuzi:Load()
 return Arbuzi
