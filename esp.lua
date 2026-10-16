@@ -19,6 +19,7 @@ local cloneref = cloneref or function(instance) return instance end
 local workspaceService = cloneref(game:GetService("Workspace"))
 local playersService = cloneref(game:GetService("Players"))
 local runService = cloneref(game:GetService("RunService"))
+local replicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 local httpService = cloneref(game:GetService("HttpService"))
 local coreGui = cloneref(game:GetService("CoreGui"))
 
@@ -46,6 +47,72 @@ local zeroVector3 = newVector3(0, 0, 0)
 local cameraPosition = newVector3(0, 0, 0)
 local cachedFocalLength = 0
 local viewPortY = 0
+
+-- Weapon Database for fingerprinting.
+local weaponMeshMap = {}
+local weaponPartMap = {}
+
+---Scan Prefabs folder to build weapon signatures.
+local function indexWeaponPrefabs()
+	local prefabs = replicatedStorage:FindFirstChild("Prefabs") or workspaceService:FindFirstChild("Prefabs")
+	if not prefabs then return end
+
+	local tools = prefabs:FindFirstChild("Tools")
+	if not tools then return end
+
+	local ignoredPartNames = {
+		["Handle"] = true,
+		["Attachments"] = true,
+		["bullets"] = true,
+		["magthing"] = true,
+		["MAG"] = true
+	}
+
+	for _, tool in ipairs(tools:GetChildren()) do
+		local worldModel = tool:FindFirstChild("Worldmodel")
+		if worldModel then
+			for _, part in ipairs(worldModel:GetChildren()) do
+				if part:IsA("MeshPart") and part.MeshId ~= "" then
+					weaponMeshMap[part.MeshId] = tool.Name
+				end
+				if not ignoredPartNames[part.Name] then
+					weaponPartMap[part.Name] = tool.Name
+				end
+			end
+		end
+	end
+end
+
+indexWeaponPrefabs()
+
+---Identify weapon model inside character.
+---@param character Model
+---@return string
+local function resolveEquippedWeapon(character)
+	local worldModel = character:FindFirstChild("Worldmodel")
+	if not worldModel then
+		for _, child in ipairs(character:GetChildren()) do
+			if child:IsA("Tool") then
+				return child.Name
+			end
+		end
+		return "none"
+	end
+
+	for _, part in ipairs(worldModel:GetChildren()) do
+		if part:IsA("MeshPart") and part.MeshId ~= "" then
+			local matchedName = weaponMeshMap[part.MeshId]
+			if matchedName then return matchedName end
+		end
+	end
+
+	for _, part in ipairs(worldModel:GetChildren()) do
+		local matchedName = weaponPartMap[part.Name]
+		if matchedName then return matchedName end
+	end
+
+	return "Worldmodel"
+end
 
 local function updateCameraCache()
 	if not camera then return end
@@ -689,6 +756,7 @@ function Arbuzi:AddTarget(target)
 		Health = humanoid.Health,
 		MaxHealth = humanoid.MaxHealth,
 		Alive = humanoid.Health > 0,
+		CurrentWeapon = resolveEquippedWeapon(target),
 		WalkActive = false,
 		JumpActive = false,
 		LastW = nil,
@@ -727,6 +795,23 @@ function Arbuzi:AddTarget(target)
 
 	data.Conns.Died = humanoid.Died:Connect(function()
 		data.Alive = false
+	end)
+
+	-- Event-driven weapon detection.
+	data.Conns.ChildAdded = target.ChildAdded:Connect(function(child)
+		if child.Name == "Worldmodel" or child:IsA("Tool") then
+			task.defer(function()
+				data.CurrentWeapon = resolveEquippedWeapon(target)
+			end)
+		end
+	end)
+
+	data.Conns.ChildRemoved = target.ChildRemoved:Connect(function(child)
+		if child.Name == "Worldmodel" or child:IsA("Tool") then
+			task.defer(function()
+				data.CurrentWeapon = resolveEquippedWeapon(target)
+			end)
+		end
 	end)
 
 	local objects = data.Objects
@@ -965,13 +1050,7 @@ function Arbuzi:Update(target, data)
 	local weaponCfg = textsCfg.Weapon
 	if weaponCfg.Enabled then
 		if not objects.Weapon.Visible then objects.Weapon.Visible = true end
-		local currentWeapon = "none"
-		for _, child in ipairs(character:GetChildren()) do
-			if child:IsA("Tool") then
-				currentWeapon = child.Name
-				break
-			end
-		end
+		local currentWeapon = data.CurrentWeapon or "none"
 
 		if data.LastWeapon ~= currentWeapon then
 			objects.Weapon.Text = currentWeapon
