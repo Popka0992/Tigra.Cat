@@ -198,8 +198,11 @@ end
 
 local function updateCameraCache()
 	if not camera then return end
-	viewPortY = camera.ViewportSize.Y
-	cachedFocalLength = viewPortY / (2 * mathTan(mathRad(camera.FieldOfView) * 0.5))
+	local vp = camera.ViewportSize
+	if vp.Y > 0 and camera.FieldOfView > 0 then
+		viewPortY = vp.Y
+		cachedFocalLength = viewPortY / (2 * mathTan(mathRad(camera.FieldOfView) * 0.5))
+	end
 end
 
 local function getGuiParent()
@@ -788,8 +791,12 @@ function Arbuzi:CalculateBox(data)
 	end
 
 	local rootScreen, onScreen = camera:WorldToViewportPoint(rootPart.Position)
-	if not onScreen then
+	if not onScreen or rootScreen.Z <= 0 then
 		return nil, nil, nil, nil, false
+	end
+
+	if cachedFocalLength == 0 or cachedFocalLength ~= cachedFocalLength then
+		updateCameraCache()
 	end
 
 	local boundingBox = config.Boxes["Bounding Box"]
@@ -855,12 +862,11 @@ function Arbuzi:AddTarget(target)
 	if target.Name == localPlayer.Name or (localPlayer.Character and target == localPlayer.Character) then return end
 	if self.Cache[target] then return end
 
-	-- Reserve cache slot to prevent race condition.
 	self.Cache[target] = { Initializing = true }
 
 	task.spawn(function()
-		local rootPart = target:FindFirstChild("HumanoidRootPart") or target:WaitForChild("HumanoidRootPart", 10)
-		local humanoid = target:FindFirstChildOfClass("Humanoid") or target:WaitForChild("Humanoid", 10)
+		local rootPart = target:FindFirstChild("HumanoidRootPart") or target:WaitForChild("HumanoidRootPart", 5)
+		local humanoid = target:FindFirstChildOfClass("Humanoid") or target:WaitForChild("Humanoid", 5)
 
 		if not (rootPart and humanoid and target.Parent) or not target:IsDescendantOf(workspaceService) then
 			self.Cache[target] = nil
@@ -1041,7 +1047,7 @@ function Arbuzi:Update(target, data)
 	end
 
 	local w, h, x, y, onScreen = self:CalculateBox(data)
-	if not onScreen or not w then
+	if not onScreen or not w or w ~= w or h ~= h or x ~= x or y ~= y then
 		if objects.TargetHolder.Visible then objects.TargetHolder.Visible = false end
 		return
 	end
@@ -1274,6 +1280,13 @@ function Arbuzi:Load()
 		end)
 		self.Threads["CharRemoving_" .. player.UserId] = charRemoving
 
+		local charWatcher = player:GetPropertyChangedSignal("Character"):Connect(function()
+			if player.Character then
+				self:AddTarget(player.Character)
+			end
+		end)
+		self.Threads["CharWatcher_" .. player.UserId] = charWatcher
+
 		if player.Character then
 			self:AddTarget(player.Character)
 		end
@@ -1292,6 +1305,10 @@ function Arbuzi:Load()
 		if self.Threads["CharRemoving_" .. player.UserId] then
 			self.Threads["CharRemoving_" .. player.UserId]:Disconnect()
 			self.Threads["CharRemoving_" .. player.UserId] = nil
+		end
+		if self.Threads["CharWatcher_" .. player.UserId] then
+			self.Threads["CharWatcher_" .. player.UserId]:Disconnect()
+			self.Threads["CharWatcher_" .. player.UserId] = nil
 		end
 		if player.Character and self.Cache[player.Character] then
 			self:RemoveTarget(player.Character)
@@ -1334,6 +1351,29 @@ function Arbuzi:Load()
 		end
 	end)
 
+	-- Периодический сканер для восстановления объектов после стриминга и телепортации.
+	self.Threads["StreamingScanner"] = task.spawn(function()
+		while self.Loaded do
+			for _, player in ipairs(playersService:GetPlayers()) do
+				if player ~= localPlayer and player.Character and player.Character.Parent then
+					if not self.Cache[player.Character] then
+						self:AddTarget(player.Character)
+					end
+				end
+			end
+
+			local pFolder = workspaceService:FindFirstChild("Players")
+			if pFolder and pFolder:IsA("Folder") then
+				for _, model in ipairs(pFolder:GetChildren()) do
+					if model:IsA("Model") and not self.Cache[model] then
+						self:AddTarget(model)
+					end
+				end
+			end
+			task.wait(1)
+		end
+	end)
+
 	self.PreRender = runService.RenderStepped:Connect(function()
 		if not config.Enabled then
 			for _, data in pairs(self.Cache) do
@@ -1344,10 +1384,29 @@ function Arbuzi:Load()
 			return
 		end
 
-		if not camera or not camera.Parent then
+		-- Проверка смены активного объекта камеры.
+		local activeCam = workspaceService.CurrentCamera
+		if activeCam and activeCam ~= camera then
 			bindCamera()
 		end
+
 		if not camera then return end
+
+		-- Проверка целостности холдера в CoreGui/gethui.
+		if not self.Holder or not self.Holder.Parent then
+			self.Holder = self:CreateObjects("ScreenGui", {
+				Name = "\n",
+				Parent = getGuiParent(),
+				ResetOnSpawn = false,
+				DisplayOrder = -1,
+				IgnoreGuiInset = true
+			})
+			for _, d in pairs(self.Cache) do
+				if typeof(d) == "table" and d.Objects and d.Objects.TargetHolder then
+					d.Objects.TargetHolder.Parent = self.Holder
+				end
+			end
+		end
 
 		cameraPosition = camera.CFrame.Position
 		for target, data in pairs(self.Cache) do
@@ -1377,7 +1436,11 @@ function Arbuzi:Unload()
 	end
 
 	for _, conn in pairs(self.Threads) do
-		conn:Disconnect()
+		if typeof(conn) == "RBXScriptConnection" then
+			conn:Disconnect()
+		elseif typeof(conn) == "thread" then
+			pcall(task.cancel, conn)
+		end
 	end
 	tableClear(self.Threads)
 
