@@ -1,1372 +1,1406 @@
-if getgenv().Syrniki and getgenv().Syrniki.Unload then
-	pcall(getgenv().Syrniki.Unload, getgenv().Syrniki)
+local loadingTick = os.clock()
+
+local playersService = cloneref(game:GetService("Players"))
+local workspaceService = cloneref(game:GetService("Workspace"))
+local runService = cloneref(game:GetService("RunService"))
+
+local function httpGet(url)
+	local response = request({
+		Url = url,
+		Method = "GET"
+	})
+	return response and response.Body or ""
 end
 
-local getService = setmetatable({}, {
-	__index = function(_, name)
-		return cloneref(game:GetService(name))
+local ESP_RAW_URL = "https://raw.githubusercontent.com/Popka0992/Tigra.Cat/refs/heads/main/esp.lua"
+local WORLD_RAW_URL = "https://raw.githubusercontent.com/Popka0992/Tigra.Cat/refs/heads/main/WorldVisuals.lua"
+local WORLD_ESP_RAW_URL = "https://raw.githubusercontent.com/Popka0992/Tigra.Cat/refs/heads/main/WorldESP.lua"
+local COMBAT_RAW_URL = "https://raw.githubusercontent.com/Popka0992/Tigra.Cat/refs/heads/main/Combat.lua"
+local MISC_RAW_URL = "https://raw.githubusercontent.com/Popka0992/Tigra.Cat/refs/heads/main/Misc.lua"
+local UI_RAW_URL = "https://raw.githubusercontent.com/Popka0992/Tigra.Cat/refs/heads/main/ui.lua"
+
+local function loadModule(url)
+	local body = httpGet(url)
+	if body == "" then
+		return {}
 	end
+	local chunk = loadstring(body)
+	if not chunk then
+		return {}
+	end
+	local result = chunk()
+	if typeof(result) == "table" and type(result.Load) == "function" then
+		local loaded = result:Load()
+		return loaded or result
+	end
+	return result
+end
+
+local function resolveConfig(mod)
+	if typeof(mod) ~= "table" then
+		return {}
+	end
+	if type(mod.GetConfig) == "function" then
+		return mod:GetConfig()
+	end
+	return mod.Config or mod.Table or mod
+end
+
+local ESP = loadModule(ESP_RAW_URL)
+local ESPConfig = resolveConfig(ESP)
+
+local WorldVisuals = loadModule(WORLD_RAW_URL)
+local WorldConfig = resolveConfig(WorldVisuals)
+
+local WorldESP = loadModule(WORLD_ESP_RAW_URL)
+local WorldESPConfig = resolveConfig(WorldESP)
+
+local Combat = loadModule(COMBAT_RAW_URL)
+local CombatConfig = resolveConfig(Combat)
+
+local Misc = loadModule(MISC_RAW_URL)
+local MiscConfig = resolveConfig(Misc)
+
+local Library = loadstring(httpGet(UI_RAW_URL))()
+
+local Window = Library:Window({
+	Logo = "rbxassetid://124454910007637",
+	Build = "developer"
 })
 
-local workspaceService = getService["Workspace"]
-local playersService = getService["Players"]
-local runService = getService["RunService"]
-local httpService = getService["HttpService"]
+local KeybindList = Library:KeybindList()
+local Watermark = Library:Watermark("Tigra.Cat", "rbxassetid://124454910007637")
 
-local localPlayer = playersService.LocalPlayer
-local currentCamera = workspaceService.CurrentCamera
-local worldToViewportPoint = currentCamera.WorldToViewportPoint
-
-local newVector3 = Vector3.new
-local newVector2 = Vector2.new
-local newUDim = UDim.new
-local newUDim2 = UDim2.new
-local fromOffset = UDim2.fromOffset
-local numSeq = NumberSequence.new
-local numKey = NumberSequenceKeypoint.new
-
-local stringFormat = string.format
-local tableClear = table.clear
-local mathFloor = math.floor
-local mathClamp = math.clamp
-local mathAbs = math.abs
-local mathTan = math.tan
-local mathRad = math.rad
-local mathHuge = math.huge
-
-local ZERO_VECTOR3 = newVector3(0, 0, 0)
-local cameraPosition = ZERO_VECTOR3
-local cachedFocalLength = 0
-local viewportY = 0
-
-local function updateCameraCache()
-	currentCamera = workspaceService.CurrentCamera or currentCamera
-	if not currentCamera then
-		return
+local function isKeyAssigned(keyObj)
+	if not keyObj then
+		return false
 	end
-	viewportY = currentCamera.ViewportSize.Y
-	local halfFovRad = mathRad(currentCamera.FieldOfView) * 0.5
-	local tanValue = mathTan(halfFovRad)
-	if tanValue > 0 then
-		cachedFocalLength = viewportY / (2 * tanValue)
+	local val = keyObj.Value or keyObj.Key or keyObj.CurrentKey
+	if typeof(val) == "table" then
+		val = val.Key or val.Value or val[1]
 	end
+	if val == "None" or val == "Unknown" or val == Enum.KeyCode.Unknown or val == nil then
+		return false
+	end
+	return true
 end
 
-updateCameraCache()
-
-local function fetchAsset(url, filename)
-	if not isfile(filename) then
-		local response = request({
-			Url = url,
-			Method = "GET"
-		})
-		if response and response.Body then
-			writefile(filename, response.Body)
-		end
-	end
-	return filename
-end
-
-local Fonts = {}
 do
-	local function registerFont(name, weight, style, url, filename)
-		fetchAsset(url, filename)
-		local jsonName = name .. ".font"
-		if isfile(jsonName) then
-			delfile(jsonName)
-		end
-		local info = {
-			name = name,
-			faces = {
-				{
-					name = "Normal",
-					weight = weight,
-					style = style,
-					assetId = getcustomasset(filename)
-				}
-			}
-		}
-		writefile(jsonName, httpService:JSONEncode(info))
-		return Font.new(getcustomasset(jsonName), Enum.FontWeight.Regular, Enum.FontStyle.Normal)
-	end
-
-	Fonts.Tahoma = registerFont(
-		"Tahoma",
-		400,
-		"Normal",
-		"https://github.com/i77lhm/storage/raw/refs/heads/main/fonts/fs-tahoma-8px.ttf",
-		"Tahoma.ttf"
-	)
-	Fonts.SmallestPixel = registerFont(
-		"SmallestPixel",
-		400,
-		"Normal",
-		"https://raw.githubusercontent.com/sametexe001/luas/main/smallest_pixel-7.ttf",
-		"smallest_pixel-7.ttf"
-	)
-end
-
-getgenv().Syrniki = {
-	Directory = "Esp",
-	Cache = {},
-	Holder = nil,
-	Threads = {},
-	Connections = {},
-	PreRender = nil,
-	PostRender = nil,
-	Table = {
-		Enabled = true,
-		Bots = {
-			Enabled = false,
-			Name = "bot"
-		},
-		Boxes = {
-			Enabled = true,
-			["Bounding Box"] = {
-				Enabled = false,
-				IncludeAccessories = false,
-				BoxX = 0,
-				BoxY = 2
-			},
-			["Box Glow"] = {
-				Enabled = true,
-				Top = Color3.fromRGB(255, 255, 255),
-				Bot = Color3.fromRGB(255, 255, 255),
-				Transparency = {0.85, 0.85}
-			},
-			Gradients = {
-				Top = Color3.fromRGB(255, 255, 255),
-				Bot = Color3.fromRGB(255, 255, 255)
-			},
-			Filled = {
-				Enabled = true,
-				Top = Color3.fromRGB(255, 255, 255),
-				Bot = Color3.fromRGB(255, 255, 255),
-				Transparency = {0.85, 0.85}
-			}
-		},
-		Bars = {
-			["Health Bar"] = {
-				Enabled = true,
-				Color = Color3.fromRGB(255, 255, 255)
-			}
-		},
-		Texts = {
-			Name = {
-				Enabled = true,
-				Color = Color3.fromRGB(255, 255, 255)
-			},
-			Distance = {
-				Enabled = true,
-				Color = Color3.fromRGB(200, 200, 200)
-			},
-			Weapon = {
-				Enabled = true,
-				Color = Color3.fromRGB(255, 255, 255)
-			},
-			State = {
-				Enabled = true,
-				Color = Color3.fromRGB(255, 255, 255)
-			}
-		}
-	}
-}
-
-local Syrniki = getgenv().Syrniki
-local Table = Syrniki.Table
-Syrniki.__index = Syrniki
-
-function Syrniki:CreateObjects(name, properties)
-	local instance = Instance.new(name)
-	for property, value in properties or {} do
-		instance[property] = value
-	end
-	return instance
-end
-
-function Syrniki:CreateThreads(name, signal, callback)
-	local connection = signal:Connect(callback)
-	self.Threads[name] = connection
-	return connection
-end
-
-Syrniki.Holder = Syrniki:CreateObjects("ScreenGui", {
-	Name = "\n",
-	Parent = gethui(),
-	ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets,
-	ZIndexBehavior = Enum.ZIndexBehavior.Global,
-	ResetOnSpawn = false,
-	DisplayOrder = -1,
-	IgnoreGuiInset = true
-})
-
-function Syrniki:InitEsp(data)
-	local objects = data.Objects
-
-	objects["TargetHolder"] = self:CreateObjects("Frame", {
-		Parent = self.Holder,
-		Visible = false,
-		BackgroundTransparency = 1,
-		Position = newUDim2(0, 0, 0, 0),
-		Size = newUDim2(0, 0, 0, 0),
-		BorderSizePixel = 0,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	})
-
-	objects["TopHolder"] = self:CreateObjects("Frame", {
-		Parent = objects["TargetHolder"],
-		AutomaticSize = Enum.AutomaticSize.Y,
-		Visible = true,
-		BackgroundTransparency = 1,
-		AnchorPoint = newVector2(0, 1),
-		Position = newUDim2(0, -2, 0, -5),
-		Size = newUDim2(1, 4, 0, 0),
-		BorderSizePixel = 0,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	})
-
-	objects["BottomHolder"] = self:CreateObjects("Frame", {
-		Parent = objects["TargetHolder"],
-		AutomaticSize = Enum.AutomaticSize.Y,
-		Visible = true,
-		BackgroundTransparency = 1,
-		Position = newUDim2(0, -2, 1, 3),
-		Size = newUDim2(1, 4, 0, 0),
-		BorderSizePixel = 0,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	})
-
-	objects["LeftHolder"] = self:CreateObjects("Frame", {
-		Parent = objects["TargetHolder"],
-		AutomaticSize = Enum.AutomaticSize.X,
-		Visible = true,
-		BackgroundTransparency = 1,
-		AnchorPoint = newVector2(1, 0),
-		Position = newUDim2(0, -5, 0, -2),
-		Size = newUDim2(0, 0, 1, 4),
-		BorderSizePixel = 0,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	})
-
-	objects["RightHolder"] = self:CreateObjects("Frame", {
-		Parent = objects["TargetHolder"],
-		AutomaticSize = Enum.AutomaticSize.X,
-		Visible = true,
-		BackgroundTransparency = 1,
-		Position = newUDim2(1, 5, 0, -2),
-		Size = newUDim2(0, 0, 1, 4),
-		BorderSizePixel = 0,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	})
-
-	objects["TopTextHolder"] = self:CreateObjects("Frame", {
-		Parent = objects["TopHolder"],
-		AutomaticSize = Enum.AutomaticSize.Y,
-		Visible = true,
-		BackgroundTransparency = 1,
-		Position = newUDim2(0, 0, 0, 0),
-		Size = newUDim2(1, 0, 0, 0),
-		BorderSizePixel = 0,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	})
-
-	objects["BottomTextHolder"] = self:CreateObjects("Frame", {
-		Parent = objects["BottomHolder"],
-		LayoutOrder = 2,
-		AutomaticSize = Enum.AutomaticSize.Y,
-		Visible = true,
-		BackgroundTransparency = 1,
-		Position = newUDim2(0, 0, 0, 0),
-		Size = newUDim2(1, 0, 0, 0),
-		BorderSizePixel = 0,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	})
-
-	objects["LeftTextHolder"] = self:CreateObjects("Frame", {
-		Parent = objects["LeftHolder"],
-		AutomaticSize = Enum.AutomaticSize.XY,
-		Visible = true,
-		BackgroundTransparency = 1,
-		Position = newUDim2(0, 0, 0, 0),
-		Size = newUDim2(1, 0, 0, 0),
-		BorderSizePixel = 0,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	})
-
-	objects["RightTextHolder"] = self:CreateObjects("Frame", {
-		Parent = objects["RightHolder"],
-		LayoutOrder = 2,
-		AutomaticSize = Enum.AutomaticSize.XY,
-		Visible = true,
-		BackgroundTransparency = 1,
-		Position = newUDim2(0, 0, 0, 0),
-		Size = newUDim2(0, 0, 0, 0),
-		BorderSizePixel = 0,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	})
-
-	objects["LeftBarHolder"] = self:CreateObjects("Frame", {
-		Parent = objects["LeftHolder"],
-		AutomaticSize = Enum.AutomaticSize.X,
-		Visible = false,
-		BackgroundTransparency = 1,
-		Position = newUDim2(0, 0, 0, 0),
-		Size = newUDim2(0, 0, 1, 0),
-		BorderSizePixel = 0,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	})
-
-	objects["BottomBarHolder"] = self:CreateObjects("Frame", {
-		Parent = objects["BottomHolder"],
-		LayoutOrder = 0,
-		AutomaticSize = Enum.AutomaticSize.Y,
-		Visible = false,
-		BackgroundTransparency = 1,
-		Position = newUDim2(0, 0, 0, 0),
-		Size = newUDim2(1, 0, 0, 0),
-		BorderSizePixel = 0,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	})
-
-	self:CreateObjects("UIListLayout", {
-		Parent = objects["TopTextHolder"],
-		VerticalAlignment = Enum.VerticalAlignment.Bottom,
-		HorizontalAlignment = Enum.HorizontalAlignment.Center,
-		Padding = newUDim(0, 1),
-		SortOrder = Enum.SortOrder.LayoutOrder
-	})
-	self:CreateObjects("UIListLayout", {
-		Parent = objects["BottomTextHolder"],
-		HorizontalAlignment = Enum.HorizontalAlignment.Center,
-		Padding = newUDim(0, -1),
-		SortOrder = Enum.SortOrder.LayoutOrder
-	})
-	self:CreateObjects("UIListLayout", {
-		Parent = objects["LeftTextHolder"],
-		HorizontalAlignment = Enum.HorizontalAlignment.Right,
-		Padding = newUDim(0, 0),
-		SortOrder = Enum.SortOrder.LayoutOrder
-	})
-	self:CreateObjects("UIListLayout", {
-		Parent = objects["RightTextHolder"],
-		HorizontalAlignment = Enum.HorizontalAlignment.Left,
-		Padding = newUDim(0, 0),
-		SortOrder = Enum.SortOrder.LayoutOrder
-	})
-	self:CreateObjects("UIListLayout", {
-		Parent = objects["LeftBarHolder"],
-		FillDirection = Enum.FillDirection.Horizontal,
-		HorizontalAlignment = Enum.HorizontalAlignment.Right,
-		Padding = newUDim(0, 5),
-		SortOrder = Enum.SortOrder.LayoutOrder
-	})
-	self:CreateObjects("UIListLayout", {
-		Parent = objects["BottomBarHolder"],
-		HorizontalAlignment = Enum.HorizontalAlignment.Center,
-		Padding = newUDim(0, 5),
-		SortOrder = Enum.SortOrder.LayoutOrder
-	})
-	self:CreateObjects("UIListLayout", {
-		Parent = objects["TopHolder"],
-		VerticalAlignment = Enum.VerticalAlignment.Bottom,
-		Padding = newUDim(0, 1),
-		SortOrder = Enum.SortOrder.LayoutOrder
-	})
-	self:CreateObjects("UIListLayout", {
-		Parent = objects["BottomHolder"],
-		Padding = newUDim(0, 1),
-		SortOrder = Enum.SortOrder.LayoutOrder
-	})
-	self:CreateObjects("UIListLayout", {
-		Parent = objects["LeftHolder"],
-		FillDirection = Enum.FillDirection.Horizontal,
-		HorizontalAlignment = Enum.HorizontalAlignment.Left,
-		Padding = newUDim(0, 1),
-		SortOrder = Enum.SortOrder.LayoutOrder
-	})
-	self:CreateObjects("UIListLayout", {
-		Parent = objects["RightHolder"],
-		FillDirection = Enum.FillDirection.Horizontal,
-		HorizontalAlignment = Enum.HorizontalAlignment.Left,
-		Padding = newUDim(0, 1),
-		SortOrder = Enum.SortOrder.LayoutOrder
-	})
-
-	self:CreateObjects("UIPadding", { Parent = objects["TopTextHolder"], PaddingBottom = newUDim(0, 0) })
-	self:CreateObjects("UIPadding", { Parent = objects["BottomTextHolder"], PaddingTop = newUDim(0, -1) })
-	self:CreateObjects("UIPadding", { Parent = objects["LeftTextHolder"], PaddingTop = newUDim(0, -3) })
-	self:CreateObjects("UIPadding", { Parent = objects["RightTextHolder"], PaddingTop = newUDim(0, -3) })
-	self:CreateObjects("UIPadding", { Parent = objects["LeftBarHolder"], PaddingRight = newUDim(0, 1) })
-	self:CreateObjects("UIPadding", { Parent = objects["BottomBarHolder"], PaddingTop = newUDim(0, 3) })
-	self:CreateObjects("UIPadding", { Parent = objects["LeftHolder"], PaddingRight = newUDim(0, 1) })
-
-	objects["BoxGlow"] = self:CreateObjects("ImageLabel", {
-		Parent = objects["TargetHolder"],
-		Image = "rbxassetid://110204605000367",
-		ScaleType = Enum.ScaleType.Slice,
-		SliceCenter = Rect.new(newVector2(21, 21), newVector2(79, 79)),
-		AutomaticSize = Enum.AutomaticSize.XY,
-		ImageTransparency = 0.65,
-		ResampleMode = Enum.ResamplerMode.Pixelated,
-		Visible = true,
-		BackgroundTransparency = 1,
-		Position = newUDim2(0, -21, 0, -21),
-		Size = newUDim2(0, 0, 0, 0),
-		BorderSizePixel = 0,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	})
-
-	objects["BoxGlowGradient"] = self:CreateObjects("UIGradient", {
-		Parent = objects["BoxGlow"],
-		Rotation = 90,
-		Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 0, 0)),
-			ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 0, 0))
-		}),
-		Transparency = numSeq({ numKey(0, 0), numKey(1, 0) })
-	})
-
-	self:CreateObjects("UIPadding", {
-		Parent = objects["BoxGlow"],
-		PaddingTop = newUDim(0, 21),
-		PaddingBottom = newUDim(0, 20),
-		PaddingLeft = newUDim(0, 21),
-		PaddingRight = newUDim(0, 20)
-	})
-
-	objects["BoxOutlineHolder"] = self:CreateObjects("Frame", {
-		Parent = objects["BoxGlow"],
-		Visible = false,
-		BackgroundTransparency = 1,
-		Position = newUDim2(0, 0, 0, 0),
-		Size = newUDim2(0, 0, 0, 0),
-		BorderSizePixel = 0,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	})
-
-	objects["BoxOutline"] = self:CreateObjects("UIStroke", {
-		Parent = objects["BoxOutlineHolder"],
-		Thickness = 3,
-		LineJoinMode = Enum.LineJoinMode.Miter
-	})
-
-	objects["BoxOutlineGradient"] = self:CreateObjects("UIGradient", {
-		Parent = objects["BoxOutline"],
-		Rotation = 90,
-		Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 0, 0)),
-			ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 0, 0))
-		}),
-		Transparency = numSeq({ numKey(0, 0), numKey(1, 0) })
-	})
-
-	objects["BoxInlineHolder"] = self:CreateObjects("Frame", {
-		Parent = objects["BoxGlow"],
-		Visible = false,
-		BackgroundTransparency = 1,
-		Position = newUDim2(0, -1, 0, -1),
-		Size = newUDim2(0, 0, 0, 0),
-		BorderSizePixel = 0,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	})
-
-	objects["BoxInline"] = self:CreateObjects("UIStroke", {
-		Parent = objects["BoxInlineHolder"],
-		Color = Color3.fromRGB(255, 255, 255),
-		LineJoinMode = Enum.LineJoinMode.Miter
-	})
-
-	objects["BoxInlineGradient"] = self:CreateObjects("UIGradient", {
-		Parent = objects["BoxInline"],
-		Rotation = 90,
-		Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 0, 0)),
-			ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255))
-		}),
-		Transparency = numSeq({ numKey(0, 0), numKey(1, 0) })
-	})
-
-	objects["BoxFill"] = self:CreateObjects("Frame", {
-		Parent = objects["BoxGlow"],
-		Visible = false,
-		BackgroundTransparency = 0,
-		Position = newUDim2(0, 0, 0, 0),
-		Size = newUDim2(0, 0, 0, 0),
-		BorderSizePixel = 0,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	})
-
-	objects["BoxFillGradient"] = self:CreateObjects("UIGradient", {
-		Parent = objects["BoxFill"],
-		Rotation = 90,
-		Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 0, 0)),
-			ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255))
-		}),
-		Transparency = numSeq({ numKey(0, 1), numKey(1, 1) })
-	})
-
-	objects["HealthBarOutline"] = self:CreateObjects("Frame", {
-		Parent = objects["LeftBarHolder"],
-		ZIndex = 5,
-		LayoutOrder = 0,
-		Visible = false,
-		BackgroundTransparency = 0,
-		Position = newUDim2(0, 0, 0, 0),
-		Size = newUDim2(0, 2, 1, 0),
-		BorderSizePixel = 0,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-		ClipsDescendants = false
-	})
-
-	self:CreateObjects("UIStroke", {
-		Parent = objects["HealthBarOutline"],
-		Thickness = 1,
-		LineJoinMode = Enum.LineJoinMode.Miter
-	})
-
-	objects["HealthBar"] = self:CreateObjects("Frame", {
-		Parent = objects["HealthBarOutline"],
-		ZIndex = 6,
-		AnchorPoint = newVector2(0, 1),
-		Position = newUDim2(0, 0, 1, 0),
-		Size = newUDim2(1, 0, 1, 0),
-		BorderSizePixel = 0,
-		BorderColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-		ClipsDescendants = true
-	})
-
-	objects["HealthBarGradient"] = self:CreateObjects("UIGradient", {
-		Parent = objects["HealthBar"],
-		Rotation = 90,
-		Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, Table.Bars["Health Bar"].Color),
-			ColorSequenceKeypoint.new(1, Table.Bars["Health Bar"].Color)
-		}),
-		Transparency = numSeq({ numKey(0, 0), numKey(1, 0) })
-	})
-
-	objects["HealthBarText"] = self:CreateObjects("TextLabel", {
-		Parent = objects["HealthBarOutline"],
-		FontFace = Fonts.SmallestPixel,
-		TextSize = 9,
-		ZIndex = 10,
-		TextColor3 = Color3.fromRGB(255, 255, 255),
-		Text = "",
-		TextXAlignment = Enum.TextXAlignment.Center,
-		TextYAlignment = Enum.TextYAlignment.Center,
-		AnchorPoint = newVector2(0.5, 0.5),
-		Position = newUDim2(0.5, 0, 1, 0),
-		BorderSizePixel = 0,
-		Visible = false,
-		BackgroundTransparency = 1,
-		AutomaticSize = Enum.AutomaticSize.XY,
-		Size = newUDim2(0, 0, 0, 0)
-	})
-
-	self:CreateObjects("UIStroke", {
-		Parent = objects["HealthBarText"],
-		Color = Color3.fromRGB(0, 0, 0),
-		LineJoinMode = Enum.LineJoinMode.Miter
-	})
-
-	objects["TargetName"] = self:CreateObjects("TextLabel", {
-		Parent = objects["TopTextHolder"],
-		FontFace = Fonts.Tahoma,
-		TextSize = 12,
-		LayoutOrder = 2,
-		TextColor3 = Table.Texts.Name.Color,
-		Text = "",
-		TextXAlignment = Enum.TextXAlignment.Center,
-		BorderSizePixel = 0,
-		Visible = false,
-		BackgroundTransparency = 1,
-		ZIndex = 5,
-		AutomaticSize = Enum.AutomaticSize.XY,
-		Size = newUDim2(0, 0, 0, 0)
-	})
-
-	self:CreateObjects("UIStroke", {
-		Parent = objects["TargetName"],
-		Color = Color3.fromRGB(0, 0, 0),
-		LineJoinMode = Enum.LineJoinMode.Miter
-	})
-
-	objects["Distance"] = self:CreateObjects("TextLabel", {
-		Parent = objects["BottomTextHolder"],
-		FontFace = Fonts.SmallestPixel,
-		TextSize = 9,
-		LayoutOrder = 2,
-		TextColor3 = Table.Texts.Distance.Color,
-		Text = "",
-		TextXAlignment = Enum.TextXAlignment.Center,
-		BorderSizePixel = 0,
-		Visible = false,
-		BackgroundTransparency = 1,
-		ZIndex = 5,
-		AutomaticSize = Enum.AutomaticSize.XY,
-		Size = newUDim2(0, 0, 0, 0)
-	})
-
-	self:CreateObjects("UIStroke", {
-		Parent = objects["Distance"],
-		Color = Color3.fromRGB(0, 0, 0),
-		LineJoinMode = Enum.LineJoinMode.Miter
-	})
-
-	objects["WalkFlag"] = self:CreateObjects("TextLabel", {
-		Parent = objects["RightTextHolder"],
-		FontFace = Fonts.SmallestPixel,
-		TextSize = 9,
-		LayoutOrder = 1,
-		TextColor3 = Color3.fromRGB(255, 255, 255),
-		Text = "Walking",
-		TextXAlignment = Enum.TextXAlignment.Left,
-		BorderSizePixel = 0,
-		Visible = false,
-		BackgroundTransparency = 1,
-		ZIndex = 5,
-		AutomaticSize = Enum.AutomaticSize.XY,
-		Size = newUDim2(0, 0, 0, 0)
-	})
-
-	self:CreateObjects("UIStroke", {
-		Parent = objects["WalkFlag"],
-		Color = Color3.fromRGB(0, 0, 0),
-		LineJoinMode = Enum.LineJoinMode.Miter
-	})
-
-	objects["JumpFlag"] = self:CreateObjects("TextLabel", {
-		Parent = objects["RightTextHolder"],
-		FontFace = Fonts.SmallestPixel,
-		TextSize = 9,
-		LayoutOrder = 2,
-		TextColor3 = Color3.fromRGB(255, 255, 255),
-		Text = "Jumping",
-		TextXAlignment = Enum.TextXAlignment.Left,
-		BorderSizePixel = 0,
-		Visible = false,
-		BackgroundTransparency = 1,
-		ZIndex = 5,
-		AutomaticSize = Enum.AutomaticSize.XY,
-		Size = newUDim2(0, 0, 0, 0)
-	})
-
-	self:CreateObjects("UIStroke", {
-		Parent = objects["JumpFlag"],
-		Color = Color3.fromRGB(0, 0, 0),
-		LineJoinMode = Enum.LineJoinMode.Miter
-	})
-
-	objects["StateFlag"] = self:CreateObjects("TextLabel", {
-		Parent = objects["RightTextHolder"],
-		FontFace = Fonts.SmallestPixel,
-		TextSize = 9,
-		LayoutOrder = 3,
-		TextColor3 = Table.Texts.State.Color,
-		Text = "Standing",
-		TextXAlignment = Enum.TextXAlignment.Left,
-		BorderSizePixel = 0,
-		Visible = false,
-		BackgroundTransparency = 1,
-		ZIndex = 5,
-		AutomaticSize = Enum.AutomaticSize.XY,
-		Size = newUDim2(0, 0, 0, 0)
-	})
-
-	self:CreateObjects("UIStroke", {
-		Parent = objects["StateFlag"],
-		Color = Color3.fromRGB(0, 0, 0),
-		LineJoinMode = Enum.LineJoinMode.Miter
-	})
-
-	objects["Weapon"] = self:CreateObjects("TextLabel", {
-		Parent = objects["BottomTextHolder"],
-		FontFace = Fonts.SmallestPixel,
-		TextSize = 9,
-		LayoutOrder = 3,
-		TextColor3 = Table.Texts.Weapon.Color,
-		Text = "none",
-		TextXAlignment = Enum.TextXAlignment.Center,
-		BorderSizePixel = 0,
-		Visible = false,
-		BackgroundTransparency = 1,
-		ZIndex = 5,
-		AutomaticSize = Enum.AutomaticSize.XY,
-		Size = newUDim2(0, 0, 0, 0)
-	})
-
-	self:CreateObjects("UIStroke", {
-		Parent = objects["Weapon"],
-		Color = Color3.fromRGB(0, 0, 0),
-		LineJoinMode = Enum.LineJoinMode.Miter
-	})
-end
-
-local STANDARD_RIG_PARTS = {
-	["Head"] = true,
-	["Torso"] = true,
-	["HumanoidRootPart"] = true,
-	["Left Arm"] = true,
-	["Right Arm"] = true,
-	["Left Leg"] = true,
-	["Right Leg"] = true,
-	["UpperTorso"] = true,
-	["LowerTorso"] = true,
-	["LeftUpperArm"] = true,
-	["LeftLowerArm"] = true,
-	["LeftHand"] = true,
-	["RightUpperArm"] = true,
-	["RightLowerArm"] = true,
-	["RightHand"] = true,
-	["LeftUpperLeg"] = true,
-	["LeftLowerLeg"] = true,
-	["LeftFoot"] = true,
-	["RightUpperLeg"] = true,
-	["RightLowerLeg"] = true,
-	["RightFoot"] = true,
-	["Humanoid"] = true,
-	["Animate"] = true
-}
-
-local function resolveWeapon(target, character)
-	if not character then
-		return "None"
-	end
-
-	local tool = character:FindFirstChildOfClass("Tool")
-	if tool then
-		return tool.Name
-	end
-
-	local weaponAttribute = character:GetAttribute("CurrentWeapon")
-		or character:GetAttribute("EquippedWeapon")
-		or character:GetAttribute("Weapon")
-		or character:GetAttribute("Gun")
-		or (target:IsA("Player") and (target:GetAttribute("CurrentWeapon") or target:GetAttribute("EquippedWeapon") or target:GetAttribute("Weapon") or target:GetAttribute("Gun")))
-
-	if weaponAttribute and type(weaponAttribute) == "string" and weaponAttribute ~= "" then
-		return weaponAttribute
-	end
-
-	local weaponValue = character:FindFirstChild("CurrentWeapon")
-		or character:FindFirstChild("EquippedWeapon")
-		or character:FindFirstChild("Weapon")
-		or character:FindFirstChild("EquippedTool")
-		or (target:IsA("Player") and (target:FindFirstChild("CurrentWeapon") or target:FindFirstChild("EquippedWeapon") or target:FindFirstChild("Weapon")))
-
-	if weaponValue then
-		if weaponValue:IsA("StringValue") and weaponValue.Value ~= "" then
-			return weaponValue.Value
-		elseif weaponValue:IsA("ObjectValue") and weaponValue.Value then
-			return weaponValue.Value.Name
-		end
-	end
-
-	for _, child in character:GetChildren() do
-		if child:IsA("Model") and not child:IsA("Accessory") and not STANDARD_RIG_PARTS[child.Name] then
-			local lowerName = string.lower(child.Name)
-			if not string.find(lowerName, "hitbox") and not string.find(lowerName, "ragdoll") and not string.find(lowerName, "armor") and not string.find(lowerName, "vest") and not string.find(lowerName, "helmet") then
-				if child:FindFirstChild("Handle") or child:FindFirstChild("Muzzle") or child:FindFirstChild("FirePoint") or child:FindFirstChild("Sight") or child:FindFirstChild("Barrel") then
-					return child.Name
-				end
-				if child:FindFirstChildOfClass("BasePart") then
-					return child.Name
-				end
-			end
-		end
-	end
-
-	local rightArm = character:FindFirstChild("RightHand") or character:FindFirstChild("Right Arm")
-	if rightArm then
-		for _, child in rightArm:GetChildren() do
-			if child:IsA("JointInstance") then
-				local connectedPart = (child.Part1 ~= rightArm and child.Part1) or (child.Part0 ~= rightArm and child.Part0)
-				if connectedPart and connectedPart.Parent and connectedPart.Parent ~= character and connectedPart.Parent:IsA("Model") and not connectedPart.Parent:IsA("Accessory") then
-					return connectedPart.Parent.Name
-				end
-			end
-		end
-	end
-
-	return "None"
-end
-
-function Syrniki:CalculateBox(data)
-	local rootPart = data.RootPart
-	if not rootPart or not rootPart.Parent then
-		return nil, nil, nil, nil, false
-	end
-
-	local rootScreen, onScreen = worldToViewportPoint(currentCamera, rootPart.Position)
-	if not onScreen or rootScreen.Z <= 0 then
-		return nil, nil, nil, nil, false
-	end
-
-	local boundingBoxCfg = Table.Boxes["Bounding Box"]
-	if boundingBoxCfg.Enabled then
-		local children = data.Children or data.Character:GetChildren()
-		local includeAccessories = boundingBoxCfg.IncludeAccessories
-		local scrMinX, scrMinY = mathHuge, mathHuge
-		local scrMaxX, scrMaxY = -mathHuge, -mathHuge
-		local hasValidParts = false
-
-		for _, part in children do
-			if part:IsA("BasePart") and part.Transparency ~= 1 and part ~= rootPart then
-				local partParent = part.Parent
-				if not partParent then
-					continue
-				end
-				if not includeAccessories and partParent:IsA("Accessory") then
-					continue
-				end
-
-				local partScreen, partOnScreen = worldToViewportPoint(currentCamera, part.Position)
-				if not partOnScreen or partScreen.Z <= 0 then
-					continue
-				end
-
-				hasValidParts = true
-				local cf = part.CFrame
-				local sz = part.Size
-				local hx, hy, hz = sz.X * 0.5, sz.Y * 0.5, sz.Z * 0.5
-				local depthScale = (cachedFocalLength > 0 and cachedFocalLength / partScreen.Z) or (viewportY / (partScreen.Z * 2))
-
-				local ex = (mathAbs(cf.RightVector.X * hx) + mathAbs(cf.UpVector.X * hy) + mathAbs(cf.LookVector.X * hz)) * depthScale
-				local ey = (mathAbs(cf.RightVector.Y * hx) + mathAbs(cf.UpVector.Y * hy) + mathAbs(cf.LookVector.Y * hz)) * depthScale
-
-				local pMinX, pMaxX = partScreen.X - ex, partScreen.X + ex
-				local pMinY, pMaxY = partScreen.Y - ey, partScreen.Y + ey
-
-				if pMinX < scrMinX then scrMinX = pMinX end
-				if pMaxX > scrMaxX then scrMaxX = pMaxX end
-				if pMinY < scrMinY then scrMinY = pMinY end
-				if pMaxY > scrMaxY then scrMaxY = pMaxY end
-			end
-		end
-
-		if not hasValidParts then
-			local scale = (rootPart.Size.Y * viewportY) / (rootScreen.Z * 2)
-			local w, h = 3 * scale, 4.5 * scale
-			return w, h, rootScreen.X - (w * 0.5), rootScreen.Y - (h * 0.5), true
-		end
-
-		local padX = boundingBoxCfg.BoxX
-		local padY = boundingBoxCfg.BoxY
-		local w = (scrMaxX - scrMinX) + padX
-		local h = (scrMaxY - scrMinY) + padY
-		return w, h, scrMinX - (padX * 0.5), scrMinY - (padY * 0.5), true
-	else
-		local scale = (rootPart.Size.Y * viewportY) / (rootScreen.Z * 2)
-		local w, h = 3 * scale, 4.5 * scale
-		return w, h, rootScreen.X - (w * 0.5), rootScreen.Y - (h * 0.5), true
-	end
-end
-
-function Syrniki:AddTarget(target)
-	local isPlayer = target:IsA("Player")
-	local botName = Table.Bots.Name or "bot"
-	local isBot = not isPlayer and target:IsA("Model") and target.Name == botName
-
-	if not isPlayer and not isBot then
-		return
-	end
-	if self.Cache[target] then
-		return
-	end
-	if isPlayer and target == localPlayer then
-		return
-	end
-
-	local data = {
-		Target = target,
-		IsBot = isBot,
-		IsPlayer = isPlayer,
-		Objects = {},
-		Character = nil,
-		RootPart = nil,
-		Humanoid = nil,
-		Children = nil,
-		Health = 100,
-		MaxHealth = 100,
-		Alive = false,
-		LastW = nil,
-		LastH = nil,
-		LastX = nil,
-		LastY = nil,
-		LastGlowTop = nil,
-		LastGlowBot = nil,
-		LastGlowT1 = nil,
-		LastGlowT2 = nil,
-		LastGradTop = nil,
-		LastGradBot = nil,
-		LastFillTop = nil,
-		LastFillBot = nil,
-		LastFillT1 = nil,
-		LastFillT2 = nil,
-		LastDist = nil,
-		LastDistColor = nil,
-		LastDisplayName = nil,
-		LastNameColor = nil,
-		LastHealthColor = nil,
-		LastHealthFloor = nil,
-		LastRatio = nil,
-		LastWeapon = nil,
-		LastWeaponColor = nil,
-		LastStateColor = nil
+	local Pages = {
+		["Combat"] = Window:Page({Icon = "rbxassetid://91005239799306"}),
+		["Visuals"] = Window:Page({Icon = "rbxassetid://131183993099134"}),
+		["Misc"] = Window:Page({Icon = "rbxassetid://77101019021078"})
 	}
 
-	self:InitEsp(data)
-	self.Cache[target] = data
-end
+	Library:CreateSettingsPage(Window, KeybindList, Watermark)
 
-function Syrniki:RemoveTarget(target)
-	local data = self.Cache[target]
-	if not data then
-		return
-	end
+	do
+		local SubPages = {
+			["Silent Aim"] = Pages["Combat"]:SubPage({Name = "Silent Aim"}),
+			["Weapon"] = Pages["Combat"]:SubPage({Name = "Weapon"})
+		}
 
-	if data.Objects.TargetHolder then
-		data.Objects.TargetHolder:Destroy()
-	end
-	tableClear(data.Objects)
-	self.Cache[target] = nil
-end
+		do
+			local SectionLeft = SubPages["Silent Aim"]:Section({Name = "General"})
+			local SectionRight = SubPages["Silent Aim"]:Section({Name = "Targeting & FOV"})
 
-function Syrniki:Update(target, data)
-	local objects = data.Objects
-	local targetHolder = objects.TargetHolder
-	if not targetHolder then
-		return
-	end
-
-	local character
-	if data.IsPlayer then
-		character = target.Character
-	else
-		character = target
-	end
-
-	if not character or not character.Parent or not character:IsDescendantOf(workspaceService) then
-		if targetHolder.Visible then
-			targetHolder.Visible = false
-		end
-		return
-	end
-
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	local rootPart = character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso") or character:FindFirstChildOfClass("BasePart")
-
-	if not humanoid or not rootPart then
-		if targetHolder.Visible then
-			targetHolder.Visible = false
-		end
-		return
-	end
-
-	local isDead = humanoid.Health <= 0
-		or humanoid:GetState() == Enum.HumanoidStateType.Dead
-		or character:GetAttribute("Dead") == true
-		or character:GetAttribute("IsDead") == true
-		or (data.IsPlayer and (target:GetAttribute("Dead") == true or target:GetAttribute("IsDead") == true))
-
-	if isDead then
-		if targetHolder.Visible then
-			targetHolder.Visible = false
-		end
-		return
-	end
-
-	data.Character = character
-	data.Humanoid = humanoid
-	data.RootPart = rootPart
-	data.Children = character:GetChildren()
-	data.Health = humanoid.Health
-	data.MaxHealth = (humanoid.MaxHealth > 0 and humanoid.MaxHealth) or 100
-
-	local w, h, x, y, onScreen = self:CalculateBox(data)
-	if not onScreen or not w or not h or not x or not y then
-		if targetHolder.Visible then
-			targetHolder.Visible = false
-		end
-		return
-	end
-
-	w = mathFloor(w)
-	h = mathFloor(h)
-	x = mathFloor(x)
-	y = mathFloor(y)
-
-	if not targetHolder.Visible then
-		targetHolder.Visible = true
-	end
-
-	if data.LastX ~= x or data.LastY ~= y then
-		targetHolder.Position = fromOffset(x, y)
-		data.LastX = x
-		data.LastY = y
-	end
-
-	if data.LastW ~= w or data.LastH ~= h then
-		targetHolder.Size = fromOffset(w, h)
-		objects.BoxGlow.Size = fromOffset(w, h)
-		objects.BoxOutlineHolder.Size = fromOffset(w, h)
-		objects.BoxInlineHolder.Size = fromOffset(w + 2, h + 2)
-		objects.BoxFill.Size = fromOffset(w, h)
-		data.LastW = w
-		data.LastH = h
-	end
-
-	local boxesCfg = Table.Boxes
-	local textsCfg = Table.Texts
-
-	if boxesCfg.Enabled then
-		if boxesCfg["Box Glow"].Enabled then
-			if objects.BoxGlow.ImageTransparency ~= 0 then
-				objects.BoxGlow.ImageTransparency = 0
-			end
-			local glowTop = boxesCfg["Box Glow"].Top
-			local glowBot = boxesCfg["Box Glow"].Bot
-			if data.LastGlowTop ~= glowTop or data.LastGlowBot ~= glowBot then
-				objects.BoxGlowGradient.Color = ColorSequence.new({
-					ColorSequenceKeypoint.new(0, glowTop),
-					ColorSequenceKeypoint.new(1, glowBot)
-				})
-				data.LastGlowTop = glowTop
-				data.LastGlowBot = glowBot
-			end
-
-			local t1 = boxesCfg["Box Glow"].Transparency[1]
-			local t2 = boxesCfg["Box Glow"].Transparency[2]
-			if data.LastGlowT1 ~= t1 or data.LastGlowT2 ~= t2 then
-				objects.BoxGlowGradient.Transparency = numSeq({ numKey(0, t1), numKey(1, t2) })
-				data.LastGlowT1 = t1
-				data.LastGlowT2 = t2
-			end
-		else
-			if objects.BoxGlow.ImageTransparency ~= 1 then
-				objects.BoxGlow.ImageTransparency = 1
-			end
-		end
-
-		if not objects.BoxOutlineHolder.Visible then
-			objects.BoxOutlineHolder.Visible = true
-		end
-		if not objects.BoxInlineHolder.Visible then
-			objects.BoxInlineHolder.Visible = true
-		end
-
-		local gradTop = boxesCfg.Gradients.Top
-		local gradBot = boxesCfg.Gradients.Bot
-		if data.LastGradTop ~= gradTop or data.LastGradBot ~= gradBot then
-			objects.BoxInlineGradient.Color = ColorSequence.new({
-				ColorSequenceKeypoint.new(0, gradTop),
-				ColorSequenceKeypoint.new(1, gradBot)
+			local SilentToggle = SectionLeft:Toggle({
+				Name = "Enabled",
+				Flag = "Silent_Enabled",
+				Default = false,
+				Callback = function(val)
+					CombatConfig.Enabled = val
+				end
 			})
-			data.LastGradTop = gradTop
-			data.LastGradBot = gradBot
-		end
 
-		if boxesCfg.Filled.Enabled then
-			if not objects.BoxFill.Visible then
-				objects.BoxFill.Visible = true
-			end
-			local fillTop = boxesCfg.Filled.Top
-			local fillBot = boxesCfg.Filled.Bot
-			local fillT1 = boxesCfg.Filled.Transparency[1]
-			local fillT2 = boxesCfg.Filled.Transparency[2]
-
-			if data.LastFillTop ~= fillTop or data.LastFillBot ~= fillBot then
-				objects.BoxFillGradient.Color = ColorSequence.new({
-					ColorSequenceKeypoint.new(0, fillTop),
-					ColorSequenceKeypoint.new(1, fillBot)
-				})
-				data.LastFillTop = fillTop
-				data.LastFillBot = fillBot
-			end
-
-			if data.LastFillT1 ~= fillT1 or data.LastFillT2 ~= fillT2 then
-				objects.BoxFillGradient.Transparency = numSeq({ numKey(0, fillT1), numKey(1, fillT2) })
-				data.LastFillT1 = fillT1
-				data.LastFillT2 = fillT2
-			end
-		else
-			if objects.BoxFill.Visible then
-				objects.BoxFill.Visible = false
-			end
-		end
-	else
-		if objects.BoxGlow.ImageTransparency ~= 1 then
-			objects.BoxGlow.ImageTransparency = 1
-		end
-		if objects.BoxOutlineHolder.Visible then
-			objects.BoxOutlineHolder.Visible = false
-		end
-		if objects.BoxInlineHolder.Visible then
-			objects.BoxInlineHolder.Visible = false
-		end
-		if objects.BoxFill.Visible then
-			objects.BoxFill.Visible = false
-		end
-	end
-
-	if textsCfg.Name.Enabled then
-		if not objects.TargetName.Visible then
-			objects.TargetName.Visible = true
-		end
-		local displayName = (data.IsBot and "Soldier") or target.DisplayName
-		if data.LastDisplayName ~= displayName then
-			objects.TargetName.Text = displayName
-			data.LastDisplayName = displayName
-		end
-		local nameColor = textsCfg.Name.Color
-		if data.LastNameColor ~= nameColor then
-			objects.TargetName.TextColor3 = nameColor
-			data.LastNameColor = nameColor
-		end
-	else
-		if objects.TargetName.Visible then
-			objects.TargetName.Visible = false
-		end
-	end
-
-	if textsCfg.Distance.Enabled then
-		if not objects.Distance.Visible then
-			objects.Distance.Visible = true
-		end
-		local dist = mathFloor((cameraPosition - rootPart.Position).Magnitude)
-		if data.LastDist ~= dist then
-			objects.Distance.Text = stringFormat("%d st", dist)
-			data.LastDist = dist
-		end
-		local distColor = textsCfg.Distance.Color
-		if data.LastDistColor ~= distColor then
-			objects.Distance.TextColor3 = distColor
-			data.LastDistColor = distColor
-		end
-	else
-		if objects.Distance.Visible then
-			objects.Distance.Visible = false
-		end
-	end
-
-	if textsCfg.State.Enabled then
-		local humanoidState = humanoid:GetState()
-		local isJumping = humanoidState == Enum.HumanoidStateType.Jumping or humanoidState == Enum.HumanoidStateType.Freefall
-		local isWalking = humanoid.MoveDirection.Magnitude > 0.05
-
-		if isJumping then
-			objects.JumpFlag.Visible = true
-			objects.WalkFlag.Visible = false
-			objects.StateFlag.Visible = false
-		elseif isWalking then
-			objects.JumpFlag.Visible = false
-			objects.WalkFlag.Visible = true
-			objects.StateFlag.Visible = false
-		else
-			objects.JumpFlag.Visible = false
-			objects.WalkFlag.Visible = false
-			objects.StateFlag.Visible = true
-		end
-
-		if data.LastStateColor ~= textsCfg.State.Color then
-			objects.StateFlag.TextColor3 = textsCfg.State.Color
-			objects.WalkFlag.TextColor3 = textsCfg.State.Color
-			objects.JumpFlag.TextColor3 = textsCfg.State.Color
-			data.LastStateColor = textsCfg.State.Color
-		end
-	else
-		objects.StateFlag.Visible = false
-		objects.WalkFlag.Visible = false
-		objects.JumpFlag.Visible = false
-	end
-
-	local healthCfg = Table.Bars["Health Bar"]
-	if healthCfg.Enabled then
-		local ratio = mathClamp(data.Health / data.MaxHealth, 0, 1)
-
-		if not objects.LeftBarHolder.Visible then
-			objects.LeftBarHolder.Visible = true
-		end
-		if not objects.HealthBarOutline.Visible then
-			objects.HealthBarOutline.Visible = true
-		end
-
-		if data.LastRatio ~= ratio then
-			objects.HealthBar.Size = newUDim2(1, 0, ratio, 0)
-			data.LastRatio = ratio
-		end
-
-		local barColor = healthCfg.Color
-		if data.LastHealthColor ~= barColor then
-			objects.HealthBarGradient.Color = ColorSequence.new({
-				ColorSequenceKeypoint.new(0, barColor),
-				ColorSequenceKeypoint.new(1, barColor)
+			local SilentKeybind
+			SilentKeybind = SilentToggle:Keybind({
+				Name = "Silent Aim",
+				Flag = "Silent_Keybind",
+				Default = "None",
+				Mode = "Toggle",
+				Callback = function(val)
+					if not isKeyAssigned(SilentKeybind) then
+						return
+					end
+					local state = if typeof(val) == "boolean" then val else not CombatConfig.Enabled
+					if SilentToggle.Set then
+						SilentToggle:Set(state)
+					elseif SilentToggle.SetValue then
+						SilentToggle:SetValue(state)
+					end
+					CombatConfig.Enabled = state
+				end
 			})
-			data.LastHealthColor = barColor
+
+			SectionLeft:Dropdown({
+				Name = "Hit Part",
+				Flag = "Silent_HitPart",
+				Multi = false,
+				Items = {"Head", "HumanoidRootPart", "Torso", "Random"},
+				Default = "Head",
+				Callback = function(val)
+					CombatConfig.HitPart = val
+				end
+			})
+
+			SectionLeft:Slider({
+				Name = "Hit Chance",
+				Flag = "Silent_HitChance",
+				Default = 100,
+				Compact = false,
+				Min = 0,
+				Max = 100,
+				Decimals = 1,
+				Suffix = "%",
+				Callback = function(val)
+					CombatConfig.HitChance = val
+				end
+			})
+
+			SectionLeft:Toggle({
+				Name = "Prediction",
+				Flag = "Silent_Prediction",
+				Default = true,
+				Callback = function(val)
+					CombatConfig.Prediction = val
+				end
+			})
+
+			SectionLeft:Toggle({
+				Name = "Force Hit (Instant)",
+				Flag = "Silent_ForceHit",
+				Default = false,
+				Callback = function(val)
+					CombatConfig.InstantHit = val
+				end
+			})
+
+			local HitscanToggle = SectionLeft:Toggle({
+				Name = "Hitscan / Wallbang",
+				Flag = "Silent_Hitscan",
+				Default = false,
+				Callback = function(val)
+					CombatConfig.Hitscan = val
+				end
+			})
+
+			HitscanToggle:Colorpicker({
+				Flag = "Silent_HitscanColor",
+				Default = Color3.fromRGB(255, 196, 0),
+				Alpha = 0,
+				Callback = function(val)
+					CombatConfig.HitscanVisualColor = val
+				end
+			})
+
+			SectionLeft:Slider({
+				Name = "Hitscan Distance",
+				Flag = "Silent_HitscanDistance",
+				Default = 7,
+				Compact = false,
+				Min = 1,
+				Max = 15,
+				Decimals = 1,
+				Suffix = " st",
+				Callback = function(val)
+					CombatConfig.HitscanDistance = val
+				end
+			})
+
+			local ManipulatorToggle = SectionLeft:Toggle({
+				Name = "Manipulator (Silent Peek)",
+				Flag = "Silent_Manipulator",
+				Default = false,
+				Callback = function(val)
+					CombatConfig.Manipulator = val
+				end
+			})
+
+			ManipulatorToggle:Colorpicker({
+				Flag = "Silent_ManipulatorColor",
+				Default = Color3.fromRGB(0, 255, 170),
+				Alpha = 0,
+				Callback = function(val)
+					CombatConfig.ManipulatorVisualColor = val
+				end
+			})
+
+			SectionLeft:Slider({
+				Name = "Manipulator Distance",
+				Flag = "Silent_ManipulatorDistance",
+				Default = 5,
+				Compact = false,
+				Min = 1,
+				Max = 10,
+				Decimals = 1,
+				Suffix = " st",
+				Callback = function(val)
+					CombatConfig.ManipulatorDistance = val
+				end
+			})
+
+			local SilentFovToggle = SectionRight:Toggle({
+				Name = "Draw Field of View",
+				Flag = "Silent_DrawFOV",
+				Default = false,
+				Callback = function(val)
+					CombatConfig.ShowFOV = val
+				end
+			})
+
+			SilentFovToggle:Colorpicker({
+				Flag = "Silent_FOVColor",
+				Default = Color3.fromRGB(170, 85, 255),
+				Alpha = 0,
+				Callback = function(val)
+					CombatConfig.FOVColor = val
+				end
+			})
+
+			SectionRight:Toggle({
+				Name = "FOV Outline",
+				Flag = "Silent_FOVOutline",
+				Default = true,
+				Callback = function(val)
+					CombatConfig.FOVOutline = val
+				end
+			})
+
+			SectionRight:Slider({
+				Name = "FOV Radius",
+				Flag = "Silent_Radius",
+				Default = 120,
+				Compact = false,
+				Min = 10,
+				Max = 600,
+				Decimals = 1,
+				Suffix = " px",
+				Callback = function(val)
+					CombatConfig.FOV = val
+				end
+			})
+
+			SectionRight:Toggle({
+				Name = "Target Players",
+				Flag = "Silent_TargetPlayers",
+				Default = true,
+				Callback = function(val)
+					CombatConfig.TargetPlayers = val
+				end
+			})
+
+			SectionRight:Toggle({
+				Name = "Target Bots",
+				Flag = "Silent_TargetBots",
+				Default = true,
+				Callback = function(val)
+					CombatConfig.TargetBots = val
+				end
+			})
+
+			SectionRight:Toggle({
+				Name = "Team Check",
+				Flag = "Silent_TeamCheck",
+				Default = false,
+				Callback = function(val)
+					CombatConfig.TeamCheck = val
+				end
+			})
+
+			SectionRight:Toggle({
+				Name = "Dead Check",
+				Flag = "Silent_DeadCheck",
+				Default = true,
+				Callback = function(val)
+					CombatConfig.DeadCheck = val
+				end
+			})
+
+			SectionRight:Toggle({
+				Name = "Distance Check",
+				Flag = "Silent_DistCheck",
+				Default = false,
+				Callback = function(val)
+					CombatConfig.DistCheck = val
+				end
+			})
+
+			SectionRight:Slider({
+				Name = "Max Distance",
+				Flag = "Silent_MaxDist",
+				Default = 1000,
+				Compact = true,
+				Min = 50,
+				Max = 3000,
+				Decimals = 1,
+				Suffix = " st",
+				Callback = function(val)
+					CombatConfig.MaxDistance = val
+				end
+			})
 		end
 
-		if ratio < 1 then
-			if not objects.HealthBarText.Visible then
-				objects.HealthBarText.Visible = true
-			end
-			local flooredHealth = mathFloor(data.Health)
-			if data.LastHealthFloor ~= flooredHealth then
-				objects.HealthBarText.Text = stringFormat("%d", flooredHealth)
-				objects.HealthBarText.Position = newUDim2(0.5, 0, 1 - ratio, 0)
-				data.LastHealthFloor = flooredHealth
-			end
-		else
-			if objects.HealthBarText.Visible then
-				objects.HealthBarText.Visible = false
-			end
-		end
-	else
-		if objects.HealthBarOutline.Visible then
-			objects.HealthBarOutline.Visible = false
-		end
-		if objects.HealthBarText.Visible then
-			objects.HealthBarText.Visible = false
-		end
-		if objects.LeftBarHolder.Visible then
-			objects.LeftBarHolder.Visible = false
+		do
+			local SectionRecoil = SubPages["Weapon"]:Section({Name = "Recoil & Handling"})
+			local SectionMods = SubPages["Weapon"]:Section({Name = "Modifications"})
+
+			SectionRecoil:Slider({
+				Name = "Recoil Percentage",
+				Flag = "Wep_Recoil",
+				Default = 100,
+				Compact = false,
+				Min = 0,
+				Max = 100,
+				Decimals = 1,
+				Suffix = "%",
+				Callback = function(val)
+					CombatConfig.Recoil = val
+				end
+			})
+
+			SectionRecoil:Slider({
+				Name = "Spread Percentage",
+				Flag = "Wep_Spread",
+				Default = 100,
+				Compact = false,
+				Min = 0,
+				Max = 100,
+				Decimals = 1,
+				Suffix = "%",
+				Callback = function(val)
+					CombatConfig.Spread = val
+				end
+			})
+
+			SectionRecoil:Slider({
+				Name = "Firerate Multiplier",
+				Flag = "Wep_Firerate",
+				Default = 1,
+				Compact = false,
+				Min = 1,
+				Max = 5,
+				Decimals = 1,
+				Suffix = "x",
+				Callback = function(val)
+					CombatConfig.Firerate = val
+				end
+			})
+
+			SectionMods:Toggle({
+				Name = "No Pullout Delay",
+				Flag = "Wep_InstantEquip",
+				Default = false,
+				Callback = function(val)
+					CombatConfig.InstantEquip = val
+				end
+			})
+
+			SectionMods:Toggle({
+				Name = "Fast Bow",
+				Flag = "Wep_FastBow",
+				Default = false,
+				Callback = function(val)
+					CombatConfig.FastBow = val
+				end
+			})
+
+			SectionMods:Toggle({
+				Name = "Instant Eoka",
+				Flag = "Wep_InstantEoka",
+				Default = false,
+				Callback = function(val)
+					CombatConfig.InstantEoka = val
+				end
+			})
+
+			SectionMods:Toggle({
+				Name = "Shoot While Sprinting",
+				Flag = "Wep_ShootSprinting",
+				Default = false,
+				Callback = function(val)
+					CombatConfig.ShootSprinting = val
+				end
+			})
+
+			SectionMods:Toggle({
+				Name = "Reload While Sprinting",
+				Flag = "Wep_ReloadSprinting",
+				Default = false,
+				Callback = function(val)
+					CombatConfig.ReloadSprinting = val
+				end
+			})
+
+			SectionMods:Toggle({
+				Name = "Instant Reload",
+				Flag = "Wep_InstantReload",
+				Default = false,
+				Callback = function(val)
+					CombatConfig.InstantReload = val
+				end
+			})
+
+			SectionMods:Toggle({
+				Name = "Auto Reload",
+				Flag = "Wep_AutoReload",
+				Default = false,
+				Callback = function(val)
+					CombatConfig.AutoReload = val
+				end
+			})
 		end
 	end
 
-	local weaponCfg = textsCfg.Weapon
-	if weaponCfg.Enabled then
-		if not objects.Weapon.Visible then
-			objects.Weapon.Visible = true
+	do
+		local SubPages = {
+			["Players"] = Pages["Visuals"]:SubPage({Name = "Players"}),
+			["Entities"] = Pages["Visuals"]:SubPage({Name = "Entities"}),
+			["Environment"] = Pages["Visuals"]:SubPage({Name = "Environment"})
+		}
+
+		do
+			local SectionLeft = SubPages["Players"]:Section({Name = "Overlay & Boxes"})
+			local SectionRight = SubPages["Players"]:Section({Name = "Rendering & Info"})
+
+			local EspToggle = SectionLeft:Toggle({
+				Name = "Master Enabled",
+				Flag = "ESP_Master_Enabled",
+				Default = ESPConfig.Enabled or false,
+				Callback = function(val)
+					ESPConfig.Enabled = val
+				end
+			})
+
+			local EspKeybind
+			EspKeybind = EspToggle:Keybind({
+				Name = "Player ESP",
+				Flag = "ESP_Master_Keybind",
+				Default = "None",
+				Mode = "Toggle",
+				Callback = function(val)
+					if not isKeyAssigned(EspKeybind) then
+						return
+					end
+					local state = if typeof(val) == "boolean" then val else not ESPConfig.Enabled
+					if EspToggle.Set then
+						EspToggle:Set(state)
+					elseif EspToggle.SetValue then
+						EspToggle:SetValue(state)
+					end
+					ESPConfig.Enabled = state
+				end
+			})
+
+			SectionLeft:Toggle({
+				Name = "Show Bots",
+				Flag = "ESP_ShowBots",
+				Default = ESPConfig.Bots and ESPConfig.Bots.Enabled or false,
+				Callback = function(val)
+					if ESPConfig.Bots then
+						ESPConfig.Bots.Enabled = val
+					end
+				end
+			})
+
+			local BoxToggle = SectionLeft:Toggle({
+				Name = "Bounding Box",
+				Flag = "ESP_Box",
+				Default = ESPConfig.Boxes and ESPConfig.Boxes.Enabled or false,
+				Callback = function(val)
+					if ESPConfig.Boxes then
+						ESPConfig.Boxes.Enabled = val
+					end
+				end
+			})
+
+			BoxToggle:Colorpicker({
+				Flag = "ESP_BoxColor",
+				Default = (ESPConfig.Boxes and ESPConfig.Boxes.Gradients and ESPConfig.Boxes.Gradients.Top) or Color3.fromRGB(255, 255, 255),
+				Alpha = 0,
+				Callback = function(val)
+					if ESPConfig.Boxes and ESPConfig.Boxes.Gradients then
+						ESPConfig.Boxes.Gradients.Top = val
+						ESPConfig.Boxes.Gradients.Bot = val
+					end
+				end
+			})
+
+			SectionLeft:Toggle({
+				Name = "Dynamic Bounding Box",
+				Flag = "ESP_DynamicBox",
+				Default = (ESPConfig.Boxes and ESPConfig.Boxes["Bounding Box"] and ESPConfig.Boxes["Bounding Box"].Enabled) or false,
+				Callback = function(val)
+					if ESPConfig.Boxes and ESPConfig.Boxes["Bounding Box"] then
+						ESPConfig.Boxes["Bounding Box"].Enabled = val
+					end
+				end
+			})
+
+			SectionLeft:Toggle({
+				Name = "Include Accessories",
+				Flag = "ESP_IncludeAccs",
+				Default = (ESPConfig.Boxes and ESPConfig.Boxes["Bounding Box"] and ESPConfig.Boxes["Bounding Box"].IncludeAccessories) or false,
+				Callback = function(val)
+					if ESPConfig.Boxes and ESPConfig.Boxes["Bounding Box"] then
+						ESPConfig.Boxes["Bounding Box"].IncludeAccessories = val
+					end
+				end
+			})
+
+			local BoxGlowToggle = SectionLeft:Toggle({
+				Name = "Box Glow",
+				Flag = "ESP_BoxGlow",
+				Default = (ESPConfig.Boxes and ESPConfig.Boxes["Box Glow"] and ESPConfig.Boxes["Box Glow"].Enabled) or false,
+				Callback = function(val)
+					if ESPConfig.Boxes and ESPConfig.Boxes["Box Glow"] then
+						ESPConfig.Boxes["Box Glow"].Enabled = val
+					end
+				end
+			})
+
+			BoxGlowToggle:Colorpicker({
+				Flag = "ESP_BoxGlowColor",
+				Default = (ESPConfig.Boxes and ESPConfig.Boxes["Box Glow"] and ESPConfig.Boxes["Box Glow"].Top) or Color3.fromRGB(255, 255, 255),
+				Alpha = (ESPConfig.Boxes and ESPConfig.Boxes["Box Glow"] and ESPConfig.Boxes["Box Glow"].Transparency and ESPConfig.Boxes["Box Glow"].Transparency[1]) or 0.85,
+				Callback = function(val)
+					if ESPConfig.Boxes and ESPConfig.Boxes["Box Glow"] then
+						ESPConfig.Boxes["Box Glow"].Top = val
+						ESPConfig.Boxes["Box Glow"].Bot = val
+					end
+				end
+			})
+
+			local BoxFillToggle = SectionLeft:Toggle({
+				Name = "Box Fill",
+				Flag = "ESP_BoxFill",
+				Default = (ESPConfig.Boxes and ESPConfig.Boxes.Filled and ESPConfig.Boxes.Filled.Enabled) or false,
+				Callback = function(val)
+					if ESPConfig.Boxes and ESPConfig.Boxes.Filled then
+						ESPConfig.Boxes.Filled.Enabled = val
+					end
+				end
+			})
+
+			BoxFillToggle:Colorpicker({
+				Flag = "ESP_BoxFillColor",
+				Default = (ESPConfig.Boxes and ESPConfig.Boxes.Filled and ESPConfig.Boxes.Filled.Top) or Color3.fromRGB(255, 255, 255),
+				Alpha = (ESPConfig.Boxes and ESPConfig.Boxes.Filled and ESPConfig.Boxes.Filled.Transparency and ESPConfig.Boxes.Filled.Transparency[1]) or 0.85,
+				Callback = function(val)
+					if ESPConfig.Boxes and ESPConfig.Boxes.Filled then
+						ESPConfig.Boxes.Filled.Top = val
+						ESPConfig.Boxes.Filled.Bot = val
+					end
+				end
+			})
+
+			local HealthToggle = SectionRight:Toggle({
+				Name = "Healthbar",
+				Flag = "ESP_Health",
+				Default = (ESPConfig.Bars and ESPConfig.Bars["Health Bar"] and ESPConfig.Bars["Health Bar"].Enabled) or false,
+				Callback = function(val)
+					if ESPConfig.Bars and ESPConfig.Bars["Health Bar"] then
+						ESPConfig.Bars["Health Bar"].Enabled = val
+					end
+				end
+			})
+
+			HealthToggle:Colorpicker({
+				Flag = "ESP_HealthColor",
+				Default = (ESPConfig.Bars and ESPConfig.Bars["Health Bar"] and ESPConfig.Bars["Health Bar"].Color) or Color3.fromRGB(255, 255, 255),
+				Alpha = 0,
+				Callback = function(val)
+					if ESPConfig.Bars and ESPConfig.Bars["Health Bar"] then
+						ESPConfig.Bars["Health Bar"].Color = val
+					end
+				end
+			})
+
+			local NameToggle = SectionRight:Toggle({
+				Name = "Show Name",
+				Flag = "ESP_Name",
+				Default = (ESPConfig.Texts and ESPConfig.Texts.Name and ESPConfig.Texts.Name.Enabled) or false,
+				Callback = function(val)
+					if ESPConfig.Texts and ESPConfig.Texts.Name then
+						ESPConfig.Texts.Name.Enabled = val
+					end
+				end
+			})
+
+			NameToggle:Colorpicker({
+				Flag = "ESP_NameColor",
+				Default = (ESPConfig.Texts and ESPConfig.Texts.Name and ESPConfig.Texts.Name.Color) or Color3.fromRGB(255, 255, 255),
+				Alpha = 0,
+				Callback = function(val)
+					if ESPConfig.Texts and ESPConfig.Texts.Name then
+						ESPConfig.Texts.Name.Color = val
+					end
+				end
+			})
+
+			local DistToggle = SectionRight:Toggle({
+				Name = "Show Distance",
+				Flag = "ESP_Distance",
+				Default = (ESPConfig.Texts and ESPConfig.Texts.Distance and ESPConfig.Texts.Distance.Enabled) or false,
+				Callback = function(val)
+					if ESPConfig.Texts and ESPConfig.Texts.Distance then
+						ESPConfig.Texts.Distance.Enabled = val
+					end
+				end
+			})
+
+			DistToggle:Colorpicker({
+				Flag = "ESP_DistColor",
+				Default = (ESPConfig.Texts and ESPConfig.Texts.Distance and ESPConfig.Texts.Distance.Color) or Color3.fromRGB(200, 200, 200),
+				Alpha = 0,
+				Callback = function(val)
+					if ESPConfig.Texts and ESPConfig.Texts.Distance then
+						ESPConfig.Texts.Distance.Color = val
+					end
+				end
+			})
+
+			local WeaponToggle = SectionRight:Toggle({
+				Name = "Show Weapon",
+				Flag = "ESP_Weapon",
+				Default = (ESPConfig.Texts and ESPConfig.Texts.Weapon and ESPConfig.Texts.Weapon.Enabled) or false,
+				Callback = function(val)
+					if ESPConfig.Texts and ESPConfig.Texts.Weapon then
+						ESPConfig.Texts.Weapon.Enabled = val
+					end
+				end
+			})
+
+			WeaponToggle:Colorpicker({
+				Flag = "ESP_WeaponColor",
+				Default = (ESPConfig.Texts and ESPConfig.Texts.Weapon and ESPConfig.Texts.Weapon.Color) or Color3.fromRGB(255, 255, 255),
+				Alpha = 0,
+				Callback = function(val)
+					if ESPConfig.Texts and ESPConfig.Texts.Weapon then
+						ESPConfig.Texts.Weapon.Color = val
+					end
+				end
+			})
+
+			local StateToggle = SectionRight:Toggle({
+				Name = "State Flags",
+				Flag = "ESP_Flags",
+				Default = (ESPConfig.Texts and ESPConfig.Texts.State and ESPConfig.Texts.State.Enabled) or false,
+				Callback = function(val)
+					if ESPConfig.Texts and ESPConfig.Texts.State then
+						ESPConfig.Texts.State.Enabled = val
+					end
+				end
+			})
+
+			StateToggle:Colorpicker({
+				Flag = "ESP_StateColor",
+				Default = (ESPConfig.Texts and ESPConfig.Texts.State and ESPConfig.Texts.State.Color) or Color3.fromRGB(255, 255, 255),
+				Alpha = 0,
+				Callback = function(val)
+					if ESPConfig.Texts and ESPConfig.Texts.State then
+						ESPConfig.Texts.State.Color = val
+					end
+				end
+			})
 		end
 
-		local currentWeapon = resolveWeapon(target, character)
-		if data.LastWeapon ~= currentWeapon then
-			objects.Weapon.Text = currentWeapon
-			data.LastWeapon = currentWeapon
+		do
+			local SectionLeft = SubPages["Entities"]:Section({Name = "Configuration"})
+			local SectionRight = SubPages["Entities"]:Section({Name = "Entity Filters"})
+
+			local WorldEspToggle = SectionLeft:Toggle({
+				Name = "Master Enabled",
+				Flag = "WorldESP_Master_Enabled",
+				Default = false,
+				Callback = function(val)
+					WorldESPConfig.Enabled = val
+				end
+			})
+
+			local WorldEspKeybind
+			WorldEspKeybind = WorldEspToggle:Keybind({
+				Name = "Entity ESP",
+				Flag = "WorldESP_Master_Keybind",
+				Default = "None",
+				Mode = "Toggle",
+				Callback = function(val)
+					if not isKeyAssigned(WorldEspKeybind) then
+						return
+					end
+					local state = if typeof(val) == "boolean" then val else not WorldESPConfig.Enabled
+					if WorldEspToggle.Set then
+						WorldEspToggle:Set(state)
+					elseif WorldEspToggle.SetValue then
+						WorldEspToggle:SetValue(state)
+					end
+					WorldESPConfig.Enabled = state
+				end
+			})
+
+			SectionLeft:Toggle({
+				Name = "Bounding Box",
+				Flag = "WorldESP_Boxes",
+				Default = false,
+				Callback = function(val)
+					WorldESPConfig.Boxes = val
+				end
+			})
+
+			SectionLeft:Toggle({
+				Name = "Show Name",
+				Flag = "WorldESP_Names",
+				Default = true,
+				Callback = function(val)
+					WorldESPConfig.Names = val
+				end
+			})
+
+			SectionLeft:Toggle({
+				Name = "Show Distance",
+				Flag = "WorldESP_Distance",
+				Default = true,
+				Callback = function(val)
+					WorldESPConfig.Distance = val
+				end
+			})
+
+			SectionLeft:Slider({
+				Name = "Render Distance",
+				Flag = "WorldESP_MaxDist",
+				Default = 1000,
+				Compact = true,
+				Min = 50,
+				Max = 7500,
+				Decimals = 1,
+				Suffix = " st",
+				Callback = function(val)
+					WorldESPConfig.MaxDistance = val
+				end
+			})
+
+			local function bindEntityFilter(name, flag, defaultColor)
+				if not WorldESPConfig.Targets or not WorldESPConfig.Targets[name] then
+					return
+				end
+				local filterToggle = SectionRight:Toggle({
+					Name = name,
+					Flag = flag,
+					Default = false,
+					Callback = function(val)
+						WorldESPConfig.Targets[name].Enabled = val
+					end
+				})
+
+				filterToggle:Colorpicker({
+					Flag = flag .. "Color",
+					Default = defaultColor,
+					Alpha = 0,
+					Callback = function(val)
+						WorldESPConfig.Targets[name].Color = val
+					end
+				})
+			end
+
+			bindEntityFilter("ClothPlant", "WorldESP_Hemp", Color3.fromRGB(184, 184, 184))
+			bindEntityFilter("Backpack", "WorldESP_BodyBag", Color3.fromRGB(255, 101, 40))
+			bindEntityFilter("Brimstone Ore", "WorldESP_Brimstone", Color3.fromRGB(116, 103, 45))
+			bindEntityFilter("Iron Ore", "WorldESP_Iron", Color3.fromRGB(168, 105, 21))
+			bindEntityFilter("Stone Ore", "WorldESP_Stone", Color3.fromRGB(104, 104, 104))
 		end
 
-		local weaponColor = weaponCfg.Color
-		if data.LastWeaponColor ~= weaponColor then
-			objects.Weapon.TextColor3 = weaponColor
-			data.LastWeaponColor = weaponColor
+		do
+			local SectionLeft = SubPages["Environment"]:Section({Name = "Lighting & Atmosphere"})
+			local SectionRight = SubPages["Environment"]:Section({Name = "Skybox & Post-FX"})
+
+			local function triggerWorldUpdate()
+				if WorldVisuals and type(WorldVisuals.Update) == "function" then
+					WorldVisuals:Update()
+				end
+			end
+
+			SectionLeft:Toggle({
+				Name = "Master Enabled",
+				Flag = "World_Master_Enabled",
+				Default = false,
+				Callback = function(val)
+					WorldConfig.Enabled = val
+					triggerWorldUpdate()
+				end
+			})
+
+			SectionLeft:Toggle({
+				Name = "Time Changer",
+				Flag = "World_TimeChangerToggle",
+				Default = false,
+				Callback = function(val)
+					WorldConfig.TimeChanger = val
+					triggerWorldUpdate()
+				end
+			})
+
+			SectionLeft:Slider({
+				Name = "Clock Time",
+				Flag = "World_ClockTime",
+				Default = tonumber(WorldConfig.ClockTime) or 14,
+				Compact = false,
+				Min = 0,
+				Max = 24,
+				Decimals = 1,
+				Suffix = "h",
+				Callback = function(val)
+					WorldConfig.ClockTime = val
+					triggerWorldUpdate()
+				end
+			})
+
+			SectionLeft:Toggle({
+				Name = "Brightness",
+				Flag = "World_BrightnessToggle",
+				Default = false,
+				Callback = function(val)
+					WorldConfig.Brightness = val
+					triggerWorldUpdate()
+				end
+			})
+
+			SectionLeft:Slider({
+				Name = "Brightness Level",
+				Flag = "World_BrightnessValue",
+				Default = tonumber(WorldConfig.BrightnessValue) or 2,
+				Compact = false,
+				Min = 0,
+				Max = 10,
+				Decimals = 1,
+				Suffix = "",
+				Callback = function(val)
+					WorldConfig.BrightnessValue = val
+					triggerWorldUpdate()
+				end
+			})
+
+			SectionLeft:Toggle({
+				Name = "Exposure",
+				Flag = "World_ExposureToggle",
+				Default = false,
+				Callback = function(val)
+					WorldConfig.Exposure = val
+					triggerWorldUpdate()
+				end
+			})
+
+			SectionLeft:Slider({
+				Name = "Exposure Level",
+				Flag = "World_ExposureValue",
+				Default = tonumber(WorldConfig.ExposureValue) or 0,
+				Compact = false,
+				Min = -3,
+				Max = 3,
+				Decimals = 1,
+				Suffix = "",
+				Callback = function(val)
+					WorldConfig.ExposureValue = val
+					triggerWorldUpdate()
+				end
+			})
+
+			local AmbientToggle = SectionLeft:Toggle({
+				Name = "Ambient",
+				Flag = "World_AmbientToggle",
+				Default = false,
+				Callback = function(val)
+					WorldConfig.Ambient = val
+					triggerWorldUpdate()
+				end
+			})
+
+			AmbientToggle:Colorpicker({
+				Flag = "World_AmbientColor",
+				Default = WorldConfig.AmbientColor or Color3.fromRGB(130, 130, 130),
+				Alpha = 0,
+				Callback = function(val)
+					WorldConfig.AmbientColor = val
+					triggerWorldUpdate()
+				end
+			})
+
+			local OutdoorAmbientToggle = SectionLeft:Toggle({
+				Name = "Outdoor Ambient",
+				Flag = "World_OutdoorAmbientToggle",
+				Default = false,
+				Callback = function(val)
+					WorldConfig.OutdoorAmbient = val
+					triggerWorldUpdate()
+				end
+			})
+
+			OutdoorAmbientToggle:Colorpicker({
+				Flag = "World_OutdoorAmbientColor",
+				Default = WorldConfig.OutdoorAmbientColor or Color3.fromRGB(130, 130, 130),
+				Alpha = 0,
+				Callback = function(val)
+					WorldConfig.OutdoorAmbientColor = val
+					triggerWorldUpdate()
+				end
+			})
+
+			local AtmosphereToggle = SectionLeft:Toggle({
+				Name = "Atmosphere",
+				Flag = "World_AtmosphereToggle",
+				Default = false,
+				Callback = function(val)
+					WorldConfig.Atmosphere = val
+					triggerWorldUpdate()
+				end
+			})
+
+			AtmosphereToggle:Colorpicker({
+				Flag = "World_AtmosphereColor",
+				Default = WorldConfig.AtmosphereColor or Color3.fromRGB(199, 199, 199),
+				Alpha = 0,
+				Callback = function(val)
+					WorldConfig.AtmosphereColor = val
+					triggerWorldUpdate()
+				end
+			})
+
+			SectionLeft:Slider({
+				Name = "Atmosphere Density",
+				Flag = "World_AtmosphereDensity",
+				Default = tonumber(WorldConfig.AtmosphereDensity) or 0.3,
+				Compact = false,
+				Min = 0,
+				Max = 1,
+				Decimals = 2,
+				Suffix = "",
+				Callback = function(val)
+					WorldConfig.AtmosphereDensity = val
+					triggerWorldUpdate()
+				end
+			})
+
+			SectionLeft:Slider({
+				Name = "Atmosphere Haze",
+				Flag = "World_AtmosphereHaze",
+				Default = tonumber(WorldConfig.AtmosphereHaze) or 0,
+				Compact = false,
+				Min = 0,
+				Max = 10,
+				Decimals = 1,
+				Suffix = "",
+				Callback = function(val)
+					WorldConfig.AtmosphereHaze = val
+					triggerWorldUpdate()
+				end
+			})
+
+			SectionRight:Slider({
+				Name = "Camera FOV",
+				Flag = "World_CameraFOV",
+				Default = 70,
+				Compact = false,
+				Min = 50,
+				Max = 120,
+				Decimals = 1,
+				Suffix = "°",
+				Callback = function(val)
+					local camera = workspaceService.CurrentCamera
+					if camera then
+						camera.FieldOfView = val
+					end
+				end
+			})
+
+			SectionRight:Toggle({
+				Name = "Sky Changer",
+				Flag = "World_SkyChangerToggle",
+				Default = false,
+				Callback = function(val)
+					WorldConfig.SkyChanger = val
+					triggerWorldUpdate()
+				end
+			})
+
+			SectionRight:Dropdown({
+				Name = "Skybox",
+				Flag = "World_SelectedSky",
+				Multi = false,
+				Items = {"default", "stormy", "blue space", "pink", "black storm", "realistic"},
+				Default = WorldConfig.SelectedSky or "default",
+				Callback = function(val)
+					WorldConfig.SelectedSky = val
+					triggerWorldUpdate()
+				end
+			})
+
+			SectionRight:Toggle({
+				Name = "No Clouds",
+				Flag = "World_NoClouds",
+				Default = false,
+				Callback = function(val)
+					WorldConfig.NoClouds = val
+					triggerWorldUpdate()
+				end
+			})
+
+			SectionRight:Toggle({
+				Name = "No Sun Rays",
+				Flag = "World_NoSunRays",
+				Default = false,
+				Callback = function(val)
+					WorldConfig.NoSunRays = val
+					triggerWorldUpdate()
+				end
+			})
+
+			local FogToggle = SectionRight:Toggle({
+				Name = "Fog Changer",
+				Flag = "World_FogToggle",
+				Default = false,
+				Callback = function(val)
+					WorldConfig.Fog = val
+					triggerWorldUpdate()
+				end
+			})
+
+			FogToggle:Colorpicker({
+				Flag = "World_FogColor",
+				Default = WorldConfig.FogColor or Color3.fromRGB(192, 192, 192),
+				Alpha = 0,
+				Callback = function(val)
+					WorldConfig.FogColor = val
+					triggerWorldUpdate()
+				end
+			})
+
+			SectionRight:Slider({
+				Name = "Fog Start",
+				Flag = "World_FogStart",
+				Default = tonumber(WorldConfig.FogStart) or 0,
+				Compact = false,
+				Min = 0,
+				Max = 5000,
+				Decimals = 1,
+				Suffix = " st",
+				Callback = function(val)
+					WorldConfig.FogStart = val
+					triggerWorldUpdate()
+				end
+			})
+
+			SectionRight:Slider({
+				Name = "Fog End",
+				Flag = "World_FogEnd",
+				Default = tonumber(WorldConfig.FogEnd) or 1000,
+				Compact = false,
+				Min = 0,
+				Max = 10000,
+				Decimals = 1,
+				Suffix = " st",
+				Callback = function(val)
+					WorldConfig.FogEnd = val
+					triggerWorldUpdate()
+				end
+			})
+
+			local CcToggle = SectionRight:Toggle({
+				Name = "Color Correction",
+				Flag = "World_ColorCorrectionToggle",
+				Default = false,
+				Callback = function(val)
+					WorldConfig.ColorCorrection = val
+					triggerWorldUpdate()
+				end
+			})
+
+			CcToggle:Colorpicker({
+				Flag = "World_CCTint",
+				Default = WorldConfig.Tint or Color3.fromRGB(255, 255, 255),
+				Alpha = 0,
+				Callback = function(val)
+					WorldConfig.Tint = val
+					triggerWorldUpdate()
+				end
+			})
+
+			SectionRight:Slider({
+				Name = "Saturation",
+				Flag = "World_Saturation",
+				Default = tonumber(WorldConfig.Saturation) or 0,
+				Compact = false,
+				Min = -2,
+				Max = 2,
+				Decimals = 1,
+				Suffix = "",
+				Callback = function(val)
+					WorldConfig.Saturation = val
+					triggerWorldUpdate()
+				end
+			})
+
+			SectionRight:Slider({
+				Name = "Contrast",
+				Flag = "World_Contrast",
+				Default = tonumber(WorldConfig.Contrast) or 0,
+				Compact = false,
+				Min = -2,
+				Max = 2,
+				Decimals = 1,
+				Suffix = "",
+				Callback = function(val)
+					WorldConfig.Contrast = val
+					triggerWorldUpdate()
+				end
+			})
 		end
-	else
-		if objects.Weapon.Visible then
-			objects.Weapon.Visible = false
+	end
+
+	do
+		local SubPages = {
+			["Local Player"] = Pages["Misc"]:SubPage({Name = "Local Player"})
+		}
+
+		do
+			local SectionMovement = SubPages["Local Player"]:Section({Name = "Movement"})
+			local SectionExploits = SubPages["Local Player"]:Section({Name = "Character & Exploits"})
+
+			local SpeedToggle = SectionMovement:Toggle({
+				Name = "Speed Boost",
+				Flag = "Move_SpeedToggle",
+				Default = false,
+				Callback = function(val)
+					MiscConfig.SpeedEnabled = val
+				end
+			})
+
+			local SpeedKeybind
+			SpeedKeybind = SpeedToggle:Keybind({
+				Name = "Speed Key",
+				Flag = "Move_SpeedKey",
+				Default = "None",
+				Mode = "Hold",
+				Callback = function(val)
+					if not isKeyAssigned(SpeedKeybind) then
+						return
+					end
+					local state = if typeof(val) == "boolean" then val else not MiscConfig.SpeedEnabled
+					if SpeedToggle.Set then
+						SpeedToggle:Set(state)
+					elseif SpeedToggle.SetValue then
+						SpeedToggle:SetValue(state)
+					end
+					MiscConfig.SpeedEnabled = state
+				end
+			})
+
+			SectionMovement:Slider({
+				Name = "Speed Value",
+				Flag = "Move_SpeedValue",
+				Default = 28,
+				Compact = false,
+				Min = 16,
+				Max = 80,
+				Decimals = 1,
+				Suffix = " ws",
+				Callback = function(val)
+					MiscConfig.SpeedValue = val
+				end
+			})
+
+			local FlyToggle = SectionMovement:Toggle({
+				Name = "Fly",
+				Flag = "Move_FlyToggle",
+				Default = false,
+				Callback = function(val)
+					MiscConfig.FlyEnabled = val
+				end
+			})
+
+			local FlyKeybind
+			FlyKeybind = FlyToggle:Keybind({
+				Name = "Fly Key",
+				Flag = "Move_FlyKey",
+				Default = "None",
+				Mode = "Toggle",
+				Callback = function(val)
+					if not isKeyAssigned(FlyKeybind) then
+						return
+					end
+					local state = if typeof(val) == "boolean" then val else not MiscConfig.FlyEnabled
+					if FlyToggle.Set then
+						FlyToggle:Set(state)
+					elseif FlyToggle.SetValue then
+						FlyToggle:SetValue(state)
+					end
+					MiscConfig.FlyEnabled = state
+				end
+			})
+
+			SectionMovement:Dropdown({
+				Name = "Fly Method",
+				Flag = "Move_FlyMethod",
+				Multi = false,
+				Items = {"CFrame", "Velocity"},
+				Default = "CFrame",
+				Callback = function(val)
+					MiscConfig.FlyMethod = val
+				end
+			})
+
+			SectionMovement:Slider({
+				Name = "Fly Speed",
+				Flag = "Move_FlySpeed",
+				Default = 40,
+				Compact = false,
+				Min = 10,
+				Max = 150,
+				Decimals = 1,
+				Suffix = " studs",
+				Callback = function(val)
+					MiscConfig.FlySpeed = val
+				end
+			})
+
+			SectionMovement:Toggle({
+				Name = "Anti-Kick Timer",
+				Flag = "Move_FlyTimerEnabled",
+				Default = true,
+				Callback = function(val)
+					MiscConfig.FlyTimerEnabled = val
+				end
+			})
+
+			SectionMovement:Slider({
+				Name = "Timer Limit",
+				Flag = "Move_FlyTimerDuration",
+				Default = 3,
+				Compact = false,
+				Min = 1,
+				Max = 6,
+				Decimals = 1,
+				Suffix = " s",
+				Callback = function(val)
+					MiscConfig.FlyTimerDuration = val
+				end
+			})
+
+			SectionExploits:Toggle({
+				Name = "Instant Loot",
+				Flag = "Misc_InstantLoot",
+				Default = false,
+				Callback = function(val)
+					MiscConfig.InstantLoot = val
+				end
+			})
+
+			SectionExploits:Toggle({
+				Name = "No Fall Damage",
+				Flag = "Misc_NoFall",
+				Default = false,
+				Callback = function(val)
+					MiscConfig.NoFall = val
+				end
+			})
+
+			local ZoomToggle = SectionExploits:Toggle({
+				Name = "Camera Zoom",
+				Flag = "Misc_ZoomToggle",
+				Default = false,
+				Callback = function(val)
+					MiscConfig.ZoomEnabled = val
+				end
+			})
+
+			local ZoomKeybind
+			ZoomKeybind = ZoomToggle:Keybind({
+				Name = "Zoom Key",
+				Flag = "Misc_ZoomKey",
+				Default = "None",
+				Mode = "Hold",
+				Callback = function(val)
+					if not isKeyAssigned(ZoomKeybind) then
+						return
+					end
+					local state = if typeof(val) == "boolean" then val else not MiscConfig.ZoomEnabled
+					if ZoomToggle.Set then
+						ZoomToggle:Set(state)
+					elseif ZoomToggle.SetValue then
+						ZoomToggle:SetValue(state)
+					end
+					MiscConfig.ZoomEnabled = state
+				end
+			})
+
+			SectionExploits:Slider({
+				Name = "Zoom FOV",
+				Flag = "Misc_ZoomFOV",
+				Default = 25,
+				Compact = false,
+				Min = 5,
+				Max = 60,
+				Decimals = 1,
+				Suffix = "°",
+				Callback = function(val)
+					MiscConfig.ZoomFOV = val
+				end
+			})
+
+			local XRayToggle = SectionExploits:Toggle({
+				Name = "X-Ray (Bases)",
+				Flag = "Misc_XRayToggle",
+				Default = false,
+				Callback = function(val)
+					if Misc and Misc.SetXRay then
+						Misc:SetXRay(val)
+					else
+						MiscConfig.XRayEnabled = val
+					end
+				end
+			})
+
+			local XRayKeybind
+			XRayKeybind = XRayToggle:Keybind({
+				Name = "X-Ray Key",
+				Flag = "Misc_XRayKey",
+				Default = "None",
+				Mode = "Toggle",
+				Callback = function(val)
+					if not isKeyAssigned(XRayKeybind) then
+						return
+					end
+					local state = if typeof(val) == "boolean" then val else not MiscConfig.XRayEnabled
+					if XRayToggle.Set then
+						XRayToggle:Set(state)
+					elseif XRayToggle.SetValue then
+						XRayToggle:SetValue(state)
+					end
+					if Misc and Misc.SetXRay then
+						Misc:SetXRay(state)
+					else
+						MiscConfig.XRayEnabled = state
+					end
+				end
+			})
+
+			SectionExploits:Slider({
+				Name = "X-Ray Transparency",
+				Flag = "Misc_XRayTransparency",
+				Default = 100,
+				Compact = false,
+				Min = 1,
+				Max = 100,
+				Decimals = 1,
+				Suffix = "%",
+				Callback = function(val)
+					if Misc and Misc.SetXRayTransparency then
+						Misc:SetXRayTransparency(val / 100)
+					else
+						MiscConfig.XRayTransparency = val / 100
+					end
+				end
+			})
 		end
 	end
 end
 
-local postRenderCounter = 0
-local POST_RENDER_INTERVAL = 2
-
-Syrniki.PreRender = runService.RenderStepped:Connect(function()
-	updateCameraCache()
-
-	if not Table.Enabled then
-		for _, data in Syrniki.Cache do
-			if data.Objects.TargetHolder and data.Objects.TargetHolder.Visible then
-				data.Objects.TargetHolder.Visible = false
-			end
-		end
-		return
-	end
-
-	cameraPosition = currentCamera.CFrame.Position
-
-	for target, data in Syrniki.Cache do
-		Syrniki:Update(target, data)
-	end
-end)
-
-Syrniki.PostRender = runService.Heartbeat:Connect(function()
-	postRenderCounter = postRenderCounter + 1
-	if postRenderCounter < POST_RENDER_INTERVAL then
-		return
-	end
-	postRenderCounter = 0
-
-	for _, player in playersService:GetPlayers() do
-		if not Syrniki.Cache[player] then
-			Syrniki:AddTarget(player)
-		end
-	end
-
-	if Table.Bots.Enabled then
-		local botName = Table.Bots.Name or "bot"
-		for _, bot in workspaceService:GetChildren() do
-			if bot:IsA("Model") and bot.Name == botName and not Syrniki.Cache[bot] then
-				Syrniki:AddTarget(bot)
-			end
-		end
-	end
-
-	for target, data in Syrniki.Cache do
-		if data.IsBot and not Table.Bots.Enabled then
-			Syrniki:RemoveTarget(target)
-		end
-	end
-end)
-
-for _, player in playersService:GetPlayers() do
-	Syrniki:AddTarget(player)
-end
-
-Syrniki:CreateThreads("PlayerAdded", playersService.PlayerAdded, function(player)
-	Syrniki:AddTarget(player)
-end)
-
-Syrniki:CreateThreads("PlayerRemoving", playersService.PlayerRemoving, function(player)
-	Syrniki:RemoveTarget(player)
-end)
-
-function Syrniki:Unload()
-	if Syrniki.PreRender then
-		Syrniki.PreRender:Disconnect()
-		Syrniki.PreRender = nil
-	end
-	if Syrniki.PostRender then
-		Syrniki.PostRender:Disconnect()
-		Syrniki.PostRender = nil
-	end
-
-	for target in self.Cache do
-		self:RemoveTarget(target)
-	end
-
-	for _, conn in self.Connections do
-		conn:Disconnect()
-	end
-	tableClear(self.Connections)
-
-	for _, conn in self.Threads do
-		conn:Disconnect()
-	end
-	tableClear(self.Threads)
-
-	if self.Holder then
-		self.Holder:Destroy()
-		self.Holder = nil
-	end
-
-	tableClear(self.Cache)
-end
-
-return Syrniki
+Library:Notification("Loaded in " .. stringFormat("%.4f", os.clock() - loadingTick) .. " seconds", 5, Library.Theme.Accent)
