@@ -1,1406 +1,1346 @@
-local loadingTick = os.clock()
+-- Check for table that is shared between executions.
+if not shared then
+	return warn("No shared, no script.")
+end
 
-local playersService = cloneref(game:GetService("Players"))
+-- Initialize Luraph globals if they do not exist.
+loadstring("getfenv().LPH_NO_VIRTUALIZE = function(...) return ... end")()
+getfenv().PP_SCRAMBLE_NUM = function(...) return ... end
+getfenv().PP_SCRAMBLE_STR = function(...) return ... end
+getfenv().PP_SCRAMBLE_RE_NUM = function(...) return ... end
+
+-- Unload previous instance.
+if shared.Arbuzi and shared.Arbuzi.Unload then
+	pcall(shared.Arbuzi.Unload, shared.Arbuzi)
+end
+
+-- Services.
+local cloneref = cloneref or function(instance) return instance end
 local workspaceService = cloneref(game:GetService("Workspace"))
+local playersService = cloneref(game:GetService("Players"))
 local runService = cloneref(game:GetService("RunService"))
+local replicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
+local httpService = cloneref(game:GetService("HttpService"))
+local coreGui = cloneref(game:GetService("CoreGui"))
 
-local function httpGet(url)
-	local response = request({
-		Url = url,
-		Method = "GET"
-	})
-	return response and response.Body or ""
+local httpRequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+local localPlayer = playersService.LocalPlayer
+local camera = workspaceService.CurrentCamera
+
+local newVector3 = Vector3.new
+local newVector2 = Vector2.new
+local newUDim = UDim.new
+local newUDim2 = UDim2.new
+local udim2FromOffset = UDim2.fromOffset
+local numSeq = NumberSequence.new
+local numKey = NumberSequenceKeypoint.new
+
+local stringFormat = string.format
+local tableClear = table.clear
+local mathFloor = math.floor
+local mathClamp = math.clamp
+local mathAbs = math.abs
+local mathTan = math.tan
+local mathRad = math.rad
+
+local zeroVector3 = newVector3(0, 0, 0)
+local cameraPosition = newVector3(0, 0, 0)
+local cachedFocalLength = 0
+local viewPortY = 0
+
+-- Weapon Database for fingerprinting & Icons.
+local weaponMeshMap = {}
+local toolSignatures = {}
+local weaponIcons = {}
+
+---Scan craft menu inside PlayerGui strictly for weapon icons.
+---@return boolean
+local function scanCraftingIcons()
+	local pGui = localPlayer:FindFirstChildOfClass("PlayerGui")
+	if not pGui then return false end
+
+	local ui = pGui:FindFirstChild("UI")
+	local ingame = ui and ui:FindFirstChild("Ingame")
+	local crafting = ingame and ingame:FindFirstChild("Crafting")
+	local items = crafting and crafting:FindFirstChild("Items")
+	local scroll = items and items:FindFirstChild("ScrollingFrame")
+
+	if not scroll then return false end
+
+	local count = 0
+	for _, frame in ipairs(scroll:GetChildren()) do
+		local btn = frame:FindFirstChild("Button")
+		if btn and btn:IsA("ImageButton") and btn.Image and btn.Image ~= "" then
+			weaponIcons[frame.Name] = btn.Image
+			count = count + 1
+		end
+	end
+	return count > 0
 end
 
-local ESP_RAW_URL = "https://raw.githubusercontent.com/Popka0992/Tigra.Cat/refs/heads/main/esp.lua"
-local WORLD_RAW_URL = "https://raw.githubusercontent.com/Popka0992/Tigra.Cat/refs/heads/main/WorldVisuals.lua"
-local WORLD_ESP_RAW_URL = "https://raw.githubusercontent.com/Popka0992/Tigra.Cat/refs/heads/main/WorldESP.lua"
-local COMBAT_RAW_URL = "https://raw.githubusercontent.com/Popka0992/Tigra.Cat/refs/heads/main/Combat.lua"
-local MISC_RAW_URL = "https://raw.githubusercontent.com/Popka0992/Tigra.Cat/refs/heads/main/Misc.lua"
-local UI_RAW_URL = "https://raw.githubusercontent.com/Popka0992/Tigra.Cat/refs/heads/main/ui.lua"
+task.spawn(function()
+	if not scanCraftingIcons() then
+		local pGui = localPlayer:WaitForChild("PlayerGui", 15)
+		if pGui then
+			local conn
+			conn = pGui.DescendantAdded:Connect(function(desc)
+				if desc.Name == "ScrollingFrame" and desc.Parent and desc.Parent.Name == "Items" then
+					task.wait(0.2)
+					if scanCraftingIcons() and conn then
+						conn:Disconnect()
+						conn = nil
+					end
+				end
+			end)
+		end
+	end
+end)
 
-local function loadModule(url)
-	local body = httpGet(url)
-	if body == "" then
-		return {}
+---Find tools container recursively across services.
+---@return Instance?
+local function getToolsFolder()
+	local prefabs = workspaceService:FindFirstChild("Prefabs", true) or replicatedStorage:FindFirstChild("Prefabs", true)
+	if prefabs then
+		local tools = prefabs:FindFirstChild("Tools")
+		if tools then return tools end
 	end
-	local chunk = loadstring(body)
-	if not chunk then
-		return {}
-	end
-	local result = chunk()
-	if typeof(result) == "table" and type(result.Load) == "function" then
-		local loaded = result:Load()
-		return loaded or result
-	end
-	return result
+	return workspaceService:FindFirstChild("Tools", true) or replicatedStorage:FindFirstChild("Tools", true)
 end
 
-local function resolveConfig(mod)
-	if typeof(mod) ~= "table" then
-		return {}
+---Build weapon database from prefabs.
+---@return boolean
+local function indexWeaponPrefabs()
+	local tools = getToolsFolder()
+	if not tools then return false end
+
+	local indexed = false
+	for _, tool in ipairs(tools:GetChildren()) do
+		local worldModel = tool:FindFirstChild("Worldmodel")
+		if worldModel then
+			indexed = true
+			local signature = {}
+			for _, part in ipairs(worldModel:GetChildren()) do
+				if part:IsA("MeshPart") and part.MeshId ~= "" then
+					weaponMeshMap[part.MeshId] = tool.Name
+				end
+				signature[part.Name] = true
+			end
+			toolSignatures[tool.Name] = signature
+		end
 	end
-	if type(mod.GetConfig) == "function" then
-		return mod:GetConfig()
-	end
-	return mod.Config or mod.Table or mod
+	return indexed
 end
 
-local ESP = loadModule(ESP_RAW_URL)
-local ESPConfig = resolveConfig(ESP)
-
-local WorldVisuals = loadModule(WORLD_RAW_URL)
-local WorldConfig = resolveConfig(WorldVisuals)
-
-local WorldESP = loadModule(WORLD_ESP_RAW_URL)
-local WorldESPConfig = resolveConfig(WorldESP)
-
-local Combat = loadModule(COMBAT_RAW_URL)
-local CombatConfig = resolveConfig(Combat)
-
-local Misc = loadModule(MISC_RAW_URL)
-local MiscConfig = resolveConfig(Misc)
-
-local Library = loadstring(httpGet(UI_RAW_URL))()
-
-local Window = Library:Window({
-	Logo = "rbxassetid://124454910007637",
-	Build = "developer"
-})
-
-local KeybindList = Library:KeybindList()
-local Watermark = Library:Watermark("Tigra.Cat", "rbxassetid://124454910007637")
-
-local function isKeyAssigned(keyObj)
-	if not keyObj then
-		return false
+task.spawn(function()
+	while not indexWeaponPrefabs() do
+		task.wait(1)
 	end
-	local val = keyObj.Value or keyObj.Key or keyObj.CurrentKey
-	if typeof(val) == "table" then
-		val = val.Key or val.Value or val[1]
+end)
+
+---Resolve weapon name from character model.
+---@param character Model
+---@return string
+local function resolveEquippedWeapon(character)
+	local worldModel = character:FindFirstChild("Worldmodel")
+	if not worldModel then
+		for _, child in ipairs(character:GetChildren()) do
+			if child:IsA("Tool") then
+				return child.Name
+			end
+		end
+		return "none"
 	end
-	if val == "None" or val == "Unknown" or val == Enum.KeyCode.Unknown or val == nil then
-		return false
+
+	local attr = worldModel:GetAttribute("Weapon") 
+		or worldModel:GetAttribute("Name") 
+		or character:GetAttribute("EquippedWeapon")
+		or character:GetAttribute("Weapon")
+	if attr and typeof(attr) == "string" and attr ~= "" then
+		return attr
 	end
-	return true
+
+	local children = worldModel:GetChildren()
+	if #children == 0 then
+		return "Worldmodel"
+	end
+
+	for _, part in ipairs(children) do
+		if part:IsA("MeshPart") and part.MeshId ~= "" then
+			local matched = weaponMeshMap[part.MeshId]
+			if matched then return matched end
+		end
+	end
+
+	local bestTool, bestScore = nil, 0
+	for toolName, sig in pairs(toolSignatures) do
+		local score = 0
+		for _, part in ipairs(children) do
+			if sig[part.Name] then
+				score = score + 1
+			end
+		end
+		if score > bestScore then
+			bestScore = score
+			bestTool = toolName
+		end
+	end
+
+	if bestTool and bestScore >= 2 then
+		return bestTool
+	end
+
+	if worldModel:FindFirstChild("ShotgunShell1") or worldModel:FindFirstChild("pump") then
+		return "Pump Shotgun"
+	end
+
+	return "Worldmodel"
 end
 
-do
-	local Pages = {
-		["Combat"] = Window:Page({Icon = "rbxassetid://91005239799306"}),
-		["Visuals"] = Window:Page({Icon = "rbxassetid://131183993099134"}),
-		["Misc"] = Window:Page({Icon = "rbxassetid://77101019021078"})
+local function updateCameraCache()
+	if not camera then
+		camera = workspaceService.CurrentCamera
+	end
+	if not camera then return end
+	viewPortY = camera.ViewportSize.Y
+	cachedFocalLength = viewPortY / (2 * mathTan(mathRad(camera.FieldOfView) * 0.5))
+end
+
+local function getGuiParent()
+	local success, result = pcall(function()
+		return gethui()
+	end)
+	if success and result then
+		return result
+	end
+	return coreGui
+end
+
+local Arbuzi = {
+	Loaded = false,
+	Directory = "Esp",
+	Cache = {},
+	Pending = {},
+	Holder = nil,
+	Threads = {},
+	PreRender = nil,
+	Table = {
+		Enabled = true,
+		Bots = {
+			Enabled = false,
+			Name = "bot"
+		},
+		Boxes = {
+			Enabled = true,
+			["Bounding Box"] = {
+				Enabled = false,
+				IncludeAccessories = false,
+				BoxX = 0,
+				BoxY = 2
+			},
+			["Box Glow"] = {
+				Enabled = true,
+				Top = Color3.fromRGB(255, 255, 255),
+				Bot = Color3.fromRGB(255, 255, 255),
+				Transparency = { 0.85, 0.85 }
+			},
+			Gradients = {
+				Top = Color3.fromRGB(255, 255, 255),
+				Bot = Color3.fromRGB(255, 255, 255)
+			},
+			Filled = {
+				Enabled = false,
+				Top = Color3.fromRGB(255, 255, 255),
+				Bot = Color3.fromRGB(255, 255, 255),
+				Transparency = { 0.85, 0.85 }
+			}
+		},
+		Bars = {
+			["Health Bar"] = {
+				Enabled = true,
+				Color = Color3.fromRGB(255, 255, 255)
+			}
+		},
+		Texts = {
+			Name = {
+				Enabled = true,
+				Color = Color3.fromRGB(255, 255, 255)
+			},
+			Distance = {
+				Enabled = true,
+				Color = Color3.fromRGB(200, 200, 200)
+			},
+			Weapon = {
+				Enabled = true,
+				Color = Color3.fromRGB(255, 255, 255)
+			},
+			WeaponIcon = {
+				Enabled = true,
+				Size = 24
+			},
+			State = {
+				Enabled = true,
+				Color = Color3.fromRGB(255, 255, 255)
+			}
+		}
 	}
+}
 
-	Library:CreateSettingsPage(Window, KeybindList, Watermark)
+Arbuzi.__index = Arbuzi
+local config = Arbuzi.Table
 
-	do
-		local SubPages = {
-			["Silent Aim"] = Pages["Combat"]:SubPage({Name = "Silent Aim"}),
-			["Weapon"] = Pages["Combat"]:SubPage({Name = "Weapon"})
-		}
-
-		do
-			local SectionLeft = SubPages["Silent Aim"]:Section({Name = "General"})
-			local SectionRight = SubPages["Silent Aim"]:Section({Name = "Targeting & FOV"})
-
-			local SilentToggle = SectionLeft:Toggle({
-				Name = "Enabled",
-				Flag = "Silent_Enabled",
-				Default = false,
-				Callback = function(val)
-					CombatConfig.Enabled = val
-				end
-			})
-
-			local SilentKeybind
-			SilentKeybind = SilentToggle:Keybind({
-				Name = "Silent Aim",
-				Flag = "Silent_Keybind",
-				Default = "None",
-				Mode = "Toggle",
-				Callback = function(val)
-					if not isKeyAssigned(SilentKeybind) then
-						return
-					end
-					local state = if typeof(val) == "boolean" then val else not CombatConfig.Enabled
-					if SilentToggle.Set then
-						SilentToggle:Set(state)
-					elseif SilentToggle.SetValue then
-						SilentToggle:SetValue(state)
-					end
-					CombatConfig.Enabled = state
-				end
-			})
-
-			SectionLeft:Dropdown({
-				Name = "Hit Part",
-				Flag = "Silent_HitPart",
-				Multi = false,
-				Items = {"Head", "HumanoidRootPart", "Torso", "Random"},
-				Default = "Head",
-				Callback = function(val)
-					CombatConfig.HitPart = val
-				end
-			})
-
-			SectionLeft:Slider({
-				Name = "Hit Chance",
-				Flag = "Silent_HitChance",
-				Default = 100,
-				Compact = false,
-				Min = 0,
-				Max = 100,
-				Decimals = 1,
-				Suffix = "%",
-				Callback = function(val)
-					CombatConfig.HitChance = val
-				end
-			})
-
-			SectionLeft:Toggle({
-				Name = "Prediction",
-				Flag = "Silent_Prediction",
-				Default = true,
-				Callback = function(val)
-					CombatConfig.Prediction = val
-				end
-			})
-
-			SectionLeft:Toggle({
-				Name = "Force Hit (Instant)",
-				Flag = "Silent_ForceHit",
-				Default = false,
-				Callback = function(val)
-					CombatConfig.InstantHit = val
-				end
-			})
-
-			local HitscanToggle = SectionLeft:Toggle({
-				Name = "Hitscan / Wallbang",
-				Flag = "Silent_Hitscan",
-				Default = false,
-				Callback = function(val)
-					CombatConfig.Hitscan = val
-				end
-			})
-
-			HitscanToggle:Colorpicker({
-				Flag = "Silent_HitscanColor",
-				Default = Color3.fromRGB(255, 196, 0),
-				Alpha = 0,
-				Callback = function(val)
-					CombatConfig.HitscanVisualColor = val
-				end
-			})
-
-			SectionLeft:Slider({
-				Name = "Hitscan Distance",
-				Flag = "Silent_HitscanDistance",
-				Default = 7,
-				Compact = false,
-				Min = 1,
-				Max = 15,
-				Decimals = 1,
-				Suffix = " st",
-				Callback = function(val)
-					CombatConfig.HitscanDistance = val
-				end
-			})
-
-			local ManipulatorToggle = SectionLeft:Toggle({
-				Name = "Manipulator (Silent Peek)",
-				Flag = "Silent_Manipulator",
-				Default = false,
-				Callback = function(val)
-					CombatConfig.Manipulator = val
-				end
-			})
-
-			ManipulatorToggle:Colorpicker({
-				Flag = "Silent_ManipulatorColor",
-				Default = Color3.fromRGB(0, 255, 170),
-				Alpha = 0,
-				Callback = function(val)
-					CombatConfig.ManipulatorVisualColor = val
-				end
-			})
-
-			SectionLeft:Slider({
-				Name = "Manipulator Distance",
-				Flag = "Silent_ManipulatorDistance",
-				Default = 5,
-				Compact = false,
-				Min = 1,
-				Max = 10,
-				Decimals = 1,
-				Suffix = " st",
-				Callback = function(val)
-					CombatConfig.ManipulatorDistance = val
-				end
-			})
-
-			local SilentFovToggle = SectionRight:Toggle({
-				Name = "Draw Field of View",
-				Flag = "Silent_DrawFOV",
-				Default = false,
-				Callback = function(val)
-					CombatConfig.ShowFOV = val
-				end
-			})
-
-			SilentFovToggle:Colorpicker({
-				Flag = "Silent_FOVColor",
-				Default = Color3.fromRGB(170, 85, 255),
-				Alpha = 0,
-				Callback = function(val)
-					CombatConfig.FOVColor = val
-				end
-			})
-
-			SectionRight:Toggle({
-				Name = "FOV Outline",
-				Flag = "Silent_FOVOutline",
-				Default = true,
-				Callback = function(val)
-					CombatConfig.FOVOutline = val
-				end
-			})
-
-			SectionRight:Slider({
-				Name = "FOV Radius",
-				Flag = "Silent_Radius",
-				Default = 120,
-				Compact = false,
-				Min = 10,
-				Max = 600,
-				Decimals = 1,
-				Suffix = " px",
-				Callback = function(val)
-					CombatConfig.FOV = val
-				end
-			})
-
-			SectionRight:Toggle({
-				Name = "Target Players",
-				Flag = "Silent_TargetPlayers",
-				Default = true,
-				Callback = function(val)
-					CombatConfig.TargetPlayers = val
-				end
-			})
-
-			SectionRight:Toggle({
-				Name = "Target Bots",
-				Flag = "Silent_TargetBots",
-				Default = true,
-				Callback = function(val)
-					CombatConfig.TargetBots = val
-				end
-			})
-
-			SectionRight:Toggle({
-				Name = "Team Check",
-				Flag = "Silent_TeamCheck",
-				Default = false,
-				Callback = function(val)
-					CombatConfig.TeamCheck = val
-				end
-			})
-
-			SectionRight:Toggle({
-				Name = "Dead Check",
-				Flag = "Silent_DeadCheck",
-				Default = true,
-				Callback = function(val)
-					CombatConfig.DeadCheck = val
-				end
-			})
-
-			SectionRight:Toggle({
-				Name = "Distance Check",
-				Flag = "Silent_DistCheck",
-				Default = false,
-				Callback = function(val)
-					CombatConfig.DistCheck = val
-				end
-			})
-
-			SectionRight:Slider({
-				Name = "Max Distance",
-				Flag = "Silent_MaxDist",
-				Default = 1000,
-				Compact = true,
-				Min = 50,
-				Max = 3000,
-				Decimals = 1,
-				Suffix = " st",
-				Callback = function(val)
-					CombatConfig.MaxDistance = val
-				end
-			})
-		end
-
-		do
-			local SectionRecoil = SubPages["Weapon"]:Section({Name = "Recoil & Handling"})
-			local SectionMods = SubPages["Weapon"]:Section({Name = "Modifications"})
-
-			SectionRecoil:Slider({
-				Name = "Recoil Percentage",
-				Flag = "Wep_Recoil",
-				Default = 100,
-				Compact = false,
-				Min = 0,
-				Max = 100,
-				Decimals = 1,
-				Suffix = "%",
-				Callback = function(val)
-					CombatConfig.Recoil = val
-				end
-			})
-
-			SectionRecoil:Slider({
-				Name = "Spread Percentage",
-				Flag = "Wep_Spread",
-				Default = 100,
-				Compact = false,
-				Min = 0,
-				Max = 100,
-				Decimals = 1,
-				Suffix = "%",
-				Callback = function(val)
-					CombatConfig.Spread = val
-				end
-			})
-
-			SectionRecoil:Slider({
-				Name = "Firerate Multiplier",
-				Flag = "Wep_Firerate",
-				Default = 1,
-				Compact = false,
-				Min = 1,
-				Max = 5,
-				Decimals = 1,
-				Suffix = "x",
-				Callback = function(val)
-					CombatConfig.Firerate = val
-				end
-			})
-
-			SectionMods:Toggle({
-				Name = "No Pullout Delay",
-				Flag = "Wep_InstantEquip",
-				Default = false,
-				Callback = function(val)
-					CombatConfig.InstantEquip = val
-				end
-			})
-
-			SectionMods:Toggle({
-				Name = "Fast Bow",
-				Flag = "Wep_FastBow",
-				Default = false,
-				Callback = function(val)
-					CombatConfig.FastBow = val
-				end
-			})
-
-			SectionMods:Toggle({
-				Name = "Instant Eoka",
-				Flag = "Wep_InstantEoka",
-				Default = false,
-				Callback = function(val)
-					CombatConfig.InstantEoka = val
-				end
-			})
-
-			SectionMods:Toggle({
-				Name = "Shoot While Sprinting",
-				Flag = "Wep_ShootSprinting",
-				Default = false,
-				Callback = function(val)
-					CombatConfig.ShootSprinting = val
-				end
-			})
-
-			SectionMods:Toggle({
-				Name = "Reload While Sprinting",
-				Flag = "Wep_ReloadSprinting",
-				Default = false,
-				Callback = function(val)
-					CombatConfig.ReloadSprinting = val
-				end
-			})
-
-			SectionMods:Toggle({
-				Name = "Instant Reload",
-				Flag = "Wep_InstantReload",
-				Default = false,
-				Callback = function(val)
-					CombatConfig.InstantReload = val
-				end
-			})
-
-			SectionMods:Toggle({
-				Name = "Auto Reload",
-				Flag = "Wep_AutoReload",
-				Default = false,
-				Callback = function(val)
-					CombatConfig.AutoReload = val
-				end
-			})
-		end
+-- Font Registration.
+local Fonts = {}
+do
+	local function fetchSource(url)
+		local response = httpRequest({ Url = url, Method = "GET" })
+		return response and response.Body or ""
 	end
 
-	do
-		local SubPages = {
-			["Players"] = Pages["Visuals"]:SubPage({Name = "Players"}),
-			["Entities"] = Pages["Visuals"]:SubPage({Name = "Entities"}),
-			["Environment"] = Pages["Visuals"]:SubPage({Name = "Environment"})
-		}
-
-		do
-			local SectionLeft = SubPages["Players"]:Section({Name = "Overlay & Boxes"})
-			local SectionRight = SubPages["Players"]:Section({Name = "Rendering & Info"})
-
-			local EspToggle = SectionLeft:Toggle({
-				Name = "Master Enabled",
-				Flag = "ESP_Master_Enabled",
-				Default = ESPConfig.Enabled or false,
-				Callback = function(val)
-					ESPConfig.Enabled = val
-				end
-			})
-
-			local EspKeybind
-			EspKeybind = EspToggle:Keybind({
-				Name = "Player ESP",
-				Flag = "ESP_Master_Keybind",
-				Default = "None",
-				Mode = "Toggle",
-				Callback = function(val)
-					if not isKeyAssigned(EspKeybind) then
-						return
-					end
-					local state = if typeof(val) == "boolean" then val else not ESPConfig.Enabled
-					if EspToggle.Set then
-						EspToggle:Set(state)
-					elseif EspToggle.SetValue then
-						EspToggle:SetValue(state)
-					end
-					ESPConfig.Enabled = state
-				end
-			})
-
-			SectionLeft:Toggle({
-				Name = "Show Bots",
-				Flag = "ESP_ShowBots",
-				Default = ESPConfig.Bots and ESPConfig.Bots.Enabled or false,
-				Callback = function(val)
-					if ESPConfig.Bots then
-						ESPConfig.Bots.Enabled = val
-					end
-				end
-			})
-
-			local BoxToggle = SectionLeft:Toggle({
-				Name = "Bounding Box",
-				Flag = "ESP_Box",
-				Default = ESPConfig.Boxes and ESPConfig.Boxes.Enabled or false,
-				Callback = function(val)
-					if ESPConfig.Boxes then
-						ESPConfig.Boxes.Enabled = val
-					end
-				end
-			})
-
-			BoxToggle:Colorpicker({
-				Flag = "ESP_BoxColor",
-				Default = (ESPConfig.Boxes and ESPConfig.Boxes.Gradients and ESPConfig.Boxes.Gradients.Top) or Color3.fromRGB(255, 255, 255),
-				Alpha = 0,
-				Callback = function(val)
-					if ESPConfig.Boxes and ESPConfig.Boxes.Gradients then
-						ESPConfig.Boxes.Gradients.Top = val
-						ESPConfig.Boxes.Gradients.Bot = val
-					end
-				end
-			})
-
-			SectionLeft:Toggle({
-				Name = "Dynamic Bounding Box",
-				Flag = "ESP_DynamicBox",
-				Default = (ESPConfig.Boxes and ESPConfig.Boxes["Bounding Box"] and ESPConfig.Boxes["Bounding Box"].Enabled) or false,
-				Callback = function(val)
-					if ESPConfig.Boxes and ESPConfig.Boxes["Bounding Box"] then
-						ESPConfig.Boxes["Bounding Box"].Enabled = val
-					end
-				end
-			})
-
-			SectionLeft:Toggle({
-				Name = "Include Accessories",
-				Flag = "ESP_IncludeAccs",
-				Default = (ESPConfig.Boxes and ESPConfig.Boxes["Bounding Box"] and ESPConfig.Boxes["Bounding Box"].IncludeAccessories) or false,
-				Callback = function(val)
-					if ESPConfig.Boxes and ESPConfig.Boxes["Bounding Box"] then
-						ESPConfig.Boxes["Bounding Box"].IncludeAccessories = val
-					end
-				end
-			})
-
-			local BoxGlowToggle = SectionLeft:Toggle({
-				Name = "Box Glow",
-				Flag = "ESP_BoxGlow",
-				Default = (ESPConfig.Boxes and ESPConfig.Boxes["Box Glow"] and ESPConfig.Boxes["Box Glow"].Enabled) or false,
-				Callback = function(val)
-					if ESPConfig.Boxes and ESPConfig.Boxes["Box Glow"] then
-						ESPConfig.Boxes["Box Glow"].Enabled = val
-					end
-				end
-			})
-
-			BoxGlowToggle:Colorpicker({
-				Flag = "ESP_BoxGlowColor",
-				Default = (ESPConfig.Boxes and ESPConfig.Boxes["Box Glow"] and ESPConfig.Boxes["Box Glow"].Top) or Color3.fromRGB(255, 255, 255),
-				Alpha = (ESPConfig.Boxes and ESPConfig.Boxes["Box Glow"] and ESPConfig.Boxes["Box Glow"].Transparency and ESPConfig.Boxes["Box Glow"].Transparency[1]) or 0.85,
-				Callback = function(val)
-					if ESPConfig.Boxes and ESPConfig.Boxes["Box Glow"] then
-						ESPConfig.Boxes["Box Glow"].Top = val
-						ESPConfig.Boxes["Box Glow"].Bot = val
-					end
-				end
-			})
-
-			local BoxFillToggle = SectionLeft:Toggle({
-				Name = "Box Fill",
-				Flag = "ESP_BoxFill",
-				Default = (ESPConfig.Boxes and ESPConfig.Boxes.Filled and ESPConfig.Boxes.Filled.Enabled) or false,
-				Callback = function(val)
-					if ESPConfig.Boxes and ESPConfig.Boxes.Filled then
-						ESPConfig.Boxes.Filled.Enabled = val
-					end
-				end
-			})
-
-			BoxFillToggle:Colorpicker({
-				Flag = "ESP_BoxFillColor",
-				Default = (ESPConfig.Boxes and ESPConfig.Boxes.Filled and ESPConfig.Boxes.Filled.Top) or Color3.fromRGB(255, 255, 255),
-				Alpha = (ESPConfig.Boxes and ESPConfig.Boxes.Filled and ESPConfig.Boxes.Filled.Transparency and ESPConfig.Boxes.Filled.Transparency[1]) or 0.85,
-				Callback = function(val)
-					if ESPConfig.Boxes and ESPConfig.Boxes.Filled then
-						ESPConfig.Boxes.Filled.Top = val
-						ESPConfig.Boxes.Filled.Bot = val
-					end
-				end
-			})
-
-			local HealthToggle = SectionRight:Toggle({
-				Name = "Healthbar",
-				Flag = "ESP_Health",
-				Default = (ESPConfig.Bars and ESPConfig.Bars["Health Bar"] and ESPConfig.Bars["Health Bar"].Enabled) or false,
-				Callback = function(val)
-					if ESPConfig.Bars and ESPConfig.Bars["Health Bar"] then
-						ESPConfig.Bars["Health Bar"].Enabled = val
-					end
-				end
-			})
-
-			HealthToggle:Colorpicker({
-				Flag = "ESP_HealthColor",
-				Default = (ESPConfig.Bars and ESPConfig.Bars["Health Bar"] and ESPConfig.Bars["Health Bar"].Color) or Color3.fromRGB(255, 255, 255),
-				Alpha = 0,
-				Callback = function(val)
-					if ESPConfig.Bars and ESPConfig.Bars["Health Bar"] then
-						ESPConfig.Bars["Health Bar"].Color = val
-					end
-				end
-			})
-
-			local NameToggle = SectionRight:Toggle({
-				Name = "Show Name",
-				Flag = "ESP_Name",
-				Default = (ESPConfig.Texts and ESPConfig.Texts.Name and ESPConfig.Texts.Name.Enabled) or false,
-				Callback = function(val)
-					if ESPConfig.Texts and ESPConfig.Texts.Name then
-						ESPConfig.Texts.Name.Enabled = val
-					end
-				end
-			})
-
-			NameToggle:Colorpicker({
-				Flag = "ESP_NameColor",
-				Default = (ESPConfig.Texts and ESPConfig.Texts.Name and ESPConfig.Texts.Name.Color) or Color3.fromRGB(255, 255, 255),
-				Alpha = 0,
-				Callback = function(val)
-					if ESPConfig.Texts and ESPConfig.Texts.Name then
-						ESPConfig.Texts.Name.Color = val
-					end
-				end
-			})
-
-			local DistToggle = SectionRight:Toggle({
-				Name = "Show Distance",
-				Flag = "ESP_Distance",
-				Default = (ESPConfig.Texts and ESPConfig.Texts.Distance and ESPConfig.Texts.Distance.Enabled) or false,
-				Callback = function(val)
-					if ESPConfig.Texts and ESPConfig.Texts.Distance then
-						ESPConfig.Texts.Distance.Enabled = val
-					end
-				end
-			})
-
-			DistToggle:Colorpicker({
-				Flag = "ESP_DistColor",
-				Default = (ESPConfig.Texts and ESPConfig.Texts.Distance and ESPConfig.Texts.Distance.Color) or Color3.fromRGB(200, 200, 200),
-				Alpha = 0,
-				Callback = function(val)
-					if ESPConfig.Texts and ESPConfig.Texts.Distance then
-						ESPConfig.Texts.Distance.Color = val
-					end
-				end
-			})
-
-			local WeaponToggle = SectionRight:Toggle({
-				Name = "Show Weapon",
-				Flag = "ESP_Weapon",
-				Default = (ESPConfig.Texts and ESPConfig.Texts.Weapon and ESPConfig.Texts.Weapon.Enabled) or false,
-				Callback = function(val)
-					if ESPConfig.Texts and ESPConfig.Texts.Weapon then
-						ESPConfig.Texts.Weapon.Enabled = val
-					end
-				end
-			})
-
-			WeaponToggle:Colorpicker({
-				Flag = "ESP_WeaponColor",
-				Default = (ESPConfig.Texts and ESPConfig.Texts.Weapon and ESPConfig.Texts.Weapon.Color) or Color3.fromRGB(255, 255, 255),
-				Alpha = 0,
-				Callback = function(val)
-					if ESPConfig.Texts and ESPConfig.Texts.Weapon then
-						ESPConfig.Texts.Weapon.Color = val
-					end
-				end
-			})
-
-			local StateToggle = SectionRight:Toggle({
-				Name = "State Flags",
-				Flag = "ESP_Flags",
-				Default = (ESPConfig.Texts and ESPConfig.Texts.State and ESPConfig.Texts.State.Enabled) or false,
-				Callback = function(val)
-					if ESPConfig.Texts and ESPConfig.Texts.State then
-						ESPConfig.Texts.State.Enabled = val
-					end
-				end
-			})
-
-			StateToggle:Colorpicker({
-				Flag = "ESP_StateColor",
-				Default = (ESPConfig.Texts and ESPConfig.Texts.State and ESPConfig.Texts.State.Color) or Color3.fromRGB(255, 255, 255),
-				Alpha = 0,
-				Callback = function(val)
-					if ESPConfig.Texts and ESPConfig.Texts.State then
-						ESPConfig.Texts.State.Color = val
-					end
-				end
-			})
+	local function registerFont(name, weight, style, asset)
+		if not isfile(asset.Id) then
+			writefile(asset.Id, asset.Font)
 		end
 
-		do
-			local SectionLeft = SubPages["Entities"]:Section({Name = "Configuration"})
-			local SectionRight = SubPages["Entities"]:Section({Name = "Entity Filters"})
-
-			local WorldEspToggle = SectionLeft:Toggle({
-				Name = "Master Enabled",
-				Flag = "WorldESP_Master_Enabled",
-				Default = false,
-				Callback = function(val)
-					WorldESPConfig.Enabled = val
-				end
-			})
-
-			local WorldEspKeybind
-			WorldEspKeybind = WorldEspToggle:Keybind({
-				Name = "Entity ESP",
-				Flag = "WorldESP_Master_Keybind",
-				Default = "None",
-				Mode = "Toggle",
-				Callback = function(val)
-					if not isKeyAssigned(WorldEspKeybind) then
-						return
-					end
-					local state = if typeof(val) == "boolean" then val else not WorldESPConfig.Enabled
-					if WorldEspToggle.Set then
-						WorldEspToggle:Set(state)
-					elseif WorldEspToggle.SetValue then
-						WorldEspToggle:SetValue(state)
-					end
-					WorldESPConfig.Enabled = state
-				end
-			})
-
-			SectionLeft:Toggle({
-				Name = "Bounding Box",
-				Flag = "WorldESP_Boxes",
-				Default = false,
-				Callback = function(val)
-					WorldESPConfig.Boxes = val
-				end
-			})
-
-			SectionLeft:Toggle({
-				Name = "Show Name",
-				Flag = "WorldESP_Names",
-				Default = true,
-				Callback = function(val)
-					WorldESPConfig.Names = val
-				end
-			})
-
-			SectionLeft:Toggle({
-				Name = "Show Distance",
-				Flag = "WorldESP_Distance",
-				Default = true,
-				Callback = function(val)
-					WorldESPConfig.Distance = val
-				end
-			})
-
-			SectionLeft:Slider({
-				Name = "Render Distance",
-				Flag = "WorldESP_MaxDist",
-				Default = 1000,
-				Compact = true,
-				Min = 50,
-				Max = 7500,
-				Decimals = 1,
-				Suffix = " st",
-				Callback = function(val)
-					WorldESPConfig.MaxDistance = val
-				end
-			})
-
-			local function bindEntityFilter(name, flag, defaultColor)
-				if not WorldESPConfig.Targets or not WorldESPConfig.Targets[name] then
-					return
-				end
-				local filterToggle = SectionRight:Toggle({
-					Name = name,
-					Flag = flag,
-					Default = false,
-					Callback = function(val)
-						WorldESPConfig.Targets[name].Enabled = val
-					end
-				})
-
-				filterToggle:Colorpicker({
-					Flag = flag .. "Color",
-					Default = defaultColor,
-					Alpha = 0,
-					Callback = function(val)
-						WorldESPConfig.Targets[name].Color = val
-					end
-				})
-			end
-
-			bindEntityFilter("ClothPlant", "WorldESP_Hemp", Color3.fromRGB(184, 184, 184))
-			bindEntityFilter("Backpack", "WorldESP_BodyBag", Color3.fromRGB(255, 101, 40))
-			bindEntityFilter("Brimstone Ore", "WorldESP_Brimstone", Color3.fromRGB(116, 103, 45))
-			bindEntityFilter("Iron Ore", "WorldESP_Iron", Color3.fromRGB(168, 105, 21))
-			bindEntityFilter("Stone Ore", "WorldESP_Stone", Color3.fromRGB(104, 104, 104))
+		if not isfile(name .. ".font") then
+			local info = {
+				name = name,
+				faces = {
+					{
+						name = "Normal",
+						weight = weight,
+						style = style,
+						assetId = getcustomasset(asset.Id)
+					}
+				}
+			}
+			writefile(name .. ".font", httpService:JSONEncode(info))
 		end
-
-		do
-			local SectionLeft = SubPages["Environment"]:Section({Name = "Lighting & Atmosphere"})
-			local SectionRight = SubPages["Environment"]:Section({Name = "Skybox & Post-FX"})
-
-			local function triggerWorldUpdate()
-				if WorldVisuals and type(WorldVisuals.Update) == "function" then
-					WorldVisuals:Update()
-				end
-			end
-
-			SectionLeft:Toggle({
-				Name = "Master Enabled",
-				Flag = "World_Master_Enabled",
-				Default = false,
-				Callback = function(val)
-					WorldConfig.Enabled = val
-					triggerWorldUpdate()
-				end
-			})
-
-			SectionLeft:Toggle({
-				Name = "Time Changer",
-				Flag = "World_TimeChangerToggle",
-				Default = false,
-				Callback = function(val)
-					WorldConfig.TimeChanger = val
-					triggerWorldUpdate()
-				end
-			})
-
-			SectionLeft:Slider({
-				Name = "Clock Time",
-				Flag = "World_ClockTime",
-				Default = tonumber(WorldConfig.ClockTime) or 14,
-				Compact = false,
-				Min = 0,
-				Max = 24,
-				Decimals = 1,
-				Suffix = "h",
-				Callback = function(val)
-					WorldConfig.ClockTime = val
-					triggerWorldUpdate()
-				end
-			})
-
-			SectionLeft:Toggle({
-				Name = "Brightness",
-				Flag = "World_BrightnessToggle",
-				Default = false,
-				Callback = function(val)
-					WorldConfig.Brightness = val
-					triggerWorldUpdate()
-				end
-			})
-
-			SectionLeft:Slider({
-				Name = "Brightness Level",
-				Flag = "World_BrightnessValue",
-				Default = tonumber(WorldConfig.BrightnessValue) or 2,
-				Compact = false,
-				Min = 0,
-				Max = 10,
-				Decimals = 1,
-				Suffix = "",
-				Callback = function(val)
-					WorldConfig.BrightnessValue = val
-					triggerWorldUpdate()
-				end
-			})
-
-			SectionLeft:Toggle({
-				Name = "Exposure",
-				Flag = "World_ExposureToggle",
-				Default = false,
-				Callback = function(val)
-					WorldConfig.Exposure = val
-					triggerWorldUpdate()
-				end
-			})
-
-			SectionLeft:Slider({
-				Name = "Exposure Level",
-				Flag = "World_ExposureValue",
-				Default = tonumber(WorldConfig.ExposureValue) or 0,
-				Compact = false,
-				Min = -3,
-				Max = 3,
-				Decimals = 1,
-				Suffix = "",
-				Callback = function(val)
-					WorldConfig.ExposureValue = val
-					triggerWorldUpdate()
-				end
-			})
-
-			local AmbientToggle = SectionLeft:Toggle({
-				Name = "Ambient",
-				Flag = "World_AmbientToggle",
-				Default = false,
-				Callback = function(val)
-					WorldConfig.Ambient = val
-					triggerWorldUpdate()
-				end
-			})
-
-			AmbientToggle:Colorpicker({
-				Flag = "World_AmbientColor",
-				Default = WorldConfig.AmbientColor or Color3.fromRGB(130, 130, 130),
-				Alpha = 0,
-				Callback = function(val)
-					WorldConfig.AmbientColor = val
-					triggerWorldUpdate()
-				end
-			})
-
-			local OutdoorAmbientToggle = SectionLeft:Toggle({
-				Name = "Outdoor Ambient",
-				Flag = "World_OutdoorAmbientToggle",
-				Default = false,
-				Callback = function(val)
-					WorldConfig.OutdoorAmbient = val
-					triggerWorldUpdate()
-				end
-			})
-
-			OutdoorAmbientToggle:Colorpicker({
-				Flag = "World_OutdoorAmbientColor",
-				Default = WorldConfig.OutdoorAmbientColor or Color3.fromRGB(130, 130, 130),
-				Alpha = 0,
-				Callback = function(val)
-					WorldConfig.OutdoorAmbientColor = val
-					triggerWorldUpdate()
-				end
-			})
-
-			local AtmosphereToggle = SectionLeft:Toggle({
-				Name = "Atmosphere",
-				Flag = "World_AtmosphereToggle",
-				Default = false,
-				Callback = function(val)
-					WorldConfig.Atmosphere = val
-					triggerWorldUpdate()
-				end
-			})
-
-			AtmosphereToggle:Colorpicker({
-				Flag = "World_AtmosphereColor",
-				Default = WorldConfig.AtmosphereColor or Color3.fromRGB(199, 199, 199),
-				Alpha = 0,
-				Callback = function(val)
-					WorldConfig.AtmosphereColor = val
-					triggerWorldUpdate()
-				end
-			})
-
-			SectionLeft:Slider({
-				Name = "Atmosphere Density",
-				Flag = "World_AtmosphereDensity",
-				Default = tonumber(WorldConfig.AtmosphereDensity) or 0.3,
-				Compact = false,
-				Min = 0,
-				Max = 1,
-				Decimals = 2,
-				Suffix = "",
-				Callback = function(val)
-					WorldConfig.AtmosphereDensity = val
-					triggerWorldUpdate()
-				end
-			})
-
-			SectionLeft:Slider({
-				Name = "Atmosphere Haze",
-				Flag = "World_AtmosphereHaze",
-				Default = tonumber(WorldConfig.AtmosphereHaze) or 0,
-				Compact = false,
-				Min = 0,
-				Max = 10,
-				Decimals = 1,
-				Suffix = "",
-				Callback = function(val)
-					WorldConfig.AtmosphereHaze = val
-					triggerWorldUpdate()
-				end
-			})
-
-			SectionRight:Slider({
-				Name = "Camera FOV",
-				Flag = "World_CameraFOV",
-				Default = 70,
-				Compact = false,
-				Min = 50,
-				Max = 120,
-				Decimals = 1,
-				Suffix = "°",
-				Callback = function(val)
-					local camera = workspaceService.CurrentCamera
-					if camera then
-						camera.FieldOfView = val
-					end
-				end
-			})
-
-			SectionRight:Toggle({
-				Name = "Sky Changer",
-				Flag = "World_SkyChangerToggle",
-				Default = false,
-				Callback = function(val)
-					WorldConfig.SkyChanger = val
-					triggerWorldUpdate()
-				end
-			})
-
-			SectionRight:Dropdown({
-				Name = "Skybox",
-				Flag = "World_SelectedSky",
-				Multi = false,
-				Items = {"default", "stormy", "blue space", "pink", "black storm", "realistic"},
-				Default = WorldConfig.SelectedSky or "default",
-				Callback = function(val)
-					WorldConfig.SelectedSky = val
-					triggerWorldUpdate()
-				end
-			})
-
-			SectionRight:Toggle({
-				Name = "No Clouds",
-				Flag = "World_NoClouds",
-				Default = false,
-				Callback = function(val)
-					WorldConfig.NoClouds = val
-					triggerWorldUpdate()
-				end
-			})
-
-			SectionRight:Toggle({
-				Name = "No Sun Rays",
-				Flag = "World_NoSunRays",
-				Default = false,
-				Callback = function(val)
-					WorldConfig.NoSunRays = val
-					triggerWorldUpdate()
-				end
-			})
-
-			local FogToggle = SectionRight:Toggle({
-				Name = "Fog Changer",
-				Flag = "World_FogToggle",
-				Default = false,
-				Callback = function(val)
-					WorldConfig.Fog = val
-					triggerWorldUpdate()
-				end
-			})
-
-			FogToggle:Colorpicker({
-				Flag = "World_FogColor",
-				Default = WorldConfig.FogColor or Color3.fromRGB(192, 192, 192),
-				Alpha = 0,
-				Callback = function(val)
-					WorldConfig.FogColor = val
-					triggerWorldUpdate()
-				end
-			})
-
-			SectionRight:Slider({
-				Name = "Fog Start",
-				Flag = "World_FogStart",
-				Default = tonumber(WorldConfig.FogStart) or 0,
-				Compact = false,
-				Min = 0,
-				Max = 5000,
-				Decimals = 1,
-				Suffix = " st",
-				Callback = function(val)
-					WorldConfig.FogStart = val
-					triggerWorldUpdate()
-				end
-			})
-
-			SectionRight:Slider({
-				Name = "Fog End",
-				Flag = "World_FogEnd",
-				Default = tonumber(WorldConfig.FogEnd) or 1000,
-				Compact = false,
-				Min = 0,
-				Max = 10000,
-				Decimals = 1,
-				Suffix = " st",
-				Callback = function(val)
-					WorldConfig.FogEnd = val
-					triggerWorldUpdate()
-				end
-			})
-
-			local CcToggle = SectionRight:Toggle({
-				Name = "Color Correction",
-				Flag = "World_ColorCorrectionToggle",
-				Default = false,
-				Callback = function(val)
-					WorldConfig.ColorCorrection = val
-					triggerWorldUpdate()
-				end
-			})
-
-			CcToggle:Colorpicker({
-				Flag = "World_CCTint",
-				Default = WorldConfig.Tint or Color3.fromRGB(255, 255, 255),
-				Alpha = 0,
-				Callback = function(val)
-					WorldConfig.Tint = val
-					triggerWorldUpdate()
-				end
-			})
-
-			SectionRight:Slider({
-				Name = "Saturation",
-				Flag = "World_Saturation",
-				Default = tonumber(WorldConfig.Saturation) or 0,
-				Compact = false,
-				Min = -2,
-				Max = 2,
-				Decimals = 1,
-				Suffix = "",
-				Callback = function(val)
-					WorldConfig.Saturation = val
-					triggerWorldUpdate()
-				end
-			})
-
-			SectionRight:Slider({
-				Name = "Contrast",
-				Flag = "World_Contrast",
-				Default = tonumber(WorldConfig.Contrast) or 0,
-				Compact = false,
-				Min = -2,
-				Max = 2,
-				Decimals = 1,
-				Suffix = "",
-				Callback = function(val)
-					WorldConfig.Contrast = val
-					triggerWorldUpdate()
-				end
-			})
-		end
+		return getcustomasset(name .. ".font")
 	end
 
-	do
-		local SubPages = {
-			["Local Player"] = Pages["Misc"]:SubPage({Name = "Local Player"})
-		}
+	Fonts.Tahoma = registerFont("Tahoma", 400, "Normal", {
+		Id = "Tahoma.ttf",
+		Font = fetchSource("https://github.com/i77lhm/storage/raw/refs/heads/main/fonts/fs-tahoma-8px.ttf")
+	})
 
-		do
-			local SectionMovement = SubPages["Local Player"]:Section({Name = "Movement"})
-			local SectionExploits = SubPages["Local Player"]:Section({Name = "Character & Exploits"})
+	Fonts.SmallestPixel = registerFont("SmallestPixel", 400, "Normal", {
+		Id = "smallest_pixel-7.ttf",
+		Font = fetchSource("https://raw.githubusercontent.com/sametexe001/luas/main/smallest_pixel-7.ttf")
+	})
 
-			local SpeedToggle = SectionMovement:Toggle({
-				Name = "Speed Boost",
-				Flag = "Move_SpeedToggle",
-				Default = false,
-				Callback = function(val)
-					MiscConfig.SpeedEnabled = val
+	Arbuzi.Tahoma = Font.new(Fonts.Tahoma, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+	Arbuzi.SmallestPixel = Font.new(Fonts.SmallestPixel, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+end
+
+function Arbuzi:CreateObjects(name, properties)
+	local instance = Instance.new(name)
+	for prop, value in pairs(properties or {}) do
+		instance[prop] = value
+	end
+	return instance
+end
+
+function Arbuzi:InitEsp(data)
+	local objects = data.Objects
+
+	objects.TargetHolder = self:CreateObjects("Frame", {
+		Parent = self.Holder,
+		Visible = false,
+		BackgroundTransparency = 1,
+		Position = newUDim2(0, 0, 0, 0),
+		Size = newUDim2(0, 0, 0, 0),
+		BorderSizePixel = 0
+	})
+
+	objects.TopHolder = self:CreateObjects("Frame", {
+		Parent = objects.TargetHolder,
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		AnchorPoint = newVector2(0, 1),
+		Position = newUDim2(0, -2, 0, -5),
+		Size = newUDim2(1, 4, 0, 0),
+		BorderSizePixel = 0
+	})
+
+	objects.BottomHolder = self:CreateObjects("Frame", {
+		Parent = objects.TargetHolder,
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		Position = newUDim2(0, -2, 1, 3),
+		Size = newUDim2(1, 4, 0, 0),
+		BorderSizePixel = 0
+	})
+
+	objects.LeftHolder = self:CreateObjects("Frame", {
+		Parent = objects.TargetHolder,
+		AutomaticSize = Enum.AutomaticSize.X,
+		BackgroundTransparency = 1,
+		AnchorPoint = newVector2(1, 0),
+		Position = newUDim2(0, -5, 0, -2),
+		Size = newUDim2(0, 0, 1, 4),
+		BorderSizePixel = 0
+	})
+
+	objects.RightHolder = self:CreateObjects("Frame", {
+		Parent = objects.TargetHolder,
+		AutomaticSize = Enum.AutomaticSize.X,
+		BackgroundTransparency = 1,
+		Position = newUDim2(1, 5, 0, -2),
+		Size = newUDim2(0, 0, 1, 4),
+		BorderSizePixel = 0
+	})
+
+	objects.TopTextHolder = self:CreateObjects("Frame", {
+		Parent = objects.TopHolder,
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		Size = newUDim2(1, 0, 0, 0),
+		BorderSizePixel = 0
+	})
+
+	objects.BottomTextHolder = self:CreateObjects("Frame", {
+		Parent = objects.BottomHolder,
+		LayoutOrder = 2,
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		Size = newUDim2(1, 0, 0, 0),
+		BorderSizePixel = 0
+	})
+
+	objects.LeftTextHolder = self:CreateObjects("Frame", {
+		Parent = objects.LeftHolder,
+		AutomaticSize = Enum.AutomaticSize.XY,
+		BackgroundTransparency = 1,
+		Size = newUDim2(1, 0, 0, 0),
+		BorderSizePixel = 0
+	})
+
+	objects.RightTextHolder = self:CreateObjects("Frame", {
+		Parent = objects.RightHolder,
+		LayoutOrder = 2,
+		AutomaticSize = Enum.AutomaticSize.XY,
+		BackgroundTransparency = 1,
+		Size = newUDim2(0, 0, 0, 0),
+		BorderSizePixel = 0
+	})
+
+	objects.LeftBarHolder = self:CreateObjects("Frame", {
+		Parent = objects.LeftHolder,
+		AutomaticSize = Enum.AutomaticSize.X,
+		Visible = false,
+		BackgroundTransparency = 1,
+		Size = newUDim2(0, 0, 1, 0),
+		BorderSizePixel = 0
+	})
+
+	self:CreateObjects("UIListLayout", {
+		Parent = objects.TopTextHolder,
+		VerticalAlignment = Enum.VerticalAlignment.Bottom,
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		Padding = newUDim(0, 1),
+		SortOrder = Enum.SortOrder.LayoutOrder
+	})
+
+	self:CreateObjects("UIListLayout", {
+		Parent = objects.BottomTextHolder,
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		Padding = newUDim(0, -1),
+		SortOrder = Enum.SortOrder.LayoutOrder
+	})
+
+	self:CreateObjects("UIListLayout", {
+		Parent = objects.LeftTextHolder,
+		HorizontalAlignment = Enum.HorizontalAlignment.Right,
+		Padding = newUDim(0, 0),
+		SortOrder = Enum.SortOrder.LayoutOrder
+	})
+
+	self:CreateObjects("UIListLayout", {
+		Parent = objects.RightTextHolder,
+		HorizontalAlignment = Enum.HorizontalAlignment.Left,
+		Padding = newUDim(0, 0),
+		SortOrder = Enum.SortOrder.LayoutOrder
+	})
+
+	self:CreateObjects("UIListLayout", {
+		Parent = objects.LeftBarHolder,
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = Enum.HorizontalAlignment.Right,
+		Padding = newUDim(0, 5),
+		SortOrder = Enum.SortOrder.LayoutOrder
+	})
+
+	self:CreateObjects("UIListLayout", {
+		Parent = objects.TopHolder,
+		VerticalAlignment = Enum.VerticalAlignment.Bottom,
+		Padding = newUDim(0, 1),
+		SortOrder = Enum.SortOrder.LayoutOrder
+	})
+
+	self:CreateObjects("UIListLayout", {
+		Parent = objects.BottomHolder,
+		Padding = newUDim(0, 1),
+		SortOrder = Enum.SortOrder.LayoutOrder
+	})
+
+	self:CreateObjects("UIListLayout", {
+		Parent = objects.LeftHolder,
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = Enum.HorizontalAlignment.Left,
+		Padding = newUDim(0, 1),
+		SortOrder = Enum.SortOrder.LayoutOrder
+	})
+
+	self:CreateObjects("UIListLayout", {
+		Parent = objects.RightHolder,
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = Enum.HorizontalAlignment.Left,
+		Padding = newUDim(0, 1),
+		SortOrder = Enum.SortOrder.LayoutOrder
+	})
+
+	objects.BoxGlow = self:CreateObjects("ImageLabel", {
+		Parent = objects.TargetHolder,
+		Image = "rbxassetid://110204605000367",
+		ScaleType = Enum.ScaleType.Slice,
+		SliceCenter = Rect.new(newVector2(21, 21), newVector2(79, 79)),
+		AutomaticSize = Enum.AutomaticSize.XY,
+		ImageTransparency = 0.65,
+		ResampleMode = Enum.ResamplerMode.Pixelated,
+		Visible = true,
+		BackgroundTransparency = 1,
+		Position = newUDim2(0, -21, 0, -21),
+		Size = newUDim2(0, 0, 0, 0),
+		BorderSizePixel = 0
+	})
+
+	objects.BoxGlowGradient = self:CreateObjects("UIGradient", {
+		Parent = objects.BoxGlow,
+		Rotation = 90,
+		Color = ColorSequence.new(Color3.fromRGB(0, 0, 0)),
+		Transparency = numSeq({ numKey(0, 0), numKey(1, 0) })
+	})
+
+	self:CreateObjects("UIPadding", {
+		Parent = objects.BoxGlow,
+		PaddingTop = newUDim(0, 21),
+		PaddingBottom = newUDim(0, 20),
+		PaddingLeft = newUDim(0, 21),
+		PaddingRight = newUDim(0, 20)
+	})
+
+	objects.BoxOutlineHolder = self:CreateObjects("Frame", {
+		Parent = objects.BoxGlow,
+		Visible = false,
+		BackgroundTransparency = 1,
+		Size = newUDim2(0, 0, 0, 0),
+		BorderSizePixel = 0
+	})
+
+	objects.BoxOutline = self:CreateObjects("UIStroke", {
+		Parent = objects.BoxOutlineHolder,
+		Thickness = 3,
+		LineJoinMode = Enum.LineJoinMode.Miter
+	})
+
+	objects.BoxInlineHolder = self:CreateObjects("Frame", {
+		Parent = objects.BoxGlow,
+		Visible = false,
+		BackgroundTransparency = 1,
+		Position = newUDim2(0, -1, 0, -1),
+		Size = newUDim2(0, 0, 0, 0),
+		BorderSizePixel = 0
+	})
+
+	objects.BoxInline = self:CreateObjects("UIStroke", {
+		Parent = objects.BoxInlineHolder,
+		Color = Color3.fromRGB(255, 255, 255),
+		LineJoinMode = Enum.LineJoinMode.Miter
+	})
+
+	objects.BoxInlineGradient = self:CreateObjects("UIGradient", {
+		Parent = objects.BoxInline,
+		Rotation = 90,
+		Color = ColorSequence.new(Color3.fromRGB(255, 255, 255))
+	})
+
+	objects.BoxFill = self:CreateObjects("Frame", {
+		Parent = objects.BoxGlow,
+		Visible = false,
+		BackgroundTransparency = 0,
+		Size = newUDim2(0, 0, 0, 0),
+		BorderSizePixel = 0,
+		BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	})
+
+	objects.BoxFillGradient = self:CreateObjects("UIGradient", {
+		Parent = objects.BoxFill,
+		Rotation = 90,
+		Color = ColorSequence.new(Color3.fromRGB(255, 255, 255)),
+		Transparency = numSeq({ numKey(0, 1), numKey(1, 1) })
+	})
+
+	objects.HealthBarOutline = self:CreateObjects("Frame", {
+		Parent = objects.LeftBarHolder,
+		ZIndex = 5,
+		Visible = false,
+		Position = newUDim2(0, 0, 0, 0),
+		Size = newUDim2(0, 2, 1, 0),
+		BorderSizePixel = 0,
+		BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	})
+
+	self:CreateObjects("UIStroke", {
+		Parent = objects.HealthBarOutline,
+		Thickness = 1,
+		LineJoinMode = Enum.LineJoinMode.Miter
+	})
+
+	objects.HealthBar = self:CreateObjects("Frame", {
+		Parent = objects.HealthBarOutline,
+		ZIndex = 6,
+		AnchorPoint = newVector2(0, 1),
+		Position = newUDim2(0, 0, 1, 0),
+		Size = newUDim2(1, 0, 1, 0),
+		BorderSizePixel = 0,
+		BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	})
+
+	objects.HealthBarGradient = self:CreateObjects("UIGradient", {
+		Parent = objects.HealthBar,
+		Rotation = 90,
+		Color = ColorSequence.new(config.Bars["Health Bar"].Color)
+	})
+
+	objects.HealthBarText = self:CreateObjects("TextLabel", {
+		Parent = objects.HealthBarOutline,
+		FontFace = Arbuzi.SmallestPixel,
+		TextSize = 9,
+		ZIndex = 10,
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		Text = "",
+		TextXAlignment = Enum.TextXAlignment.Center,
+		AnchorPoint = newVector2(0.5, 0.5),
+		Position = newUDim2(0.5, 0, 1, 0),
+		BorderSizePixel = 0,
+		Visible = false,
+		BackgroundTransparency = 1,
+		AutomaticSize = Enum.AutomaticSize.XY
+	})
+
+	self:CreateObjects("UIStroke", {
+		Parent = objects.HealthBarText,
+		Color = Color3.fromRGB(0, 0, 0),
+		LineJoinMode = Enum.LineJoinMode.Miter
+	})
+
+	objects.TargetName = self:CreateObjects("TextLabel", {
+		Parent = objects.TopTextHolder,
+		FontFace = Arbuzi.Tahoma,
+		TextSize = 12,
+		LayoutOrder = 2,
+		TextColor3 = config.Texts.Name.Color,
+		Text = "",
+		TextXAlignment = Enum.TextXAlignment.Center,
+		BorderSizePixel = 0,
+		Visible = false,
+		BackgroundTransparency = 1,
+		ZIndex = 5,
+		AutomaticSize = Enum.AutomaticSize.XY
+	})
+
+	self:CreateObjects("UIStroke", {
+		Parent = objects.TargetName,
+		Color = Color3.fromRGB(0, 0, 0),
+		LineJoinMode = Enum.LineJoinMode.Miter
+	})
+
+	objects.Distance = self:CreateObjects("TextLabel", {
+		Parent = objects.BottomTextHolder,
+		FontFace = Arbuzi.SmallestPixel,
+		TextSize = 9,
+		LayoutOrder = 2,
+		TextColor3 = config.Texts.Distance.Color,
+		Text = "",
+		TextXAlignment = Enum.TextXAlignment.Center,
+		BorderSizePixel = 0,
+		Visible = false,
+		BackgroundTransparency = 1,
+		ZIndex = 5,
+		AutomaticSize = Enum.AutomaticSize.XY
+	})
+
+	self:CreateObjects("UIStroke", {
+		Parent = objects.Distance,
+		Color = Color3.fromRGB(0, 0, 0),
+		LineJoinMode = Enum.LineJoinMode.Miter
+	})
+
+	objects.WalkFlag = self:CreateObjects("TextLabel", {
+		Parent = objects.RightTextHolder,
+		FontFace = Arbuzi.SmallestPixel,
+		TextSize = 9,
+		LayoutOrder = 1,
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		Text = "Walking",
+		BorderSizePixel = 0,
+		Visible = false,
+		BackgroundTransparency = 1,
+		ZIndex = 5,
+		AutomaticSize = Enum.AutomaticSize.XY
+	})
+
+	self:CreateObjects("UIStroke", {
+		Parent = objects.WalkFlag,
+		Color = Color3.fromRGB(0, 0, 0),
+		LineJoinMode = Enum.LineJoinMode.Miter
+	})
+
+	objects.JumpFlag = self:CreateObjects("TextLabel", {
+		Parent = objects.RightTextHolder,
+		FontFace = Arbuzi.SmallestPixel,
+		TextSize = 9,
+		LayoutOrder = 2,
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		Text = "Jumping",
+		BorderSizePixel = 0,
+		Visible = false,
+		BackgroundTransparency = 1,
+		ZIndex = 5,
+		AutomaticSize = Enum.AutomaticSize.XY
+	})
+
+	self:CreateObjects("UIStroke", {
+		Parent = objects.JumpFlag,
+		Color = Color3.fromRGB(0, 0, 0),
+		LineJoinMode = Enum.LineJoinMode.Miter
+	})
+
+	objects.StateFlag = self:CreateObjects("TextLabel", {
+		Parent = objects.RightTextHolder,
+		FontFace = Arbuzi.SmallestPixel,
+		TextSize = 9,
+		LayoutOrder = 3,
+		TextColor3 = config.Texts.State.Color,
+		Text = "Standing",
+		BorderSizePixel = 0,
+		Visible = false,
+		BackgroundTransparency = 1,
+		ZIndex = 5,
+		AutomaticSize = Enum.AutomaticSize.XY
+	})
+
+	self:CreateObjects("UIStroke", {
+		Parent = objects.StateFlag,
+		Color = Color3.fromRGB(0, 0, 0),
+		LineJoinMode = Enum.LineJoinMode.Miter
+	})
+
+	objects.Weapon = self:CreateObjects("TextLabel", {
+		Parent = objects.BottomTextHolder,
+		FontFace = Arbuzi.SmallestPixel,
+		TextSize = 9,
+		LayoutOrder = 3,
+		TextColor3 = config.Texts.Weapon.Color,
+		Text = "none",
+		BorderSizePixel = 0,
+		Visible = false,
+		BackgroundTransparency = 1,
+		ZIndex = 5,
+		AutomaticSize = Enum.AutomaticSize.XY
+	})
+
+	self:CreateObjects("UIStroke", {
+		Parent = objects.Weapon,
+		Color = Color3.fromRGB(0, 0, 0),
+		LineJoinMode = Enum.LineJoinMode.Miter
+	})
+
+	objects.WeaponIcon = self:CreateObjects("ImageLabel", {
+		Parent = objects.BottomTextHolder,
+		LayoutOrder = 4,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Visible = false,
+		Size = udim2FromOffset(24, 24),
+		ScaleType = Enum.ScaleType.Fit,
+		ZIndex = 5
+	})
+end
+
+function Arbuzi:CalculateBox(data)
+	local rootPart = data.RootPart
+	if not rootPart then
+		return nil, nil, nil, nil, false
+	end
+
+	local rootScreen, onScreen = camera:WorldToViewportPoint(rootPart.Position)
+	if not onScreen then
+		return nil, nil, nil, nil, false
+	end
+
+	local boundingBox = config.Boxes["Bounding Box"]
+	if boundingBox.Enabled then
+		local character = data.Character
+		local scrMinX, scrMinY = math.huge, math.huge
+		local scrMaxX, scrMaxY = -math.huge, -math.huge
+		local hasValidParts = false
+		local includeAccessories = boundingBox.IncludeAccessories
+
+		for _, part in ipairs(character:GetChildren()) do
+			if part:IsA("BasePart") and part.Transparency ~= 1 and part ~= rootPart then
+				local parent = part.Parent
+				if not includeAccessories and parent and parent:IsA("Accessory") then
+					continue
 				end
-			})
 
-			local SpeedKeybind
-			SpeedKeybind = SpeedToggle:Keybind({
-				Name = "Speed Key",
-				Flag = "Move_SpeedKey",
-				Default = "None",
-				Mode = "Hold",
-				Callback = function(val)
-					if not isKeyAssigned(SpeedKeybind) then
-						return
-					end
-					local state = if typeof(val) == "boolean" then val else not MiscConfig.SpeedEnabled
-					if SpeedToggle.Set then
-						SpeedToggle:Set(state)
-					elseif SpeedToggle.SetValue then
-						SpeedToggle:SetValue(state)
-					end
-					MiscConfig.SpeedEnabled = state
+				local partScreen, partOnScreen = camera:WorldToViewportPoint(part.Position)
+				if not partOnScreen or partScreen.Z <= 0 then
+					continue
 				end
-			})
 
-			SectionMovement:Slider({
-				Name = "Speed Value",
-				Flag = "Move_SpeedValue",
-				Default = 28,
-				Compact = false,
-				Min = 16,
-				Max = 80,
-				Decimals = 1,
-				Suffix = " ws",
-				Callback = function(val)
-					MiscConfig.SpeedValue = val
-				end
-			})
+				hasValidParts = true
+				local cf = part.CFrame
+				local sz = part.Size
+				local hx, hy, hz = sz.X * 0.5, sz.Y * 0.5, sz.Z * 0.5
+				local rx, uy, lz = cf.RightVector, cf.UpVector, cf.LookVector
+				local depthScale = cachedFocalLength / partScreen.Z
 
-			local FlyToggle = SectionMovement:Toggle({
-				Name = "Fly",
-				Flag = "Move_FlyToggle",
-				Default = false,
-				Callback = function(val)
-					MiscConfig.FlyEnabled = val
-				end
-			})
+				local ex = (mathAbs(rx.X * hx) + mathAbs(uy.X * hy) + mathAbs(lz.X * hz)) * depthScale
+				local ey = (mathAbs(rx.Y * hx) + mathAbs(uy.Y * hy) + mathAbs(lz.Y * hz)) * depthScale
 
-			local FlyKeybind
-			FlyKeybind = FlyToggle:Keybind({
-				Name = "Fly Key",
-				Flag = "Move_FlyKey",
-				Default = "None",
-				Mode = "Toggle",
-				Callback = function(val)
-					if not isKeyAssigned(FlyKeybind) then
-						return
-					end
-					local state = if typeof(val) == "boolean" then val else not MiscConfig.FlyEnabled
-					if FlyToggle.Set then
-						FlyToggle:Set(state)
-					elseif FlyToggle.SetValue then
-						FlyToggle:SetValue(state)
-					end
-					MiscConfig.FlyEnabled = state
-				end
-			})
+				local pMinX, pMaxX = partScreen.X - ex, partScreen.X + ex
+				local pMinY, pMaxY = partScreen.Y - ey, partScreen.Y + ey
 
-			SectionMovement:Dropdown({
-				Name = "Fly Method",
-				Flag = "Move_FlyMethod",
-				Multi = false,
-				Items = {"CFrame", "Velocity"},
-				Default = "CFrame",
-				Callback = function(val)
-					MiscConfig.FlyMethod = val
-				end
-			})
-
-			SectionMovement:Slider({
-				Name = "Fly Speed",
-				Flag = "Move_FlySpeed",
-				Default = 40,
-				Compact = false,
-				Min = 10,
-				Max = 150,
-				Decimals = 1,
-				Suffix = " studs",
-				Callback = function(val)
-					MiscConfig.FlySpeed = val
-				end
-			})
-
-			SectionMovement:Toggle({
-				Name = "Anti-Kick Timer",
-				Flag = "Move_FlyTimerEnabled",
-				Default = true,
-				Callback = function(val)
-					MiscConfig.FlyTimerEnabled = val
-				end
-			})
-
-			SectionMovement:Slider({
-				Name = "Timer Limit",
-				Flag = "Move_FlyTimerDuration",
-				Default = 3,
-				Compact = false,
-				Min = 1,
-				Max = 6,
-				Decimals = 1,
-				Suffix = " s",
-				Callback = function(val)
-					MiscConfig.FlyTimerDuration = val
-				end
-			})
-
-			SectionExploits:Toggle({
-				Name = "Instant Loot",
-				Flag = "Misc_InstantLoot",
-				Default = false,
-				Callback = function(val)
-					MiscConfig.InstantLoot = val
-				end
-			})
-
-			SectionExploits:Toggle({
-				Name = "No Fall Damage",
-				Flag = "Misc_NoFall",
-				Default = false,
-				Callback = function(val)
-					MiscConfig.NoFall = val
-				end
-			})
-
-			local ZoomToggle = SectionExploits:Toggle({
-				Name = "Camera Zoom",
-				Flag = "Misc_ZoomToggle",
-				Default = false,
-				Callback = function(val)
-					MiscConfig.ZoomEnabled = val
-				end
-			})
-
-			local ZoomKeybind
-			ZoomKeybind = ZoomToggle:Keybind({
-				Name = "Zoom Key",
-				Flag = "Misc_ZoomKey",
-				Default = "None",
-				Mode = "Hold",
-				Callback = function(val)
-					if not isKeyAssigned(ZoomKeybind) then
-						return
-					end
-					local state = if typeof(val) == "boolean" then val else not MiscConfig.ZoomEnabled
-					if ZoomToggle.Set then
-						ZoomToggle:Set(state)
-					elseif ZoomToggle.SetValue then
-						ZoomToggle:SetValue(state)
-					end
-					MiscConfig.ZoomEnabled = state
-				end
-			})
-
-			SectionExploits:Slider({
-				Name = "Zoom FOV",
-				Flag = "Misc_ZoomFOV",
-				Default = 25,
-				Compact = false,
-				Min = 5,
-				Max = 60,
-				Decimals = 1,
-				Suffix = "°",
-				Callback = function(val)
-					MiscConfig.ZoomFOV = val
-				end
-			})
-
-			local XRayToggle = SectionExploits:Toggle({
-				Name = "X-Ray (Bases)",
-				Flag = "Misc_XRayToggle",
-				Default = false,
-				Callback = function(val)
-					if Misc and Misc.SetXRay then
-						Misc:SetXRay(val)
-					else
-						MiscConfig.XRayEnabled = val
-					end
-				end
-			})
-
-			local XRayKeybind
-			XRayKeybind = XRayToggle:Keybind({
-				Name = "X-Ray Key",
-				Flag = "Misc_XRayKey",
-				Default = "None",
-				Mode = "Toggle",
-				Callback = function(val)
-					if not isKeyAssigned(XRayKeybind) then
-						return
-					end
-					local state = if typeof(val) == "boolean" then val else not MiscConfig.XRayEnabled
-					if XRayToggle.Set then
-						XRayToggle:Set(state)
-					elseif XRayToggle.SetValue then
-						XRayToggle:SetValue(state)
-					end
-					if Misc and Misc.SetXRay then
-						Misc:SetXRay(state)
-					else
-						MiscConfig.XRayEnabled = state
-					end
-				end
-			})
-
-			SectionExploits:Slider({
-				Name = "X-Ray Transparency",
-				Flag = "Misc_XRayTransparency",
-				Default = 100,
-				Compact = false,
-				Min = 1,
-				Max = 100,
-				Decimals = 1,
-				Suffix = "%",
-				Callback = function(val)
-					if Misc and Misc.SetXRayTransparency then
-						Misc:SetXRayTransparency(val / 100)
-					else
-						MiscConfig.XRayTransparency = val / 100
-					end
-				end
-			})
+				if pMinX < scrMinX then scrMinX = pMinX end
+				if pMaxX > scrMaxX then scrMaxX = pMaxX end
+				if pMinY < scrMinY then scrMinY = pMinY end
+				if pMaxY > scrMaxY then scrMaxY = pMaxY end
+			end
 		end
+
+		if not hasValidParts then
+			local scale = (rootPart.Size.Y * viewPortY) / (rootScreen.Z * 2)
+			local w, h = 3 * scale, 4.5 * scale
+			return w, h, rootScreen.X - (w * 0.5), rootScreen.Y - (h * 0.5), onScreen
+		end
+
+		local padX = boundingBox.BoxX
+		local padY = boundingBox.BoxY
+		local w = (scrMaxX - scrMinX) + padX
+		local h = (scrMaxY - scrMinY) + padY
+		return w, h, scrMinX - (padX * 0.5), scrMinY - (padY * 0.5), true
+	else
+		local scale = (rootPart.Size.Y * viewPortY) / (rootScreen.Z * 2)
+		local w, h = 3 * scale, 4.5 * scale
+		return w, h, rootScreen.X - (w * 0.5), rootScreen.Y - (h * 0.5), onScreen
 	end
 end
 
-Library:Notification("Loaded in " .. stringFormat("%.4f", os.clock() - loadingTick) .. " seconds", 5, Library.Theme.Accent)
+function Arbuzi:AddTarget(target)
+	if not target:IsA("Model") then return end
+	if target.Name == localPlayer.Name or (localPlayer.Character and target == localPlayer.Character) then return end
+	if self.Cache[target] or self.Pending[target] then return end
+
+	self.Pending[target] = true
+
+	task.spawn(function()
+		local rootPart = target:FindFirstChild("HumanoidRootPart")
+		local humanoid = target:FindFirstChildOfClass("Humanoid")
+		local startTime = os.clock()
+
+		while (not rootPart or not humanoid) and target.Parent and (os.clock() - startTime < 8) do
+			if not rootPart then
+				rootPart = target:FindFirstChild("HumanoidRootPart")
+			end
+			if not humanoid then
+				humanoid = target:FindFirstChildOfClass("Humanoid")
+			end
+			if rootPart and humanoid then break end
+			task.wait(0.2)
+		end
+
+		self.Pending[target] = nil
+
+		if not (rootPart and humanoid and target.Parent) then return end
+		if not self.Loaded or self.Cache[target] then return end
+
+		local data = {
+			Target = target,
+			Objects = {},
+			Conns = {},
+			Character = target,
+			RootPart = rootPart,
+			Humanoid = humanoid,
+			Health = humanoid.Health,
+			MaxHealth = humanoid.MaxHealth,
+			Alive = humanoid.Health > 0,
+			CurrentWeapon = resolveEquippedWeapon(target),
+			WalkActive = false,
+			JumpActive = false,
+			LastW = nil,
+			LastH = nil,
+			LastX = nil,
+			LastY = nil,
+			LastGlowTop = nil,
+			LastGlowBot = nil,
+			LastGlowT1 = nil,
+			LastGlowT2 = nil,
+			LastGradTop = nil,
+			LastGradBot = nil,
+			LastFillTop = nil,
+			LastFillBot = nil,
+			LastFillT1 = nil,
+			LastFillT2 = nil,
+			LastDist = nil,
+			LastDistColor = nil,
+			LastDisplayName = nil,
+			LastNameColor = nil,
+			LastHealthColor = nil,
+			LastHealthFloor = nil,
+			LastRatio = nil,
+			LastWeapon = nil,
+			LastWeaponColor = nil,
+			LastStateColor = nil,
+			LastIcon = nil,
+			LastIconSize = nil
+		}
+
+		self:InitEsp(data)
+		self.Cache[target] = data
+
+		data.Conns.Health = humanoid.HealthChanged:Connect(function(newHealth)
+			data.Alive = newHealth > 0
+			data.Health = newHealth
+		end)
+
+		data.Conns.Died = humanoid.Died:Connect(function()
+			data.Alive = false
+		end)
+
+		data.Conns.ChildAdded = target.ChildAdded:Connect(function(child)
+			if child.Name == "Worldmodel" or child:IsA("Tool") then
+				task.delay(0.05, function()
+					data.CurrentWeapon = resolveEquippedWeapon(target)
+				end)
+			end
+		end)
+
+		data.Conns.ChildRemoved = target.ChildRemoved:Connect(function(child)
+			if child.Name == "Worldmodel" or child:IsA("Tool") then
+				task.delay(0.05, function()
+					data.CurrentWeapon = resolveEquippedWeapon(target)
+				end)
+			end
+		end)
+
+		local objects = data.Objects
+		data.Conns.MoveDir = humanoid:GetPropertyChangedSignal("MoveDirection"):Connect(function()
+			local walking = humanoid.MoveDirection ~= zeroVector3
+			if walking and not data.WalkActive then
+				data.WalkActive = true
+				objects.StateFlag.Visible = false
+				objects.WalkFlag.Visible = true
+			elseif not walking and data.WalkActive then
+				data.WalkActive = false
+				objects.WalkFlag.Visible = false
+				if not data.JumpActive then
+					objects.StateFlag.Visible = true
+				end
+			end
+		end)
+
+		data.Conns.StateChange = humanoid.StateChanged:Connect(function(_, newState)
+			local jumping = newState == Enum.HumanoidStateType.Jumping or newState == Enum.HumanoidStateType.Freefall
+			if jumping and not data.JumpActive then
+				data.JumpActive = true
+				objects.StateFlag.Visible = false
+				objects.JumpFlag.Visible = true
+			elseif not jumping and data.JumpActive then
+				data.JumpActive = false
+				objects.JumpFlag.Visible = false
+				if not data.WalkActive then
+					objects.StateFlag.Visible = true
+				end
+			end
+		end)
+
+		data.Conns.Ancestry = target.AncestryChanged:Connect(function(_, parent)
+			if not parent then
+				self:RemoveTarget(target)
+			end
+		end)
+	end)
+end
+
+function Arbuzi:RemoveTarget(target)
+	self.Pending[target] = nil
+	local data = self.Cache[target]
+	if not data then return end
+
+	for _, conn in pairs(data.Conns) do
+		conn:Disconnect()
+	end
+	tableClear(data.Conns)
+
+	if data.Objects.TargetHolder then
+		data.Objects.TargetHolder:Destroy()
+	end
+	tableClear(data.Objects)
+
+	self.Cache[target] = nil
+end
+
+function Arbuzi:Update(target, data)
+	local objects = data.Objects
+	local character = data.Character
+
+	if not character or not character.Parent then
+		if objects.TargetHolder.Visible then objects.TargetHolder.Visible = false end
+		return
+	end
+
+	local rootPart = data.RootPart
+	local humanoid = data.Humanoid
+
+	if not rootPart or not humanoid or humanoid.Health <= 0 then
+		if objects.TargetHolder.Visible then objects.TargetHolder.Visible = false end
+		return
+	end
+
+	local w, h, x, y, onScreen = self:CalculateBox(data)
+	if not onScreen or not w then
+		if objects.TargetHolder.Visible then objects.TargetHolder.Visible = false end
+		return
+	end
+
+	w = mathFloor(w)
+	h = mathFloor(h)
+	x = mathFloor(x)
+	y = mathFloor(y)
+
+	if not objects.TargetHolder.Visible then objects.TargetHolder.Visible = true end
+
+	if data.LastX ~= x or data.LastY ~= y then
+		objects.TargetHolder.Position = udim2FromOffset(x, y)
+		data.LastX = x
+		data.LastY = y
+	end
+
+	if data.LastW ~= w or data.LastH ~= h then
+		objects.TargetHolder.Size = udim2FromOffset(w, h)
+		objects.BoxGlow.Size = udim2FromOffset(w, h)
+		objects.BoxOutlineHolder.Size = udim2FromOffset(w, h)
+		objects.BoxInlineHolder.Size = udim2FromOffset(w + 2, h + 2)
+		objects.BoxFill.Size = udim2FromOffset(w, h)
+		data.LastW = w
+		data.LastH = h
+	end
+
+	local boxesCfg = config.Boxes
+	local textsCfg = config.Texts
+
+	if boxesCfg.Enabled then
+		if boxesCfg["Box Glow"].Enabled then
+			if objects.BoxGlow.ImageTransparency ~= 0 then objects.BoxGlow.ImageTransparency = 0 end
+			local glowTop = boxesCfg["Box Glow"].Top
+			local glowBot = boxesCfg["Box Glow"].Bot
+			if data.LastGlowTop ~= glowTop or data.LastGlowBot ~= glowBot then
+				objects.BoxGlowGradient.Color = ColorSequence.new(glowTop, glowBot)
+				data.LastGlowTop = glowTop
+				data.LastGlowBot = glowBot
+			end
+			local t1 = boxesCfg["Box Glow"].Transparency[1]
+			local t2 = boxesCfg["Box Glow"].Transparency[2]
+			if data.LastGlowT1 ~= t1 or data.LastGlowT2 ~= t2 then
+				objects.BoxGlowGradient.Transparency = numSeq({ numKey(0, t1), numKey(1, t2) })
+				data.LastGlowT1 = t1
+				data.LastGlowT2 = t2
+			end
+		else
+			if objects.BoxGlow.ImageTransparency ~= 1 then objects.BoxGlow.ImageTransparency = 1 end
+		end
+
+		if not objects.BoxOutlineHolder.Visible then objects.BoxOutlineHolder.Visible = true end
+		if not objects.BoxInlineHolder.Visible then objects.BoxInlineHolder.Visible = true end
+
+		local gradTop = boxesCfg.Gradients.Top
+		local gradBot = boxesCfg.Gradients.Bot
+		if data.LastGradTop ~= gradTop or data.LastGradBot ~= gradBot then
+			objects.BoxInlineGradient.Color = ColorSequence.new(gradTop, gradBot)
+			data.LastGradTop = gradTop
+			data.LastGradBot = gradBot
+		end
+
+		if boxesCfg.Filled.Enabled then
+			if not objects.BoxFill.Visible then objects.BoxFill.Visible = true end
+			local fillTop = boxesCfg.Filled.Top
+			local fillBot = boxesCfg.Filled.Bot
+			local fillT1 = boxesCfg.Filled.Transparency[1]
+			local fillT2 = boxesCfg.Filled.Transparency[2]
+
+			if data.LastFillTop ~= fillTop or data.LastFillBot ~= fillBot then
+				objects.BoxFillGradient.Color = ColorSequence.new(fillTop, fillBot)
+				data.LastFillTop = fillTop
+				data.LastFillBot = fillBot
+			end
+
+			if data.LastFillT1 ~= fillT1 or data.LastFillT2 ~= fillT2 then
+				objects.BoxFillGradient.Transparency = numSeq({ numKey(0, fillT1), numKey(1, fillT2) })
+				data.LastFillT1 = fillT1
+				data.LastFillT2 = fillT2
+			end
+		else
+			if objects.BoxFill.Visible then objects.BoxFill.Visible = false end
+		end
+	else
+		if objects.BoxGlow.ImageTransparency ~= 1 then objects.BoxGlow.ImageTransparency = 1 end
+		if objects.BoxOutlineHolder.Visible then objects.BoxOutlineHolder.Visible = false end
+		if objects.BoxInlineHolder.Visible then objects.BoxInlineHolder.Visible = false end
+		if objects.BoxFill.Visible then objects.BoxFill.Visible = false end
+	end
+
+	if textsCfg.Name.Enabled then
+		if not objects.TargetName.Visible then objects.TargetName.Visible = true end
+		local playerObj = playersService:FindFirstChild(target.Name)
+		local displayName = playerObj and playerObj.DisplayName or target.Name
+		if data.LastDisplayName ~= displayName then
+			objects.TargetName.Text = displayName
+			data.LastDisplayName = displayName
+		end
+		local nameColor = textsCfg.Name.Color
+		if data.LastNameColor ~= nameColor then
+			objects.TargetName.TextColor3 = nameColor
+			data.LastNameColor = nameColor
+		end
+	else
+		if objects.TargetName.Visible then objects.TargetName.Visible = false end
+	end
+
+	if textsCfg.Distance.Enabled then
+		if not objects.Distance.Visible then objects.Distance.Visible = true end
+		local dist = mathFloor((cameraPosition - rootPart.Position).Magnitude)
+		if data.LastDist ~= dist then
+			objects.Distance.Text = stringFormat("%d st", dist)
+			data.LastDist = dist
+		end
+		local distColor = textsCfg.Distance.Color
+		if data.LastDistColor ~= distColor then
+			objects.Distance.TextColor3 = distColor
+			data.LastDistColor = distColor
+		end
+	else
+		if objects.Distance.Visible then objects.Distance.Visible = false end
+	end
+
+	local healthCfg = config.Bars["Health Bar"]
+	if healthCfg.Enabled then
+		local health = data.Health or 0
+		local maxHealth = data.MaxHealth or 100
+		local ratio = mathClamp(health / maxHealth, 0, 1)
+
+		if not objects.LeftBarHolder.Visible then objects.LeftBarHolder.Visible = true end
+		if not objects.HealthBarOutline.Visible then objects.HealthBarOutline.Visible = true end
+
+		if data.LastRatio ~= ratio then
+			objects.HealthBar.Size = newUDim2(1, 0, ratio, 0)
+			data.LastRatio = ratio
+		end
+
+		local barColor = healthCfg.Color
+		if data.LastHealthColor ~= barColor then
+			objects.HealthBarGradient.Color = ColorSequence.new(barColor)
+			data.LastHealthColor = barColor
+		end
+
+		if ratio < 1 then
+			if not objects.HealthBarText.Visible then objects.HealthBarText.Visible = true end
+			local flooredHealth = mathFloor(health)
+			if data.LastHealthFloor ~= flooredHealth then
+				objects.HealthBarText.Text = stringFormat("%d", flooredHealth)
+				objects.HealthBarText.Position = newUDim2(0.5, 0, 1 - ratio, 0)
+				data.LastHealthFloor = flooredHealth
+			end
+		else
+			if objects.HealthBarText.Visible then objects.HealthBarText.Visible = false end
+		end
+	else
+		if objects.HealthBarOutline.Visible then objects.HealthBarOutline.Visible = false end
+		if objects.LeftBarHolder.Visible then objects.LeftBarHolder.Visible = false end
+	end
+
+	if data.CurrentWeapon == "Worldmodel" or data.CurrentWeapon == "none" or not data.CurrentWeapon then
+		data.CurrentWeapon = resolveEquippedWeapon(character)
+	end
+
+	local currentWeapon = data.CurrentWeapon or "none"
+	local iconId = weaponIcons[currentWeapon]
+	local iconCfg = textsCfg.WeaponIcon
+	local showIcon = iconCfg and iconCfg.Enabled and iconId ~= nil
+
+	local weaponCfg = textsCfg.Weapon
+	if weaponCfg.Enabled and not showIcon then
+		if not objects.Weapon.Visible then objects.Weapon.Visible = true end
+		if data.LastWeapon ~= currentWeapon then
+			objects.Weapon.Text = currentWeapon
+			data.LastWeapon = currentWeapon
+		end
+		local weaponColor = weaponCfg.Color
+		if data.LastWeaponColor ~= weaponColor then
+			objects.Weapon.TextColor3 = weaponColor
+			data.LastWeaponColor = weaponColor
+		end
+	else
+		if objects.Weapon.Visible then objects.Weapon.Visible = false end
+	end
+
+	if showIcon then
+		if not objects.WeaponIcon.Visible then objects.WeaponIcon.Visible = true end
+		if data.LastIcon ~= iconId then
+			objects.WeaponIcon.Image = iconId
+			data.LastIcon = iconId
+		end
+		local iconSize = iconCfg.Size or 24
+		if data.LastIconSize ~= iconSize then
+			objects.WeaponIcon.Size = udim2FromOffset(iconSize, iconSize)
+			data.LastIconSize = iconSize
+		end
+	else
+		if objects.WeaponIcon.Visible then objects.WeaponIcon.Visible = false end
+	end
+end
+
+function Arbuzi:Load()
+	if self.Loaded then return self end
+
+	local function setupCameraListeners()
+		if self.Threads["CameraFOV"] then self.Threads["CameraFOV"]:Disconnect() end
+		if self.Threads["CameraVP"] then self.Threads["CameraVP"]:Disconnect() end
+
+		camera = workspaceService.CurrentCamera
+		if not camera then return end
+
+		updateCameraCache()
+		self.Threads["CameraFOV"] = camera:GetPropertyChangedSignal("FieldOfView"):Connect(updateCameraCache)
+		self.Threads["CameraVP"] = camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateCameraCache)
+	end
+
+	setupCameraListeners()
+
+	-- Track camera replacement on teleport / respawn.
+	self.Threads["CameraWatcher"] = workspaceService:GetPropertyChangedSignal("CurrentCamera"):Connect(setupCameraListeners)
+
+	self.Holder = self:CreateObjects("ScreenGui", {
+		Name = "\n",
+		Parent = getGuiParent(),
+		ResetOnSpawn = false,
+		DisplayOrder = -1,
+		IgnoreGuiInset = true
+	})
+
+	local function hookPlayersFolder(folder)
+		if self.Threads["FolderChildAdded"] then self.Threads["FolderChildAdded"]:Disconnect() end
+		if self.Threads["FolderChildRemoved"] then self.Threads["FolderChildRemoved"]:Disconnect() end
+
+		for _, model in ipairs(folder:GetChildren()) do
+			if model:IsA("Model") then
+				self:AddTarget(model)
+			end
+		end
+
+		self.Threads["FolderChildAdded"] = folder.ChildAdded:Connect(function(child)
+			if child:IsA("Model") then
+				self:AddTarget(child)
+			end
+		end)
+
+		self.Threads["FolderChildRemoved"] = folder.ChildRemoved:Connect(function(child)
+			self:RemoveTarget(child)
+		end)
+	end
+
+	local playersFolder = workspaceService:FindFirstChild("Players")
+	if playersFolder then
+		hookPlayersFolder(playersFolder)
+	end
+
+	self.Threads["WorkspaceFolderWatcher"] = workspaceService.ChildAdded:Connect(function(child)
+		if child.Name == "Players" and child:IsA("Folder") then
+			hookPlayersFolder(child)
+		end
+	end)
+
+	-- Fallback loop to rescan players that streamed in late.
+	self.Threads["RescanRoutine"] = task.spawn(function()
+		while self.Loaded do
+			local currentFolder = workspaceService:FindFirstChild("Players")
+			if currentFolder then
+				for _, model in ipairs(currentFolder:GetChildren()) do
+					if model:IsA("Model") and not self.Cache[model] and not self.Pending[model] then
+						self:AddTarget(model)
+					end
+				end
+			end
+			task.wait(1.5)
+		end
+	end)
+
+	self.PreRender = runService.RenderStepped:Connect(function()
+		if not config.Enabled then
+			for _, data in pairs(self.Cache) do
+				if data.Objects.TargetHolder and data.Objects.TargetHolder.Visible then
+					data.Objects.TargetHolder.Visible = false
+				end
+			end
+			return
+		end
+
+		if not camera then
+			camera = workspaceService.CurrentCamera
+			if not camera then return end
+		end
+
+		cameraPosition = camera.CFrame.Position
+		for target, data in pairs(self.Cache) do
+			self:Update(target, data)
+		end
+	end)
+
+	self.Loaded = true
+	shared.Arbuzi = self
+	return self
+end
+
+function Arbuzi:GetConfig()
+	return self.Table
+end
+
+function Arbuzi:Unload()
+	if self.PreRender then
+		self.PreRender:Disconnect()
+		self.PreRender = nil
+	end
+
+	for target in pairs(self.Cache) do
+		self:RemoveTarget(target)
+	end
+
+	for _, conn in pairs(self.Threads) do
+		if typeof(conn) == "RBXScriptConnection" then
+			conn:Disconnect()
+		end
+	end
+	tableClear(self.Threads)
+
+	if self.Holder then
+		self.Holder:Destroy()
+		self.Holder = nil
+	end
+
+	tableClear(self.Cache)
+	tableClear(self.Pending)
+	self.Loaded = false
+	shared.Arbuzi = nil
+end
+
+return Arbuzi
