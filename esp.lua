@@ -50,42 +50,51 @@ local viewPortY = 0
 
 -- Weapon Database for fingerprinting.
 local weaponMeshMap = {}
-local weaponPartMap = {}
+local toolSignatures = {}
 
----Scan Prefabs folder to build weapon signatures.
+---Find tools container recursively across services.
+---@return Instance?
+local function getToolsFolder()
+	local prefabs = workspaceService:FindFirstChild("Prefabs", true) or replicatedStorage:FindFirstChild("Prefabs", true)
+	if prefabs then
+		local tools = prefabs:FindFirstChild("Tools")
+		if tools then return tools end
+	end
+	return workspaceService:FindFirstChild("Tools", true) or replicatedStorage:FindFirstChild("Tools", true)
+end
+
+---Build weapon database from prefabs.
+---@return boolean
 local function indexWeaponPrefabs()
-	local prefabs = replicatedStorage:FindFirstChild("Prefabs") or workspaceService:FindFirstChild("Prefabs")
-	if not prefabs then return end
+	local tools = getToolsFolder()
+	if not tools then return false end
 
-	local tools = prefabs:FindFirstChild("Tools")
-	if not tools then return end
-
-	local ignoredPartNames = {
-		["Handle"] = true,
-		["Attachments"] = true,
-		["bullets"] = true,
-		["magthing"] = true,
-		["MAG"] = true
-	}
-
+	local indexed = false
 	for _, tool in ipairs(tools:GetChildren()) do
 		local worldModel = tool:FindFirstChild("Worldmodel")
 		if worldModel then
+			indexed = true
+			local signature = {}
 			for _, part in ipairs(worldModel:GetChildren()) do
 				if part:IsA("MeshPart") and part.MeshId ~= "" then
 					weaponMeshMap[part.MeshId] = tool.Name
 				end
-				if not ignoredPartNames[part.Name] then
-					weaponPartMap[part.Name] = tool.Name
-				end
+				signature[part.Name] = true
 			end
+			toolSignatures[tool.Name] = signature
 		end
 	end
+	return indexed
 end
 
-indexWeaponPrefabs()
+-- Initialize indexing with retries.
+task.spawn(function()
+	while not indexWeaponPrefabs() do
+		task.wait(1)
+	end
+end)
 
----Identify weapon model inside character.
+---Resolve weapon name from character model.
 ---@param character Model
 ---@return string
 local function resolveEquippedWeapon(character)
@@ -99,16 +108,50 @@ local function resolveEquippedWeapon(character)
 		return "none"
 	end
 
-	for _, part in ipairs(worldModel:GetChildren()) do
+	-- Check potential game attributes.
+	local attr = worldModel:GetAttribute("Weapon") 
+		or worldModel:GetAttribute("Name") 
+		or character:GetAttribute("EquippedWeapon")
+		or character:GetAttribute("Weapon")
+	if attr and typeof(attr) == "string" and attr ~= "" then
+		return attr
+	end
+
+	local children = worldModel:GetChildren()
+	if #children == 0 then
+		return "Worldmodel"
+	end
+
+	-- Match by MeshId.
+	for _, part in ipairs(children) do
 		if part:IsA("MeshPart") and part.MeshId ~= "" then
-			local matchedName = weaponMeshMap[part.MeshId]
-			if matchedName then return matchedName end
+			local matched = weaponMeshMap[part.MeshId]
+			if matched then return matched end
 		end
 	end
 
-	for _, part in ipairs(worldModel:GetChildren()) do
-		local matchedName = weaponPartMap[part.Name]
-		if matchedName then return matchedName end
+	-- Match by part name signatures.
+	local bestTool, bestScore = nil, 0
+	for toolName, sig in pairs(toolSignatures) do
+		local score = 0
+		for _, part in ipairs(children) do
+			if sig[part.Name] then
+				score = score + 1
+			end
+		end
+		if score > bestScore then
+			bestScore = score
+			bestTool = toolName
+		end
+	end
+
+	if bestTool and bestScore >= 2 then
+		return bestTool
+	end
+
+	-- Fallback heuristic for standard models.
+	if worldModel:FindFirstChild("ShotgunShell1") or worldModel:FindFirstChild("pump") then
+		return "Pump Shotgun"
 	end
 
 	return "Worldmodel"
@@ -797,10 +840,9 @@ function Arbuzi:AddTarget(target)
 		data.Alive = false
 	end)
 
-	-- Event-driven weapon detection.
 	data.Conns.ChildAdded = target.ChildAdded:Connect(function(child)
 		if child.Name == "Worldmodel" or child:IsA("Tool") then
-			task.defer(function()
+			task.delay(0.05, function()
 				data.CurrentWeapon = resolveEquippedWeapon(target)
 			end)
 		end
@@ -808,7 +850,7 @@ function Arbuzi:AddTarget(target)
 
 	data.Conns.ChildRemoved = target.ChildRemoved:Connect(function(child)
 		if child.Name == "Worldmodel" or child:IsA("Tool") then
-			task.defer(function()
+			task.delay(0.05, function()
 				data.CurrentWeapon = resolveEquippedWeapon(target)
 			end)
 		end
@@ -1050,8 +1092,13 @@ function Arbuzi:Update(target, data)
 	local weaponCfg = textsCfg.Weapon
 	if weaponCfg.Enabled then
 		if not objects.Weapon.Visible then objects.Weapon.Visible = true end
-		local currentWeapon = data.CurrentWeapon or "none"
+		
+		-- Continuously retry until resolved if name is still generic.
+		if data.CurrentWeapon == "Worldmodel" or data.CurrentWeapon == "none" or not data.CurrentWeapon then
+			data.CurrentWeapon = resolveEquippedWeapon(character)
+		end
 
+		local currentWeapon = data.CurrentWeapon or "none"
 		if data.LastWeapon ~= currentWeapon then
 			objects.Weapon.Text = currentWeapon
 			data.LastWeapon = currentWeapon
