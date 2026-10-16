@@ -783,7 +783,7 @@ end
 
 function Arbuzi:CalculateBox(data)
 	local rootPart = data.RootPart
-	if not rootPart or not camera then
+	if not rootPart or not rootPart.Parent or not camera then
 		return nil, nil, nil, nil, false
 	end
 
@@ -855,14 +855,22 @@ function Arbuzi:AddTarget(target)
 	if target.Name == localPlayer.Name or (localPlayer.Character and target == localPlayer.Character) then return end
 	if self.Cache[target] then return end
 
+	-- Reserve cache slot to prevent race condition.
+	self.Cache[target] = { Initializing = true }
+
 	task.spawn(function()
 		local rootPart = target:FindFirstChild("HumanoidRootPart") or target:WaitForChild("HumanoidRootPart", 10)
 		local humanoid = target:FindFirstChildOfClass("Humanoid") or target:WaitForChild("Humanoid", 10)
 
-		if not (rootPart and humanoid and target.Parent) then return end
-		if not target:IsDescendantOf(workspaceService) then return end
-		if target.Name == localPlayer.Name or (localPlayer.Character and target == localPlayer.Character) then return end
-		if self.Cache[target] then return end
+		if not (rootPart and humanoid and target.Parent) or not target:IsDescendantOf(workspaceService) then
+			self.Cache[target] = nil
+			return
+		end
+
+		if target.Name == localPlayer.Name or (localPlayer.Character and target == localPlayer.Character) or humanoid.Health <= 0 then
+			self.Cache[target] = nil
+			return
+		end
 
 		local data = {
 			Target = target,
@@ -909,12 +917,18 @@ function Arbuzi:AddTarget(target)
 		self.Cache[target] = data
 
 		data.Conns.Health = humanoid.HealthChanged:Connect(function(newHealth)
-			data.Alive = newHealth > 0
 			data.Health = newHealth
+			if newHealth <= 0 then
+				data.Alive = false
+				self:RemoveTarget(target)
+			else
+				data.Alive = true
+			end
 		end)
 
 		data.Conns.Died = humanoid.Died:Connect(function()
 			data.Alive = false
+			self:RemoveTarget(target)
 		end)
 
 		data.Conns.ChildAdded = target.ChildAdded:Connect(function(child)
@@ -950,6 +964,11 @@ function Arbuzi:AddTarget(target)
 		end)
 
 		data.Conns.StateChange = humanoid.StateChanged:Connect(function(_, newState)
+			if newState == Enum.HumanoidStateType.Dead then
+				data.Alive = false
+				self:RemoveTarget(target)
+				return
+			end
 			local jumping = newState == Enum.HumanoidStateType.Jumping or newState == Enum.HumanoidStateType.Freefall
 			if jumping and not data.JumpActive then
 				data.JumpActive = true
@@ -976,15 +995,26 @@ function Arbuzi:RemoveTarget(target)
 	local data = self.Cache[target]
 	if not data then return end
 
-	for _, conn in pairs(data.Conns) do
-		conn:Disconnect()
+	if data.Initializing then
+		self.Cache[target] = nil
+		return
 	end
-	tableClear(data.Conns)
 
-	if data.Objects.TargetHolder then
-		data.Objects.TargetHolder:Destroy()
+	if data.Conns then
+		for _, conn in pairs(data.Conns) do
+			if typeof(conn) == "RBXScriptConnection" then
+				conn:Disconnect()
+			end
+		end
+		tableClear(data.Conns)
 	end
-	tableClear(data.Objects)
+
+	if data.Objects then
+		if data.Objects.TargetHolder then
+			data.Objects.TargetHolder:Destroy()
+		end
+		tableClear(data.Objects)
+	end
 
 	self.Cache[target] = nil
 end
@@ -992,18 +1022,21 @@ end
 function Arbuzi:Update(target, data)
 	local objects = data.Objects
 	local character = data.Character
-
-	if not character or not character.Parent or not character:IsDescendantOf(workspaceService) then
-		if objects.TargetHolder.Visible then objects.TargetHolder.Visible = false end
-		self:RemoveTarget(target)
-		return
-	end
-
 	local rootPart = data.RootPart
 	local humanoid = data.Humanoid
 
-	if not rootPart or not humanoid or humanoid.Health <= 0 then
-		if objects.TargetHolder.Visible then objects.TargetHolder.Visible = false end
+	if not data.Alive 
+		or not character 
+		or not character.Parent 
+		or not character:IsDescendantOf(workspaceService)
+		or not rootPart 
+		or not rootPart.Parent 
+		or not humanoid 
+		or not humanoid.Parent 
+		or humanoid.Health <= 0 
+		or humanoid:GetState() == Enum.HumanoidStateType.Dead 
+	then
+		self:RemoveTarget(target)
 		return
 	end
 
@@ -1227,9 +1260,19 @@ function Arbuzi:Load()
 		if player == localPlayer then return end
 
 		local charAdded = player.CharacterAdded:Connect(function(char)
+			for cachedTarget in pairs(self.Cache) do
+				if cachedTarget.Name == player.Name and cachedTarget ~= char then
+					self:RemoveTarget(cachedTarget)
+				end
+			end
 			self:AddTarget(char)
 		end)
 		self.Threads["CharAdded_" .. player.UserId] = charAdded
+
+		local charRemoving = player.CharacterRemoving:Connect(function(char)
+			self:RemoveTarget(char)
+		end)
+		self.Threads["CharRemoving_" .. player.UserId] = charRemoving
 
 		if player.Character then
 			self:AddTarget(player.Character)
@@ -1245,6 +1288,10 @@ function Arbuzi:Load()
 		if self.Threads["CharAdded_" .. player.UserId] then
 			self.Threads["CharAdded_" .. player.UserId]:Disconnect()
 			self.Threads["CharAdded_" .. player.UserId] = nil
+		end
+		if self.Threads["CharRemoving_" .. player.UserId] then
+			self.Threads["CharRemoving_" .. player.UserId]:Disconnect()
+			self.Threads["CharRemoving_" .. player.UserId] = nil
 		end
 		if player.Character and self.Cache[player.Character] then
 			self:RemoveTarget(player.Character)
@@ -1290,7 +1337,7 @@ function Arbuzi:Load()
 	self.PreRender = runService.RenderStepped:Connect(function()
 		if not config.Enabled then
 			for _, data in pairs(self.Cache) do
-				if data.Objects.TargetHolder and data.Objects.TargetHolder.Visible then
+				if typeof(data) == "table" and data.Objects and data.Objects.TargetHolder and data.Objects.TargetHolder.Visible then
 					data.Objects.TargetHolder.Visible = false
 				end
 			end
@@ -1304,7 +1351,9 @@ function Arbuzi:Load()
 
 		cameraPosition = camera.CFrame.Position
 		for target, data in pairs(self.Cache) do
-			self:Update(target, data)
+			if typeof(data) == "table" and data.Objects and data.Objects.TargetHolder then
+				self:Update(target, data)
+			end
 		end
 	end)
 
