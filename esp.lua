@@ -48,9 +48,53 @@ local cameraPosition = newVector3(0, 0, 0)
 local cachedFocalLength = 0
 local viewPortY = 0
 
--- Weapon Database for fingerprinting.
+-- Weapon Database for fingerprinting & Icons.
 local weaponMeshMap = {}
 local toolSignatures = {}
+local weaponIcons = {}
+
+---Scan craft menu inside PlayerGui strictly for weapon icons.
+---@return boolean
+local function scanCraftingIcons()
+	local pGui = localPlayer:FindFirstChildOfClass("PlayerGui")
+	if not pGui then return false end
+
+	local ui = pGui:FindFirstChild("UI")
+	local ingame = ui and ui:FindFirstChild("Ingame")
+	local crafting = ingame and ingame:FindFirstChild("Crafting")
+	local items = crafting and crafting:FindFirstChild("Items")
+	local scroll = items and items:FindFirstChild("ScrollingFrame")
+
+	if not scroll then return false end
+
+	local count = 0
+	for _, frame in ipairs(scroll:GetChildren()) do
+		local btn = frame:FindFirstChild("Button")
+		if btn and btn:IsA("ImageButton") and btn.Image and btn.Image ~= "" then
+			weaponIcons[frame.Name] = btn.Image
+			count = count + 1
+		end
+	end
+	return count > 0
+end
+
+task.spawn(function()
+	if not scanCraftingIcons() then
+		local pGui = localPlayer:WaitForChild("PlayerGui", 15)
+		if pGui then
+			local conn
+			conn = pGui.DescendantAdded:Connect(function(desc)
+				if desc.Name == "ScrollingFrame" and desc.Parent and desc.Parent.Name == "Items" then
+					task.wait(0.2)
+					if scanCraftingIcons() and conn then
+						conn:Disconnect()
+						conn = nil
+					end
+				end
+			end)
+		end
+	end
+end)
 
 ---Find tools container recursively across services.
 ---@return Instance?
@@ -229,6 +273,10 @@ local Arbuzi = {
 			Weapon = {
 				Enabled = true,
 				Color = Color3.fromRGB(255, 255, 255)
+			},
+			WeaponIcon = {
+				Enabled = true,
+				Size = 24
 			},
 			State = {
 				Enabled = true,
@@ -708,6 +756,17 @@ function Arbuzi:InitEsp(data)
 		Color = Color3.fromRGB(0, 0, 0),
 		LineJoinMode = Enum.LineJoinMode.Miter
 	})
+
+	objects.WeaponIcon = self:CreateObjects("ImageLabel", {
+		Parent = objects.BottomTextHolder,
+		LayoutOrder = 4,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Visible = false,
+		Size = udim2FromOffset(24, 24),
+		ScaleType = Enum.ScaleType.Fit,
+		ZIndex = 5
+	})
 end
 
 function Arbuzi:CalculateBox(data)
@@ -825,7 +884,9 @@ function Arbuzi:AddTarget(target)
 		LastRatio = nil,
 		LastWeapon = nil,
 		LastWeaponColor = nil,
-		LastStateColor = nil
+		LastStateColor = nil,
+		LastIcon = nil,
+		LastIconSize = nil
 	}
 
 	self:InitEsp(data)
@@ -1089,16 +1150,19 @@ function Arbuzi:Update(target, data)
 		if objects.LeftBarHolder.Visible then objects.LeftBarHolder.Visible = false end
 	end
 
-	local weaponCfg = textsCfg.Weapon
-	if weaponCfg.Enabled then
-		if not objects.Weapon.Visible then objects.Weapon.Visible = true end
-		
-		-- Continuously retry until resolved if name is still generic.
-		if data.CurrentWeapon == "Worldmodel" or data.CurrentWeapon == "none" or not data.CurrentWeapon then
-			data.CurrentWeapon = resolveEquippedWeapon(character)
-		end
+	-- Continuously retry until resolved if name is still generic.
+	if data.CurrentWeapon == "Worldmodel" or data.CurrentWeapon == "none" or not data.CurrentWeapon then
+		data.CurrentWeapon = resolveEquippedWeapon(character)
+	end
 
-		local currentWeapon = data.CurrentWeapon or "none"
+	local currentWeapon = data.CurrentWeapon or "none"
+	local iconId = weaponIcons[currentWeapon]
+	local iconCfg = textsCfg.WeaponIcon
+	local showIcon = iconCfg and iconCfg.Enabled and iconId ~= nil
+
+	local weaponCfg = textsCfg.Weapon
+	if weaponCfg.Enabled and not showIcon then
+		if not objects.Weapon.Visible then objects.Weapon.Visible = true end
 		if data.LastWeapon ~= currentWeapon then
 			objects.Weapon.Text = currentWeapon
 			data.LastWeapon = currentWeapon
@@ -1110,6 +1174,21 @@ function Arbuzi:Update(target, data)
 		end
 	else
 		if objects.Weapon.Visible then objects.Weapon.Visible = false end
+	end
+
+	if showIcon then
+		if not objects.WeaponIcon.Visible then objects.WeaponIcon.Visible = true end
+		if data.LastIcon ~= iconId then
+			objects.WeaponIcon.Image = iconId
+			data.LastIcon = iconId
+		end
+		local iconSize = iconCfg.Size or 24
+		if data.LastIconSize ~= iconSize then
+			objects.WeaponIcon.Size = udim2FromOffset(iconSize, iconSize)
+			data.LastIconSize = iconSize
+		end
+	else
+		if objects.WeaponIcon.Visible then objects.WeaponIcon.Visible = false end
 	end
 end
 
