@@ -23,7 +23,7 @@ local replicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 local httpService = cloneref(game:GetService("HttpService"))
 local coreGui = cloneref(game:GetService("CoreGui"))
 
-local httpRequest = request or (syn and syn.request) or (http and http.request) or http_request
+local httpRequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
 local localPlayer = playersService.LocalPlayer
 local camera = workspaceService.CurrentCamera
 
@@ -54,6 +54,7 @@ local toolSignatures = {}
 local weaponIcons = {}
 
 ---Scan craft menu inside PlayerGui strictly for weapon icons.
+---@return boolean
 local function scanCraftingIcons()
 	local pGui = localPlayer:FindFirstChildOfClass("PlayerGui")
 	if not pGui then return false end
@@ -96,6 +97,7 @@ task.spawn(function()
 end)
 
 ---Find tools container recursively across services.
+---@return Instance?
 local function getToolsFolder()
 	local prefabs = workspaceService:FindFirstChild("Prefabs", true) or replicatedStorage:FindFirstChild("Prefabs", true)
 	if prefabs then
@@ -106,6 +108,7 @@ local function getToolsFolder()
 end
 
 ---Build weapon database from prefabs.
+---@return boolean
 local function indexWeaponPrefabs()
 	local tools = getToolsFolder()
 	if not tools then return false end
@@ -128,6 +131,7 @@ local function indexWeaponPrefabs()
 	return indexed
 end
 
+-- Initialize indexing with retries.
 task.spawn(function()
 	while not indexWeaponPrefabs() do
 		task.wait(1)
@@ -135,6 +139,8 @@ task.spawn(function()
 end)
 
 ---Resolve weapon name from character model.
+---@param character Model
+---@return string
 local function resolveEquippedWeapon(character)
 	local worldModel = character:FindFirstChild("Worldmodel")
 	if not worldModel then
@@ -146,8 +152,9 @@ local function resolveEquippedWeapon(character)
 		return "none"
 	end
 
-	local attr = worldModel:GetAttribute("Weapon") 
-		or worldModel:GetAttribute("Name") 
+	-- Check potential game attributes.
+	local attr = worldModel:GetAttribute("Weapon")
+		or worldModel:GetAttribute("Name")
 		or character:GetAttribute("EquippedWeapon")
 		or character:GetAttribute("Weapon")
 	if attr and typeof(attr) == "string" and attr ~= "" then
@@ -159,6 +166,7 @@ local function resolveEquippedWeapon(character)
 		return "Worldmodel"
 	end
 
+	-- Match by MeshId.
 	for _, part in ipairs(children) do
 		if part:IsA("MeshPart") and part.MeshId ~= "" then
 			local matched = weaponMeshMap[part.MeshId]
@@ -166,6 +174,7 @@ local function resolveEquippedWeapon(character)
 		end
 	end
 
+	-- Match by part name signatures.
 	local bestTool, bestScore = nil, 0
 	for toolName, sig in pairs(toolSignatures) do
 		local score = 0
@@ -184,6 +193,7 @@ local function resolveEquippedWeapon(character)
 		return bestTool
 	end
 
+	-- Fallback heuristic for standard models.
 	if worldModel:FindFirstChild("ShotgunShell1") or worldModel:FindFirstChild("pump") then
 		return "Pump Shotgun"
 	end
@@ -191,23 +201,19 @@ local function resolveEquippedWeapon(character)
 	return "Worldmodel"
 end
 
+---Refresh cached camera-dependent math (FOV / viewport) and re-anchor the camera reference.
 local function updateCameraCache()
-	if not camera or camera.Parent == nil then
-		camera = workspaceService.CurrentCamera
-	end
+	camera = workspaceService.CurrentCamera
 	if not camera then return end
 	viewPortY = camera.ViewportSize.Y
-	if viewPortY <= 0 then viewPortY = 1080 end
-	local fov = camera.FieldOfView
-	if fov <= 0 then fov = 70 end
-	cachedFocalLength = viewPortY / (2 * mathTan(mathRad(fov) * 0.5))
+	cachedFocalLength = viewPortY / (2 * mathTan(mathRad(camera.FieldOfView) * 0.5))
 end
 
 local function getGuiParent()
 	local success, result = pcall(function()
 		return gethui()
 	end)
-	if success and result and typeof(result) == "Instance" then
+	if success and result then
 		return result
 	end
 	return coreGui
@@ -217,7 +223,6 @@ local Arbuzi = {
 	Loaded = false,
 	Directory = "Esp",
 	Cache = {},
-	Pending = {},
 	Holder = nil,
 	Threads = {},
 	PreRender = nil,
@@ -230,7 +235,7 @@ local Arbuzi = {
 		Boxes = {
 			Enabled = true,
 			["Bounding Box"] = {
-				Enabled = true,
+				Enabled = false,
 				IncludeAccessories = false,
 				BoxX = 0,
 				BoxY = 2
@@ -290,36 +295,30 @@ local config = Arbuzi.Table
 local Fonts = {}
 do
 	local function fetchSource(url)
-		local success, response = pcall(function()
-			return httpRequest({ Url = url, Method = "GET" })
-		end)
-		return (success and response and response.Body) or ""
+		local response = httpRequest({ Url = url, Method = "GET" })
+		return response and response.Body or ""
 	end
 
 	local function registerFont(name, weight, style, asset)
-		local customAsset
-		pcall(function()
-			if not isfile(asset.Id) then
-				writefile(asset.Id, asset.Font)
-			end
+		if not isfile(asset.Id) then
+			writefile(asset.Id, asset.Font)
+		end
 
-			if not isfile(name .. ".font") then
-				local info = {
-					name = name,
-					faces = {
-						{
-							name = "Normal",
-							weight = weight,
-							style = style,
-							assetId = getcustomasset(asset.Id)
-						}
+		if not isfile(name .. ".font") then
+			local info = {
+				name = name,
+				faces = {
+					{
+						name = "Normal",
+						weight = weight,
+						style = style,
+						assetId = getcustomasset(asset.Id)
 					}
 				}
-				writefile(name .. ".font", httpService:JSONEncode(info))
-			end
-			customAsset = getcustomasset(name .. ".font")
-		end)
-		return customAsset
+			}
+			writefile(name .. ".font", httpService:JSONEncode(info))
+		end
+		return getcustomasset(name .. ".font")
 	end
 
 	Fonts.Tahoma = registerFont("Tahoma", 400, "Normal", {
@@ -332,15 +331,8 @@ do
 		Font = fetchSource("https://raw.githubusercontent.com/sametexe001/luas/main/smallest_pixel-7.ttf")
 	})
 
-	local tahomaSuccess, tahomaFont = pcall(function()
-		return Font.new(Fonts.Tahoma, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
-	end)
-	Arbuzi.Tahoma = (tahomaSuccess and tahomaFont) or Font.fromEnum(Enum.Font.SourceSansBold)
-
-	local pixelSuccess, pixelFont = pcall(function()
-		return Font.new(Fonts.SmallestPixel, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
-	end)
-	Arbuzi.SmallestPixel = (pixelSuccess and pixelFont) or Font.fromEnum(Enum.Font.SourceSans)
+	Arbuzi.Tahoma = Font.new(Fonts.Tahoma, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+	Arbuzi.SmallestPixel = Font.new(Fonts.SmallestPixel, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
 end
 
 function Arbuzi:CreateObjects(name, properties)
@@ -780,6 +772,10 @@ function Arbuzi:InitEsp(data)
 end
 
 function Arbuzi:CalculateBox(data)
+	if not camera then
+		return nil, nil, nil, nil, false
+	end
+
 	local rootPart = data.RootPart
 	if not rootPart then
 		return nil, nil, nil, nil, false
@@ -848,33 +844,31 @@ function Arbuzi:CalculateBox(data)
 	end
 end
 
+---Add a target, retrying indefinitely until its HumanoidRootPart/Humanoid replicate.
+---@param target Model
 function Arbuzi:AddTarget(target)
 	if not target:IsA("Model") then return end
-	if target == localPlayer.Character or target.Name == localPlayer.Name then return end
-	if self.Cache[target] or self.Pending[target] then return end
+	if target.Name == localPlayer.Name or (localPlayer.Character and target == localPlayer.Character) then return end
+	if self.Cache[target] then return end
 
-	self.Pending[target] = true
+	-- Pending marker prevents duplicate retry tasks for the same target.
+	self.Cache[target] = true
 
 	task.spawn(function()
-		local rootPart = target:FindFirstChild("HumanoidRootPart")
-		local humanoid = target:FindFirstChildOfClass("Humanoid")
-		local startTime = os.clock()
+		local rootPart, humanoid
 
-		while (not rootPart or not humanoid) and target.Parent and (os.clock() - startTime < 8) do
-			if not rootPart then
-				rootPart = target:FindFirstChild("HumanoidRootPart")
-			end
-			if not humanoid then
-				humanoid = target:FindFirstChildOfClass("Humanoid")
-			end
+		-- Retry without a hard timeout so late replication (join/respawn/teleport) still resolves.
+		while target.Parent and self.Cache[target] == true do
+			rootPart = target:FindFirstChild("HumanoidRootPart")
+			humanoid = target:FindFirstChildOfClass("Humanoid")
 			if rootPart and humanoid then break end
-			task.wait(0.2)
+			task.wait(0.1)
 		end
 
-		self.Pending[target] = nil
-
-		if not (rootPart and humanoid and target.Parent) then return end
-		if not self.Loaded or self.Cache[target] then return end
+		if not target.Parent or self.Cache[target] ~= true or not (rootPart and humanoid) then
+			self.Cache[target] = nil
+			return
+		end
 
 		local data = {
 			Target = target,
@@ -984,10 +978,17 @@ function Arbuzi:AddTarget(target)
 	end)
 end
 
+---Remove a target, handling both built entries and still-pending markers.
+---@param target Model
 function Arbuzi:RemoveTarget(target)
-	self.Pending[target] = nil
 	local data = self.Cache[target]
 	if not data then return end
+
+	-- Pending (not-yet-built) entries are plain booleans, nothing to clean up.
+	if typeof(data) ~= "table" then
+		self.Cache[target] = nil
+		return
+	end
 
 	for _, conn in pairs(data.Conns) do
 		conn:Disconnect()
@@ -1072,18 +1073,15 @@ function Arbuzi:Update(target, data)
 			if objects.BoxGlow.ImageTransparency ~= 1 then objects.BoxGlow.ImageTransparency = 1 end
 		end
 
-		local showBox = boxesCfg["Bounding Box"].Enabled
-		if objects.BoxOutlineHolder.Visible ~= showBox then objects.BoxOutlineHolder.Visible = showBox end
-		if objects.BoxInlineHolder.Visible ~= showBox then objects.BoxInlineHolder.Visible = showBox end
+		if not objects.BoxOutlineHolder.Visible then objects.BoxOutlineHolder.Visible = true end
+		if not objects.BoxInlineHolder.Visible then objects.BoxInlineHolder.Visible = true end
 
-		if showBox then
-			local gradTop = boxesCfg.Gradients.Top
-			local gradBot = boxesCfg.Gradients.Bot
-			if data.LastGradTop ~= gradTop or data.LastGradBot ~= gradBot then
-				objects.BoxInlineGradient.Color = ColorSequence.new(gradTop, gradBot)
-				data.LastGradTop = gradTop
-				data.LastGradBot = gradBot
-			end
+		local gradTop = boxesCfg.Gradients.Top
+		local gradBot = boxesCfg.Gradients.Bot
+		if data.LastGradTop ~= gradTop or data.LastGradBot ~= gradBot then
+			objects.BoxInlineGradient.Color = ColorSequence.new(gradTop, gradBot)
+			data.LastGradTop = gradTop
+			data.LastGradBot = gradBot
 		end
 
 		if boxesCfg.Filled.Enabled then
@@ -1116,8 +1114,8 @@ function Arbuzi:Update(target, data)
 
 	if textsCfg.Name.Enabled then
 		if not objects.TargetName.Visible then objects.TargetName.Visible = true end
-		local playerObj = playersService:GetPlayerFromCharacter(target) or playersService:FindFirstChild(target.Name)
-		local displayName = playerObj and (playerObj.DisplayName or playerObj.Name) or target.Name
+		local playerObj = playersService:FindFirstChild(target.Name)
+		local displayName = playerObj and playerObj.DisplayName or target.Name
 		if data.LastDisplayName ~= displayName then
 			objects.TargetName.Text = displayName
 			data.LastDisplayName = displayName
@@ -1183,6 +1181,7 @@ function Arbuzi:Update(target, data)
 		if objects.LeftBarHolder.Visible then objects.LeftBarHolder.Visible = false end
 	end
 
+	-- Continuously retry until resolved if name is still generic.
 	if data.CurrentWeapon == "Worldmodel" or data.CurrentWeapon == "none" or not data.CurrentWeapon then
 		data.CurrentWeapon = resolveEquippedWeapon(character)
 	end
@@ -1224,156 +1223,100 @@ function Arbuzi:Update(target, data)
 	end
 end
 
-local function isTargetCandidate(model)
-	if not model or not model:IsA("Model") then return false end
-	if model == localPlayer.Character or model.Name == localPlayer.Name then return false end
-
-	local player = playersService:GetPlayerFromCharacter(model)
-	if player then
-		return player ~= localPlayer
-	end
-
-	if playersService:FindFirstChild(model.Name) then
-		return true
-	end
-
-	if model.Parent and model.Parent.Name == "Players" then
-		return true
-	end
-
-	if config.Bots.Enabled then
-		return model:FindFirstChildOfClass("Humanoid") ~= nil
-	end
-
-	return false
-end
-
 function Arbuzi:Load()
 	if self.Loaded then return self end
 
-	local function setupCameraListeners()
-		if self.Threads["CameraFOV"] then self.Threads["CameraFOV"]:Disconnect() end
-		if self.Threads["CameraVP"] then self.Threads["CameraVP"]:Disconnect() end
+	updateCameraCache()
+	self.Threads["CameraFOV"] = camera:GetPropertyChangedSignal("FieldOfView"):Connect(updateCameraCache)
+	self.Threads["CameraVP"] = camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateCameraCache)
 
-		camera = workspaceService.CurrentCamera
-		if not camera then return end
+	-- Re-anchor camera reference and re-hook its signals whenever CurrentCamera is replaced (teleport/respawn).
+	self.Threads["CameraChanged"] = workspaceService:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+		if self.Threads["CameraFOV"] then
+			self.Threads["CameraFOV"]:Disconnect()
+			self.Threads["CameraFOV"] = nil
+		end
+		if self.Threads["CameraVP"] then
+			self.Threads["CameraVP"]:Disconnect()
+			self.Threads["CameraVP"] = nil
+		end
 
 		updateCameraCache()
-		self.Threads["CameraFOV"] = camera:GetPropertyChangedSignal("FieldOfView"):Connect(updateCameraCache)
-		self.Threads["CameraVP"] = camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateCameraCache)
-	end
-
-	setupCameraListeners()
-	self.Threads["CameraWatcher"] = workspaceService:GetPropertyChangedSignal("CurrentCamera"):Connect(setupCameraListeners)
+		if camera then
+			self.Threads["CameraFOV"] = camera:GetPropertyChangedSignal("FieldOfView"):Connect(updateCameraCache)
+			self.Threads["CameraVP"] = camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateCameraCache)
+		end
+	end)
 
 	self.Holder = self:CreateObjects("ScreenGui", {
-		Name = "ArbuziEspHolder",
+		Name = "\n",
 		Parent = getGuiParent(),
 		ResetOnSpawn = false,
-		DisplayOrder = 100,
+		DisplayOrder = -1,
 		IgnoreGuiInset = true
 	})
 
-	local function hookTargetFolder(folder)
+	local function hookPlayersFolder(folder)
 		for _, model in ipairs(folder:GetChildren()) do
-			if isTargetCandidate(model) then
+			if model:IsA("Model") then
 				self:AddTarget(model)
 			end
 		end
 
-		folder.ChildAdded:Connect(function(child)
-			if isTargetCandidate(child) then
+		self.Threads["FolderChildAdded"] = folder.ChildAdded:Connect(function(child)
+			if child:IsA("Model") then
 				self:AddTarget(child)
 			end
 		end)
 
-		folder.ChildRemoved:Connect(function(child)
+		self.Threads["FolderChildRemoved"] = folder.ChildRemoved:Connect(function(child)
 			self:RemoveTarget(child)
 		end)
 	end
 
-	-- 1. Scan players through Players service.
-	for _, player in ipairs(playersService:GetPlayers()) do
-		if player ~= localPlayer then
-			if player.Character then
-				self:AddTarget(player.Character)
+	local playersFolder = workspaceService:FindFirstChild("Players")
+	if playersFolder then
+		hookPlayersFolder(playersFolder)
+	else
+		self.Threads["WorkspaceFolderWatcher"] = workspaceService.ChildAdded:Connect(function(child)
+			if child.Name == "Players" and child:IsA("Folder") then
+				hookPlayersFolder(child)
 			end
-			player.CharacterAdded:Connect(function(char)
-				self:AddTarget(char)
-			end)
-		end
+		end)
 	end
 
-	playersService.PlayerAdded:Connect(function(player)
-		if player ~= localPlayer then
-			player.CharacterAdded:Connect(function(char)
-				self:AddTarget(char)
-			end)
-		end
-	end)
-
-	-- 2. Scan workspace custom folders.
-	local pFolder = workspaceService:FindFirstChild("Players")
-	if pFolder then hookTargetFolder(pFolder) end
-
-	local cFolder = workspaceService:FindFirstChild("Characters")
-	if cFolder then hookTargetFolder(cFolder) end
-
-	workspaceService.ChildAdded:Connect(function(child)
-		if child:IsA("Folder") and (child.Name == "Players" or child.Name == "Characters") then
-			hookTargetFolder(child)
-		elseif isTargetCandidate(child) then
-			self:AddTarget(child)
-		end
-	end)
-
-	-- 3. Rescan fallback for streaming/lobby.
-	self.Threads["RescanRoutine"] = task.spawn(function()
+	-- Safety-net scanner: catches targets missed by ChildAdded (join bursts, teleports, resets).
+	self.Threads["Watchdog"] = task.spawn(function()
 		while self.Loaded do
-			for _, player in ipairs(playersService:GetPlayers()) do
-				if player ~= localPlayer and player.Character and not self.Cache[player.Character] then
-					self:AddTarget(player.Character)
-				end
-			end
-
-			local currentFolder = workspaceService:FindFirstChild("Players") or workspaceService:FindFirstChild("Characters")
-			if currentFolder then
-				for _, model in ipairs(currentFolder:GetChildren()) do
-					if isTargetCandidate(model) and not self.Cache[model] then
+			local folder = workspaceService:FindFirstChild("Players")
+			if folder then
+				for _, model in ipairs(folder:GetChildren()) do
+					if model:IsA("Model") and not self.Cache[model] then
 						self:AddTarget(model)
 					end
 				end
 			end
-
-			for _, model in ipairs(workspaceService:GetChildren()) do
-				if isTargetCandidate(model) and not self.Cache[model] then
-					self:AddTarget(model)
-				end
-			end
-
-			task.wait(1.5)
+			task.wait(2)
 		end
 	end)
 
 	self.PreRender = runService.RenderStepped:Connect(function()
 		if not config.Enabled then
 			for _, data in pairs(self.Cache) do
-				if data.Objects.TargetHolder and data.Objects.TargetHolder.Visible then
+				if typeof(data) == "table" and data.Objects.TargetHolder and data.Objects.TargetHolder.Visible then
 					data.Objects.TargetHolder.Visible = false
 				end
 			end
 			return
 		end
 
-		if not camera or camera.Parent == nil then
-			camera = workspaceService.CurrentCamera
-			if not camera then return end
-			updateCameraCache()
-		end
+		if not camera then return end
 
 		cameraPosition = camera.CFrame.Position
 		for target, data in pairs(self.Cache) do
-			self:Update(target, data)
+			if typeof(data) == "table" then
+				self:Update(target, data)
+			end
 		end
 	end)
 
@@ -1387,6 +1330,8 @@ function Arbuzi:GetConfig()
 end
 
 function Arbuzi:Unload()
+	self.Loaded = false
+
 	if self.PreRender then
 		self.PreRender:Disconnect()
 		self.PreRender = nil
@@ -1397,7 +1342,9 @@ function Arbuzi:Unload()
 	end
 
 	for _, conn in pairs(self.Threads) do
-		if typeof(conn) == "RBXScriptConnection" then
+		if typeof(conn) == "thread" then
+			task.cancel(conn)
+		elseif conn.Disconnect then
 			conn:Disconnect()
 		end
 	end
@@ -1409,10 +1356,7 @@ function Arbuzi:Unload()
 	end
 
 	tableClear(self.Cache)
-	tableClear(self.Pending)
-	self.Loaded = false
 	shared.Arbuzi = nil
 end
 
-Arbuzi:Load()
 return Arbuzi
