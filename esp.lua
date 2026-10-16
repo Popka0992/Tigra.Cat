@@ -23,7 +23,7 @@ local replicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 local httpService = cloneref(game:GetService("HttpService"))
 local coreGui = cloneref(game:GetService("CoreGui"))
 
-local httpRequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+local httpRequest = request or (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request)
 local localPlayer = playersService.LocalPlayer
 local camera = workspaceService.CurrentCamera
 
@@ -131,7 +131,6 @@ local function indexWeaponPrefabs()
 	return indexed
 end
 
--- Initialize indexing with retries.
 task.spawn(function()
 	while not indexWeaponPrefabs() do
 		task.wait(1)
@@ -152,7 +151,6 @@ local function resolveEquippedWeapon(character)
 		return "none"
 	end
 
-	-- Check potential game attributes.
 	local attr = worldModel:GetAttribute("Weapon") 
 		or worldModel:GetAttribute("Name") 
 		or character:GetAttribute("EquippedWeapon")
@@ -166,7 +164,6 @@ local function resolveEquippedWeapon(character)
 		return "Worldmodel"
 	end
 
-	-- Match by MeshId.
 	for _, part in ipairs(children) do
 		if part:IsA("MeshPart") and part.MeshId ~= "" then
 			local matched = weaponMeshMap[part.MeshId]
@@ -174,7 +171,6 @@ local function resolveEquippedWeapon(character)
 		end
 	end
 
-	-- Match by part name signatures.
 	local bestTool, bestScore = nil, 0
 	for toolName, sig in pairs(toolSignatures) do
 		local score = 0
@@ -193,7 +189,6 @@ local function resolveEquippedWeapon(character)
 		return bestTool
 	end
 
-	-- Fallback heuristic for standard models.
 	if worldModel:FindFirstChild("ShotgunShell1") or worldModel:FindFirstChild("pump") then
 		return "Pump Shotgun"
 	end
@@ -331,6 +326,23 @@ do
 
 	Arbuzi.Tahoma = Font.new(Fonts.Tahoma, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
 	Arbuzi.SmallestPixel = Font.new(Fonts.SmallestPixel, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+end
+
+local function bindCamera()
+	local activeCamera = workspaceService.CurrentCamera or workspaceService:FindFirstChildOfClass("Camera")
+	if not activeCamera then return end
+	camera = activeCamera
+	updateCameraCache()
+
+	if Arbuzi.Threads["CameraFOV"] then
+		pcall(function() Arbuzi.Threads["CameraFOV"]:Disconnect() end)
+	end
+	if Arbuzi.Threads["CameraVP"] then
+		pcall(function() Arbuzi.Threads["CameraVP"]:Disconnect() end)
+	end
+
+	Arbuzi.Threads["CameraFOV"] = camera:GetPropertyChangedSignal("FieldOfView"):Connect(updateCameraCache)
+	Arbuzi.Threads["CameraVP"] = camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateCameraCache)
 end
 
 function Arbuzi:CreateObjects(name, properties)
@@ -771,7 +783,7 @@ end
 
 function Arbuzi:CalculateBox(data)
 	local rootPart = data.RootPart
-	if not rootPart then
+	if not rootPart or not camera then
 		return nil, nil, nil, nil, false
 	end
 
@@ -839,119 +851,124 @@ function Arbuzi:CalculateBox(data)
 end
 
 function Arbuzi:AddTarget(target)
-	if not target:IsA("Model") then return end
+	if not target or not target:IsA("Model") then return end
 	if target.Name == localPlayer.Name or (localPlayer.Character and target == localPlayer.Character) then return end
 	if self.Cache[target] then return end
 
-	local rootPart = target:FindFirstChild("HumanoidRootPart") or target:WaitForChild("HumanoidRootPart", 3)
-	local humanoid = target:FindFirstChildOfClass("Humanoid") or target:WaitForChild("Humanoid", 3)
+	task.spawn(function()
+		local rootPart = target:FindFirstChild("HumanoidRootPart") or target:WaitForChild("HumanoidRootPart", 10)
+		local humanoid = target:FindFirstChildOfClass("Humanoid") or target:WaitForChild("Humanoid", 10)
 
-	if not (rootPart and humanoid and target.Parent) then return end
+		if not (rootPart and humanoid and target.Parent) then return end
+		if not target:IsDescendantOf(workspaceService) then return end
+		if target.Name == localPlayer.Name or (localPlayer.Character and target == localPlayer.Character) then return end
+		if self.Cache[target] then return end
 
-	local data = {
-		Target = target,
-		Objects = {},
-		Conns = {},
-		Character = target,
-		RootPart = rootPart,
-		Humanoid = humanoid,
-		Health = humanoid.Health,
-		MaxHealth = humanoid.MaxHealth,
-		Alive = humanoid.Health > 0,
-		CurrentWeapon = resolveEquippedWeapon(target),
-		WalkActive = false,
-		JumpActive = false,
-		LastW = nil,
-		LastH = nil,
-		LastX = nil,
-		LastY = nil,
-		LastGlowTop = nil,
-		LastGlowBot = nil,
-		LastGlowT1 = nil,
-		LastGlowT2 = nil,
-		LastGradTop = nil,
-		LastGradBot = nil,
-		LastFillTop = nil,
-		LastFillBot = nil,
-		LastFillT1 = nil,
-		LastFillT2 = nil,
-		LastDist = nil,
-		LastDistColor = nil,
-		LastDisplayName = nil,
-		LastNameColor = nil,
-		LastHealthColor = nil,
-		LastHealthFloor = nil,
-		LastRatio = nil,
-		LastWeapon = nil,
-		LastWeaponColor = nil,
-		LastStateColor = nil,
-		LastIcon = nil,
-		LastIconSize = nil
-	}
+		local data = {
+			Target = target,
+			Objects = {},
+			Conns = {},
+			Character = target,
+			RootPart = rootPart,
+			Humanoid = humanoid,
+			Health = humanoid.Health,
+			MaxHealth = humanoid.MaxHealth,
+			Alive = humanoid.Health > 0,
+			CurrentWeapon = resolveEquippedWeapon(target),
+			WalkActive = false,
+			JumpActive = false,
+			LastW = nil,
+			LastH = nil,
+			LastX = nil,
+			LastY = nil,
+			LastGlowTop = nil,
+			LastGlowBot = nil,
+			LastGlowT1 = nil,
+			LastGlowT2 = nil,
+			LastGradTop = nil,
+			LastGradBot = nil,
+			LastFillTop = nil,
+			LastFillBot = nil,
+			LastFillT1 = nil,
+			LastFillT2 = nil,
+			LastDist = nil,
+			LastDistColor = nil,
+			LastDisplayName = nil,
+			LastNameColor = nil,
+			LastHealthColor = nil,
+			LastHealthFloor = nil,
+			LastRatio = nil,
+			LastWeapon = nil,
+			LastWeaponColor = nil,
+			LastStateColor = nil,
+			LastIcon = nil,
+			LastIconSize = nil
+		}
 
-	self:InitEsp(data)
-	self.Cache[target] = data
+		self:InitEsp(data)
+		self.Cache[target] = data
 
-	data.Conns.Health = humanoid.HealthChanged:Connect(function(newHealth)
-		data.Alive = newHealth > 0
-		data.Health = newHealth
-	end)
+		data.Conns.Health = humanoid.HealthChanged:Connect(function(newHealth)
+			data.Alive = newHealth > 0
+			data.Health = newHealth
+		end)
 
-	data.Conns.Died = humanoid.Died:Connect(function()
-		data.Alive = false
-	end)
+		data.Conns.Died = humanoid.Died:Connect(function()
+			data.Alive = false
+		end)
 
-	data.Conns.ChildAdded = target.ChildAdded:Connect(function(child)
-		if child.Name == "Worldmodel" or child:IsA("Tool") then
-			task.delay(0.05, function()
-				data.CurrentWeapon = resolveEquippedWeapon(target)
-			end)
-		end
-	end)
-
-	data.Conns.ChildRemoved = target.ChildRemoved:Connect(function(child)
-		if child.Name == "Worldmodel" or child:IsA("Tool") then
-			task.delay(0.05, function()
-				data.CurrentWeapon = resolveEquippedWeapon(target)
-			end)
-		end
-	end)
-
-	local objects = data.Objects
-	data.Conns.MoveDir = humanoid:GetPropertyChangedSignal("MoveDirection"):Connect(function()
-		local walking = humanoid.MoveDirection ~= zeroVector3
-		if walking and not data.WalkActive then
-			data.WalkActive = true
-			objects.StateFlag.Visible = false
-			objects.WalkFlag.Visible = true
-		elseif not walking and data.WalkActive then
-			data.WalkActive = false
-			objects.WalkFlag.Visible = false
-			if not data.JumpActive then
-				objects.StateFlag.Visible = true
+		data.Conns.ChildAdded = target.ChildAdded:Connect(function(child)
+			if child.Name == "Worldmodel" or child:IsA("Tool") then
+				task.delay(0.05, function()
+					data.CurrentWeapon = resolveEquippedWeapon(target)
+				end)
 			end
-		end
-	end)
+		end)
 
-	data.Conns.StateChange = humanoid.StateChanged:Connect(function(_, newState)
-		local jumping = newState == Enum.HumanoidStateType.Jumping or newState == Enum.HumanoidStateType.Freefall
-		if jumping and not data.JumpActive then
-			data.JumpActive = true
-			objects.StateFlag.Visible = false
-			objects.JumpFlag.Visible = true
-		elseif not jumping and data.JumpActive then
-			data.JumpActive = false
-			objects.JumpFlag.Visible = false
-			if not data.WalkActive then
-				objects.StateFlag.Visible = true
+		data.Conns.ChildRemoved = target.ChildRemoved:Connect(function(child)
+			if child.Name == "Worldmodel" or child:IsA("Tool") then
+				task.delay(0.05, function()
+					data.CurrentWeapon = resolveEquippedWeapon(target)
+				end)
 			end
-		end
-	end)
+		end)
 
-	data.Conns.Ancestry = target.AncestryChanged:Connect(function(_, parent)
-		if not parent then
-			self:RemoveTarget(target)
-		end
+		local objects = data.Objects
+		data.Conns.MoveDir = humanoid:GetPropertyChangedSignal("MoveDirection"):Connect(function()
+			local walking = humanoid.MoveDirection ~= zeroVector3
+			if walking and not data.WalkActive then
+				data.WalkActive = true
+				objects.StateFlag.Visible = false
+				objects.WalkFlag.Visible = true
+			elseif not walking and data.WalkActive then
+				data.WalkActive = false
+				objects.WalkFlag.Visible = false
+				if not data.JumpActive then
+					objects.StateFlag.Visible = true
+				end
+			end
+		end)
+
+		data.Conns.StateChange = humanoid.StateChanged:Connect(function(_, newState)
+			local jumping = newState == Enum.HumanoidStateType.Jumping or newState == Enum.HumanoidStateType.Freefall
+			if jumping and not data.JumpActive then
+				data.JumpActive = true
+				objects.StateFlag.Visible = false
+				objects.JumpFlag.Visible = true
+			elseif not jumping and data.JumpActive then
+				data.JumpActive = false
+				objects.JumpFlag.Visible = false
+				if not data.WalkActive then
+					objects.StateFlag.Visible = true
+				end
+			end
+		end)
+
+		data.Conns.Ancestry = target.AncestryChanged:Connect(function(_, parent)
+			if not parent or not target:IsDescendantOf(workspaceService) then
+				self:RemoveTarget(target)
+			end
+		end)
 	end)
 end
 
@@ -976,8 +993,9 @@ function Arbuzi:Update(target, data)
 	local objects = data.Objects
 	local character = data.Character
 
-	if not character or not character.Parent then
+	if not character or not character.Parent or not character:IsDescendantOf(workspaceService) then
 		if objects.TargetHolder.Visible then objects.TargetHolder.Visible = false end
+		self:RemoveTarget(target)
 		return
 	end
 
@@ -1150,7 +1168,6 @@ function Arbuzi:Update(target, data)
 		if objects.LeftBarHolder.Visible then objects.LeftBarHolder.Visible = false end
 	end
 
-	-- Continuously retry until resolved if name is still generic.
 	if data.CurrentWeapon == "Worldmodel" or data.CurrentWeapon == "none" or not data.CurrentWeapon then
 		data.CurrentWeapon = resolveEquippedWeapon(character)
 	end
@@ -1195,9 +1212,8 @@ end
 function Arbuzi:Load()
 	if self.Loaded then return self end
 
-	updateCameraCache()
-	self.Threads["CameraFOV"] = camera:GetPropertyChangedSignal("FieldOfView"):Connect(updateCameraCache)
-	self.Threads["CameraVP"] = camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateCameraCache)
+	bindCamera()
+	self.Threads["CameraWatcher"] = workspaceService:GetPropertyChangedSignal("CurrentCamera"):Connect(bindCamera)
 
 	self.Holder = self:CreateObjects("ScreenGui", {
 		Name = "\n",
@@ -1206,6 +1222,41 @@ function Arbuzi:Load()
 		DisplayOrder = -1,
 		IgnoreGuiInset = true
 	})
+
+	local function hookPlayer(player)
+		if player == localPlayer then return end
+
+		local charAdded = player.CharacterAdded:Connect(function(char)
+			self:AddTarget(char)
+		end)
+		self.Threads["CharAdded_" .. player.UserId] = charAdded
+
+		if player.Character then
+			self:AddTarget(player.Character)
+		end
+	end
+
+	for _, player in ipairs(playersService:GetPlayers()) do
+		hookPlayer(player)
+	end
+
+	self.Threads["PlayerAdded"] = playersService.PlayerAdded:Connect(hookPlayer)
+	self.Threads["PlayerRemoving"] = playersService.PlayerRemoving:Connect(function(player)
+		if self.Threads["CharAdded_" .. player.UserId] then
+			self.Threads["CharAdded_" .. player.UserId]:Disconnect()
+			self.Threads["CharAdded_" .. player.UserId] = nil
+		end
+		if player.Character and self.Cache[player.Character] then
+			self:RemoveTarget(player.Character)
+		end
+	end)
+
+	self.Threads["LocalPlayerRespawn"] = localPlayer.CharacterAdded:Connect(function(char)
+		if self.Cache[char] then
+			self:RemoveTarget(char)
+		end
+		task.defer(bindCamera)
+	end)
 
 	local function hookPlayersFolder(folder)
 		for _, model in ipairs(folder:GetChildren()) do
@@ -1226,15 +1277,15 @@ function Arbuzi:Load()
 	end
 
 	local playersFolder = workspaceService:FindFirstChild("Players")
-	if playersFolder then
+	if playersFolder and playersFolder:IsA("Folder") then
 		hookPlayersFolder(playersFolder)
-	else
-		self.Threads["WorkspaceFolderWatcher"] = workspaceService.ChildAdded:Connect(function(child)
-			if child.Name == "Players" and child:IsA("Folder") then
-				hookPlayersFolder(child)
-			end
-		end)
 	end
+
+	self.Threads["WorkspaceFolderWatcher"] = workspaceService.ChildAdded:Connect(function(child)
+		if child.Name == "Players" and child:IsA("Folder") then
+			hookPlayersFolder(child)
+		end
+	end)
 
 	self.PreRender = runService.RenderStepped:Connect(function()
 		if not config.Enabled then
@@ -1245,6 +1296,11 @@ function Arbuzi:Load()
 			end
 			return
 		end
+
+		if not camera or not camera.Parent then
+			bindCamera()
+		end
+		if not camera then return end
 
 		cameraPosition = camera.CFrame.Position
 		for target, data in pairs(self.Cache) do
