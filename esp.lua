@@ -76,41 +76,87 @@ local Arbuzi = {
 		Enabled = true,
 		Boxes = true,
 		BoxColor = Color3.fromRGB(255, 255, 255),
+		BoxFill = false,
+		BoxFillColor = Color3.fromRGB(0, 0, 0),
+		BoxFillTransparency = 0.6,
 		Glow = true,
 		GlowColor = Color3.fromRGB(0, 0, 0),
 		HealthBar = true,
-		HealthBarColorHigh = Color3.fromRGB(75, 175, 75),
-		HealthBarColorLow = Color3.fromRGB(255, 50, 50),
+		HealthText = true,
+		HealthBarColorHigh = Color3.fromRGB(80, 220, 80),
+		HealthBarColorLow = Color3.fromRGB(220, 50, 50),
 		Names = true,
 		NameColor = Color3.fromRGB(255, 255, 255),
 		Distance = true,
 		DistanceColor = Color3.fromRGB(180, 180, 180),
-		MaxDistance = 1500,
+		Weapon = true,
+		WeaponColor = Color3.fromRGB(200, 200, 200),
+		Chams = false,
+		ChamsFillColor = Color3.fromRGB(150, 100, 255),
+		ChamsFillTransparency = 0.5,
+		ChamsOutlineColor = Color3.fromRGB(255, 255, 255),
+		ChamsOutlineTransparency = 0,
+		MaxDistance = 2000,
 		TargetFolderName = "Players"
 	}
 }
 
 local function calculateBoundingBox(model)
-	local cframe, size = model:GetBoundingBox()
-	local screenPos, onScreen = camera:WorldToViewportPoint(cframe.Position)
-	if not onScreen or screenPos.Z <= 0 then
+	local root = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso") or model:FindFirstChild("UpperTorso") or model.PrimaryPart
+	if not root then return nil end
+
+	local head = model:FindFirstChild("Head")
+	local rootCf = root.CFrame
+	local rootPos = rootCf.Position
+
+	local topY = head and (head.Position.Y + (head.Size.Y * 0.5) + 0.35) or (rootPos.Y + 2.8)
+	local bottomY = rootPos.Y - 3.2
+
+	local height = math.max(topY - bottomY, 2)
+	local centerPos = Vector3.new(rootPos.X, bottomY + (height * 0.5), rootPos.Z)
+	local extents = Vector3.new(2.4, height * 0.5, 1.6)
+
+	local boxCf = CFrame.new(centerPos, centerPos + rootCf.LookVector)
+
+	local corners = {
+		boxCf * Vector3.new(-extents.X, -extents.Y, -extents.Z),
+		boxCf * Vector3.new(extents.X, -extents.Y, -extents.Z),
+		boxCf * Vector3.new(-extents.X, extents.Y, -extents.Z),
+		boxCf * Vector3.new(extents.X, extents.Y, -extents.Z),
+		boxCf * Vector3.new(-extents.X, -extents.Y, extents.Z),
+		boxCf * Vector3.new(extents.X, -extents.Y, extents.Z),
+		boxCf * Vector3.new(-extents.X, extents.Y, extents.Z),
+		boxCf * Vector3.new(extents.X, extents.Y, extents.Z)
+	}
+
+	local minX, minY = math.huge, math.huge
+	local maxX, maxY = -math.huge, -math.huge
+	local anyOnScreen = false
+	local centerScreen, onScreen = camera:WorldToViewportPoint(centerPos)
+
+	if not onScreen or centerScreen.Z <= 0 then
 		return nil
 	end
 
-	local viewPortY = camera.ViewportSize.Y
-	local focalLength = viewPortY / (2 * math.tan(math.rad(camera.FieldOfView) * 0.5))
-	local depthScale = focalLength / screenPos.Z
+	for i = 1, 8 do
+		local scr = camera:WorldToViewportPoint(corners[i])
+		if scr.Z > 0 then
+			anyOnScreen = true
+			minX = math.min(minX, scr.X)
+			minY = math.min(minY, scr.Y)
+			maxX = math.max(maxX, scr.X)
+			maxY = math.max(maxY, scr.Y)
+		end
+	end
 
-	local boxHeight = math.clamp(size.Y * depthScale, 8, 2048)
-	local boxWidth = math.clamp(size.X * depthScale, 6, 2048)
-
-	local xMin = screenPos.X - boxWidth * 0.5
-	local yMin = screenPos.Y - boxHeight * 0.5
+	if not anyOnScreen or minX >= maxX or minY >= maxY then
+		return nil
+	end
 
 	return {
-		Position = Vector2.new(math.floor(xMin), math.floor(yMin)),
-		Size = Vector2.new(math.floor(boxWidth), math.floor(boxHeight)),
-		Distance = screenPos.Z
+		Position = Vector2.new(math.floor(minX), math.floor(minY)),
+		Size = Vector2.new(math.floor(maxX - minX), math.floor(maxY - minY)),
+		Distance = centerScreen.Z
 	}
 end
 
@@ -121,29 +167,61 @@ function EspEntry.new(character, container)
 	local self = setmetatable({}, EspEntry)
 	self.Character = character
 	self.Container = container
-	self.Visible = false
 
-	self.BoxFrame = Instance.new("Frame")
-	self.BoxFrame.BackgroundTransparency = 1
-	self.BoxFrame.BorderSizePixel = 0
-	self.BoxFrame.Visible = false
-	self.BoxFrame.Parent = container
+	self.BoxOutline = Instance.new("Frame")
+	self.BoxOutline.BackgroundTransparency = 1
+	self.BoxOutline.BorderSizePixel = 0
+	self.BoxOutline.Visible = false
+	self.BoxOutline.Parent = container
 
-	self.BoxStroke = Instance.new("UIStroke")
-	self.BoxStroke.Thickness = 1
-	self.BoxStroke.LineJoinMode = Enum.LineJoinMode.Miter
-	self.BoxStroke.Parent = self.BoxFrame
+	self.BoxOutlineStroke = Instance.new("UIStroke")
+	self.BoxOutlineStroke.Thickness = 1
+	self.BoxOutlineStroke.Color = Color3.fromRGB(0, 0, 0)
+	self.BoxOutlineStroke.LineJoinMode = Enum.LineJoinMode.Miter
+	self.BoxOutlineStroke.Parent = self.BoxOutline
 
-	self.GlowImage = Instance.new("ImageLabel")
-	self.GlowImage.BackgroundTransparency = 1
-	self.GlowImage.Image = ASSETS.Glow
-	self.GlowImage.ScaleType = Enum.ScaleType.Slice
-	self.GlowImage.SliceCenter = Rect.new(Vector2.new(21, 21), Vector2.new(79, 79))
-	self.GlowImage.SliceScale = 1
-	self.GlowImage.ImageTransparency = 0.4
-	self.GlowImage.Position = UDim2.new(0, -15, 0, -15)
-	self.GlowImage.Size = UDim2.new(1, 30, 1, 30)
-	self.GlowImage.Parent = self.BoxFrame
+	self.BoxMain = Instance.new("Frame")
+	self.BoxMain.BackgroundTransparency = 1
+	self.BoxMain.BorderSizePixel = 0
+	self.BoxMain.Position = UDim2.new(0, 1, 0, 1)
+	self.BoxMain.Size = UDim2.new(1, -2, 1, -2)
+	self.BoxMain.Parent = self.BoxOutline
+
+	self.BoxMainStroke = Instance.new("UIStroke")
+	self.BoxMainStroke.Thickness = 1
+	self.BoxMainStroke.LineJoinMode = Enum.LineJoinMode.Miter
+	self.BoxMainStroke.Parent = self.BoxMain
+
+	self.BoxInline = Instance.new("Frame")
+	self.BoxInline.BackgroundTransparency = 1
+	self.BoxInline.BorderSizePixel = 0
+	self.BoxInline.Position = UDim2.new(0, 1, 0, 1)
+	self.BoxInline.Size = UDim2.new(1, -2, 1, -2)
+	self.BoxInline.Parent = self.BoxMain
+
+	self.BoxInlineStroke = Instance.new("UIStroke")
+	self.BoxInlineStroke.Thickness = 1
+	self.BoxInlineStroke.Color = Color3.fromRGB(0, 0, 0)
+	self.BoxInlineStroke.LineJoinMode = Enum.LineJoinMode.Miter
+	self.BoxInlineStroke.Parent = self.BoxInline
+
+	self.BoxFill = Instance.new("Frame")
+	self.BoxFill.BorderSizePixel = 0
+	self.BoxFill.Position = UDim2.new(0, 1, 0, 1)
+	self.BoxFill.Size = UDim2.new(1, -2, 1, -2)
+	self.BoxFill.Visible = false
+	self.BoxFill.Parent = self.BoxInline
+
+	self.Glow = Instance.new("ImageLabel")
+	self.Glow.BackgroundTransparency = 1
+	self.Glow.Image = ASSETS.Glow
+	self.Glow.ScaleType = Enum.ScaleType.Slice
+	self.Glow.SliceCenter = Rect.new(Vector2.new(21, 21), Vector2.new(79, 79))
+	self.Glow.ImageTransparency = 0.4
+	self.Glow.Position = UDim2.new(0, -15, 0, -15)
+	self.Glow.Size = UDim2.new(1, 30, 1, 30)
+	self.Glow.Visible = false
+	self.Glow.Parent = self.BoxOutline
 
 	self.HealthOutline = Instance.new("Frame")
 	self.HealthOutline.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
@@ -151,16 +229,32 @@ function EspEntry.new(character, container)
 	self.HealthOutline.Visible = false
 	self.HealthOutline.Parent = container
 
+	self.HealthBackground = Instance.new("Frame")
+	self.HealthBackground.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+	self.HealthBackground.BorderSizePixel = 0
+	self.HealthBackground.Position = UDim2.new(0, 1, 0, 1)
+	self.HealthBackground.Size = UDim2.new(1, -2, 1, -2)
+	self.HealthBackground.Parent = self.HealthOutline
+
 	self.HealthFill = Instance.new("Frame")
 	self.HealthFill.BorderSizePixel = 0
-	self.HealthFill.Size = UDim2.new(1, -2, 1, -2)
-	self.HealthFill.Position = UDim2.new(0, 1, 0, 1)
-	self.HealthFill.AnchorPoint = Vector2.new(0, 0)
-	self.HealthFill.Parent = self.HealthOutline
+	self.HealthFill.Parent = self.HealthBackground
 
 	self.HealthGradient = Instance.new("UIGradient")
 	self.HealthGradient.Rotation = 90
 	self.HealthGradient.Parent = self.HealthFill
+
+	self.HealthLabel = Instance.new("TextLabel")
+	self.HealthLabel.BackgroundTransparency = 1
+	self.HealthLabel.BorderSizePixel = 0
+	self.HealthLabel.FontFace = defaultFont
+	self.HealthLabel.TextSize = 9
+	self.HealthLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	self.HealthLabel.TextStrokeTransparency = 0
+	self.HealthLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	self.HealthLabel.TextXAlignment = Enum.TextXAlignment.Right
+	self.HealthLabel.Visible = false
+	self.HealthLabel.Parent = container
 
 	self.NameLabel = Instance.new("TextLabel")
 	self.NameLabel.BackgroundTransparency = 1
@@ -169,6 +263,7 @@ function EspEntry.new(character, container)
 	self.NameLabel.TextSize = 10
 	self.NameLabel.TextStrokeTransparency = 0
 	self.NameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	self.NameLabel.AnchorPoint = Vector2.new(0.5, 1)
 	self.NameLabel.Visible = false
 	self.NameLabel.Parent = container
 
@@ -176,11 +271,28 @@ function EspEntry.new(character, container)
 	self.DistanceLabel.BackgroundTransparency = 1
 	self.DistanceLabel.BorderSizePixel = 0
 	self.DistanceLabel.FontFace = defaultFont
-	self.DistanceLabel.TextSize = 10
+	self.DistanceLabel.TextSize = 9
 	self.DistanceLabel.TextStrokeTransparency = 0
 	self.DistanceLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	self.DistanceLabel.AnchorPoint = Vector2.new(0.5, 0)
 	self.DistanceLabel.Visible = false
 	self.DistanceLabel.Parent = container
+
+	self.WeaponLabel = Instance.new("TextLabel")
+	self.WeaponLabel.BackgroundTransparency = 1
+	self.WeaponLabel.BorderSizePixel = 0
+	self.WeaponLabel.FontFace = defaultFont
+	self.WeaponLabel.TextSize = 9
+	self.WeaponLabel.TextStrokeTransparency = 0
+	self.WeaponLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	self.WeaponLabel.AnchorPoint = Vector2.new(0.5, 0)
+	self.WeaponLabel.Visible = false
+	self.WeaponLabel.Parent = container
+
+	self.Highlight = Instance.new("Highlight")
+	self.Highlight.Adornee = character
+	self.Highlight.Enabled = false
+	self.Highlight.Parent = container
 
 	return self
 end
@@ -207,73 +319,127 @@ function EspEntry:Update(config)
 	local size = bounds.Size
 
 	if config.Boxes then
-		self.BoxFrame.Position = UDim2.new(0, pos.X, 0, pos.Y)
-		self.BoxFrame.Size = UDim2.new(0, size.X, 0, size.Y)
-		self.BoxStroke.Color = config.BoxColor
-		self.BoxFrame.Visible = true
+		self.BoxOutline.Position = UDim2.new(0, pos.X - 1, 0, pos.Y - 1)
+		self.BoxOutline.Size = UDim2.new(0, size.X + 2, 0, size.Y + 2)
+		self.BoxMainStroke.Color = config.BoxColor
+		self.BoxOutline.Visible = true
+
+		if config.BoxFill then
+			self.BoxFill.BackgroundColor3 = config.BoxFillColor
+			self.BoxFill.BackgroundTransparency = config.BoxFillTransparency
+			self.BoxFill.Visible = true
+		else
+			self.BoxFill.Visible = false
+		end
 
 		if config.Glow then
-			self.GlowImage.ImageColor3 = config.GlowColor
-			self.GlowImage.Visible = true
+			self.Glow.ImageColor3 = config.GlowColor
+			self.Glow.Visible = true
 		else
-			self.GlowImage.Visible = false
+			self.Glow.Visible = false
 		end
 	else
-		self.BoxFrame.Visible = false
+		self.BoxOutline.Visible = false
 	end
 
 	if config.HealthBar then
-		local healthPercent = math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1)
-		local barWidth = 3
+		local hp = math.clamp(humanoid.Health, 0, humanoid.MaxHealth)
+		local maxHp = humanoid.MaxHealth > 0 and humanoid.MaxHealth or 100
+		local healthPercent = hp / maxHp
+		local barWidth = 4
 		local barHeight = size.Y
 
 		self.HealthOutline.Position = UDim2.new(0, pos.X - barWidth - 3, 0, pos.Y)
 		self.HealthOutline.Size = UDim2.new(0, barWidth, 0, barHeight)
 
-		local fillOffset = math.floor((barHeight - 2) * (1 - healthPercent))
-		self.HealthFill.Position = UDim2.new(0, 1, 0, 1 + fillOffset)
-		self.HealthFill.Size = UDim2.new(1, -2, 0, (barHeight - 2) - fillOffset)
+		local totalTrack = barHeight - 2
+		local fillSize = math.floor(totalTrack * healthPercent)
+		local fillOffset = totalTrack - fillSize
+
+		self.HealthFill.Position = UDim2.new(0, 0, 0, fillOffset)
+		self.HealthFill.Size = UDim2.new(1, 0, 0, fillSize)
 
 		self.HealthGradient.Color = ColorSequence.new({
 			ColorSequenceKeypoint.new(0, config.HealthBarColorHigh),
 			ColorSequenceKeypoint.new(1, config.HealthBarColorLow)
 		})
 		self.HealthOutline.Visible = true
+
+		if config.HealthText and healthPercent < 1 then
+			self.HealthLabel.Text = tostring(math.floor(hp))
+			self.HealthLabel.Position = UDim2.new(0, pos.X - barWidth - 4, 0, pos.Y + fillOffset - 4)
+			self.HealthLabel.Visible = true
+		else
+			self.HealthLabel.Visible = false
+		end
 	else
 		self.HealthOutline.Visible = false
+		self.HealthLabel.Visible = false
 	end
 
 	if config.Names then
 		self.NameLabel.Text = self.Character.Name
 		self.NameLabel.TextColor3 = config.NameColor
-		self.NameLabel.Position = UDim2.new(0, pos.X + (size.X * 0.5), 0, pos.Y - 12)
+		self.NameLabel.Position = UDim2.new(0, pos.X + math.floor(size.X * 0.5), 0, pos.Y - 3)
 		self.NameLabel.Visible = true
 	else
 		self.NameLabel.Visible = false
 	end
 
+	local bottomOffset = 1
 	if config.Distance then
 		self.DistanceLabel.Text = string.format("%d studs", math.floor(bounds.Distance))
 		self.DistanceLabel.TextColor3 = config.DistanceColor
-		self.DistanceLabel.Position = UDim2.new(0, pos.X + (size.X * 0.5), 0, pos.Y + size.Y + 2)
+		self.DistanceLabel.Position = UDim2.new(0, pos.X + math.floor(size.X * 0.5), 0, pos.Y + size.Y + bottomOffset)
 		self.DistanceLabel.Visible = true
+		bottomOffset = bottomOffset + 10
 	else
 		self.DistanceLabel.Visible = false
+	end
+
+	if config.Weapon then
+		local tool = self.Character:FindFirstChildOfClass("Tool")
+		if tool then
+			self.WeaponLabel.Text = string.lower(tool.Name)
+			self.WeaponLabel.TextColor3 = config.WeaponColor
+			self.WeaponLabel.Position = UDim2.new(0, pos.X + math.floor(size.X * 0.5), 0, pos.Y + size.Y + bottomOffset)
+			self.WeaponLabel.Visible = true
+		else
+			self.WeaponLabel.Visible = false
+		end
+	else
+		self.WeaponLabel.Visible = false
+	end
+
+	if config.Chams then
+		self.Highlight.FillColor = config.ChamsFillColor
+		self.Highlight.FillTransparency = config.ChamsFillTransparency
+		self.Highlight.OutlineColor = config.ChamsOutlineColor
+		self.Highlight.OutlineTransparency = config.ChamsOutlineTransparency
+		self.Highlight.Enabled = true
+	else
+		self.Highlight.Enabled = false
 	end
 end
 
 function EspEntry:SetVisible(state)
-	self.BoxFrame.Visible = state
+	self.BoxOutline.Visible = state
 	self.HealthOutline.Visible = state
+	self.HealthLabel.Visible = state
 	self.NameLabel.Visible = state
 	self.DistanceLabel.Visible = state
+	self.WeaponLabel.Visible = state
+	self.Highlight.Enabled = state
 end
 
 function EspEntry:Destroy()
-	self.BoxFrame:Destroy()
+	self.BoxOutline:Destroy()
 	self.HealthOutline:Destroy()
+	self.HealthLabel:Destroy()
 	self.NameLabel:Destroy()
 	self.DistanceLabel:Destroy()
+	self.WeaponLabel:Destroy()
+	self.Highlight:Destroy()
 end
 
 function Arbuzi:AddCharacter(character)
