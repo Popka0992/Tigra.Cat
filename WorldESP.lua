@@ -23,7 +23,42 @@ local WorldESP = {
 	Connections = {}
 }
 
+-- Reusable static buffer to prevent memory allocations per frame.
+local cornerOffsets = {
+	Vector3.new(-1, -1, -1),
+	Vector3.new(-1, -1,  1),
+	Vector3.new(-1,  1, -1),
+	Vector3.new(-1,  1,  1),
+	Vector3.new( 1, -1, -1),
+	Vector3.new( 1, -1,  1),
+	Vector3.new( 1,  1, -1),
+	Vector3.new( 1,  1,  1),
+}
+
+---Destroy an entity ESP entry safely.
+---@param instance Instance
+local function removeEntityEsp(instance)
+	local entry = WorldESP.Entities[instance]
+	if not entry then return end
+
+	if entry.Connection then
+		entry.Connection:Disconnect()
+		entry.Connection = nil
+	end
+
+	if entry.Box then entry.Box:Remove() end
+	if entry.Name then entry.Name:Remove() end
+	if entry.Distance then entry.Distance:Remove() end
+
+	WorldESP.Entities[instance] = nil
+end
+
+---Create Drawings for a valid entity.
+---@param instance Instance
+---@param definition table
 local function createEntityEsp(instance, definition)
+	if WorldESP.Entities[instance] then return end
+
 	local box = Drawing.new("Square")
 	box.Visible = false
 	box.Thickness = 1
@@ -48,28 +83,30 @@ local function createEntityEsp(instance, definition)
 		Definition = definition,
 		Box = box,
 		Name = nameText,
-		Distance = distText
+		Distance = distText,
+		Connection = nil
 	}
 
-	instance.AncestryChanged:Connect(function(_, parent)
+	entry.Connection = instance.AncestryChanged:Connect(function(_, parent)
 		if not parent then
-			box:Remove()
-			nameText:Remove()
-			distText:Remove()
-			WorldESP.Entities[instance] = nil
+			removeEntityEsp(instance)
 		end
 	end)
 
 	WorldESP.Entities[instance] = entry
 end
 
+---Register matching world instances.
+---@param child Instance
 local function checkAndRegisterEntity(child)
 	local def = WorldESP.Config.Targets[child.Name]
-	if def and not WorldESP.Entities[child] then
+	if def then
 		createEntityEsp(child, def)
 	end
 end
 
+---Monitor parent containers for child events.
+---@param container Instance
 local function monitorContainer(container)
 	for _, child in ipairs(container:GetChildren()) do
 		checkAndRegisterEntity(child)
@@ -101,23 +138,33 @@ function WorldESP:Load(config)
 	end))
 
 	table.insert(self.Connections, runService.PreRender:Connect(function()
+		local cfg = self.Config
+		if not cfg.Enabled then
+			for _, entry in pairs(self.Entities) do
+				entry.Box.Visible = false
+				entry.Name.Visible = false
+				entry.Distance.Visible = false
+			end
+			return
+		end
+
 		local camera = workspaceService.CurrentCamera
 		if not camera then return end
 
 		local camPos = camera.CFrame.Position
-		local cfg = self.Config
-		local isMasterEnabled = cfg.Enabled
+		local maxDist = cfg.MaxDistance
+		local showBoxes = cfg.Boxes
+		local showNames = cfg.Names
+		local showDist = cfg.Distance
 
 		for inst, entry in pairs(self.Entities) do
-			if not (inst and inst.Parent) then
-				entry.Box.Visible = false
-				entry.Name.Visible = false
-				entry.Distance.Visible = false
+			if not inst.Parent then
+				removeEntityEsp(inst)
 				continue
 			end
 
 			local def = entry.Definition
-			if not (isMasterEnabled and def.Enabled) then
+			if not def.Enabled then
 				entry.Box.Visible = false
 				entry.Name.Visible = false
 				entry.Distance.Visible = false
@@ -128,7 +175,8 @@ function WorldESP:Load(config)
 			local pos = pivot.Position
 			local dist = (pos - camPos).Magnitude
 
-			if dist > cfg.MaxDistance then
+			-- Early distance cutoff to skip calculations.
+			if dist > maxDist then
 				entry.Box.Visible = false
 				entry.Name.Visible = false
 				entry.Distance.Visible = false
@@ -146,7 +194,7 @@ function WorldESP:Load(config)
 			local color = def.Color
 			local topY, bottomY, centerX = screenPos.Y, screenPos.Y, screenPos.X
 
-			if cfg.Boxes then
+			if showBoxes then
 				local cf, sz
 				if inst:IsA("Model") then
 					cf, sz = inst:GetBoundingBox()
@@ -156,25 +204,19 @@ function WorldESP:Load(config)
 					cf, sz = pivot, Vector3.new(2, 2, 2)
 				end
 
-				local half = sz / 2
-				local corners = {
-					cf * Vector3.new(-half.X, -half.Y, -half.Z),
-					cf * Vector3.new(-half.X, -half.Y,  half.Z),
-					cf * Vector3.new(-half.X,  half.Y, -half.Z),
-					cf * Vector3.new(-half.X,  half.Y,  half.Z),
-					cf * Vector3.new( half.X, -half.Y, -half.Z),
-					cf * Vector3.new( half.X, -half.Y,  half.Z),
-					cf * Vector3.new( half.X,  half.Y, -half.Z),
-					cf * Vector3.new( half.X,  half.Y,  half.Z),
-				}
-
+				local halfX, halfY, halfZ = sz.X * 0.5, sz.Y * 0.5, sz.Z * 0.5
 				local minX, maxX = math.huge, -math.huge
 				local minY, maxY = math.huge, -math.huge
 				local valid = true
 
 				for i = 1, 8 do
-					local p = camera:WorldToViewportPoint(corners[i])
-					if p.Z <= 0 then valid = false break end
+					local offset = cornerOffsets[i]
+					local cornerPos = cf:PointToWorldSpace(Vector3.new(offset.X * halfX, offset.Y * halfY, offset.Z * halfZ))
+					local p, pointOnScreen = camera:WorldToViewportPoint(cornerPos)
+					if not pointOnScreen or p.Z <= 0 then
+						valid = false
+						break
+					end
 					if p.X < minX then minX = p.X end
 					if p.X > maxX then maxX = p.X end
 					if p.Y < minY then minY = p.Y end
@@ -188,7 +230,7 @@ function WorldESP:Load(config)
 					entry.Box.Color = color
 					topY = minY
 					bottomY = maxY
-					centerX = (minX + maxX) / 2
+					centerX = (minX + maxX) * 0.5
 				else
 					entry.Box.Visible = false
 				end
@@ -196,7 +238,7 @@ function WorldESP:Load(config)
 				entry.Box.Visible = false
 			end
 
-			if cfg.Names then
+			if showNames then
 				entry.Name.Visible = true
 				entry.Name.Text = def.Name
 				entry.Name.Color = color
@@ -205,11 +247,11 @@ function WorldESP:Load(config)
 				entry.Name.Visible = false
 			end
 
-			if cfg.Distance then
+			if showDist then
 				entry.Distance.Visible = true
 				entry.Distance.Text = string.format("[%d st]", math.floor(dist))
 				entry.Distance.Color = color
-				entry.Distance.Position = Vector2.new(centerX, bottomY + (cfg.Boxes and 2 or 4))
+				entry.Distance.Position = Vector2.new(centerX, bottomY + (showBoxes and 2 or 4))
 			else
 				entry.Distance.Visible = false
 			end
@@ -227,12 +269,13 @@ end
 
 ---Clean up all drawings and connections.
 function WorldESP:Unload()
-	for _, conn in ipairs(self.Connections) do conn:Disconnect() end
+	for _, conn in ipairs(self.Connections) do
+		conn:Disconnect()
+	end
 	table.clear(self.Connections)
-	for _, entry in pairs(self.Entities) do
-		if entry.Box then entry.Box:Remove() end
-		if entry.Name then entry.Name:Remove() end
-		if entry.Distance then entry.Distance:Remove() end
+
+	for inst in pairs(self.Entities) do
+		removeEntityEsp(inst)
 	end
 	table.clear(self.Entities)
 end
