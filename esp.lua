@@ -16,12 +16,14 @@ if shared.Arbuzi and shared.Arbuzi.Unload then
 end
 
 -- Services.
+local cloneref = cloneref or function(instance) return instance end
 local workspaceService = cloneref(game:GetService("Workspace"))
 local playersService = cloneref(game:GetService("Players"))
 local runService = cloneref(game:GetService("RunService"))
 local httpService = cloneref(game:GetService("HttpService"))
+local coreGui = cloneref(game:GetService("CoreGui"))
 
--- State and Aliases.
+local httpRequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
 local localPlayer = playersService.LocalPlayer
 local camera = workspaceService.CurrentCamera
 local worldToViewportPoint = camera.WorldToViewportPoint
@@ -56,11 +58,18 @@ local function updateCameraCache()
 	cachedFocalLength = viewPortY / (2 * mathTan(mathRad(camera.FieldOfView) * 0.5))
 end
 
-updateCameraCache()
-camera:GetPropertyChangedSignal("FieldOfView"):Connect(updateCameraCache)
-camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateCameraCache)
+local function getGuiParent()
+	local success, result = pcall(function()
+		return gethui()
+	end)
+	if success and result then
+		return result
+	end
+	return coreGui
+end
 
 local Arbuzi = {
+	Loaded = false,
 	Directory = "Esp",
 	Cache = {},
 	Holder = nil,
@@ -93,7 +102,7 @@ local Arbuzi = {
 				Bot = Color3.fromRGB(255, 255, 255)
 			},
 			Filled = {
-				Enabled = true,
+				Enabled = false,
 				Top = Color3.fromRGB(255, 255, 255),
 				Bot = Color3.fromRGB(255, 255, 255),
 				Transparency = { 0.85, 0.85 }
@@ -133,7 +142,7 @@ local config = Arbuzi.Table
 local Fonts = {}
 do
 	local function fetchSource(url)
-		local response = request({ Url = url, Method = "GET" })
+		local response = httpRequest({ Url = url, Method = "GET" })
 		return response and response.Body or ""
 	end
 
@@ -191,16 +200,6 @@ function Arbuzi:CreateThreads(name, signal, callback)
 	self.Threads[name] = connection
 	return connection
 end
-
-Arbuzi.Holder = Arbuzi:CreateObjects("ScreenGui", {
-	Name = "\n",
-	Parent = gethui(),
-	ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets,
-	ZIndexBehavior = Enum.ZIndexBehavior.Global,
-	ResetOnSpawn = false,
-	DisplayOrder = -1,
-	IgnoreGuiInset = true
-})
 
 function Arbuzi:InitEsp(data)
 	local objects = data.Objects
@@ -809,13 +808,11 @@ function Arbuzi:CalculateBox(data)
 	end
 end
 
----Register a model target from workspace.Players.
 function Arbuzi:AddTarget(target)
 	if not target:IsA("Model") then
 		return
 	end
 
-	-- Exclude our local player model.
 	if target.Name == localPlayer.Name or (localPlayer.Character and target == localPlayer.Character) then
 		return
 	end
@@ -1054,7 +1051,6 @@ function Arbuzi:Update(target, data)
 	local boxesCfg = config.Boxes
 	local textsCfg = config.Texts
 
-	-- Boxes.
 	if boxesCfg.Enabled then
 		if boxesCfg["Box Glow"].Enabled then
 			if objects.BoxGlow.ImageTransparency ~= 0 then
@@ -1144,7 +1140,6 @@ function Arbuzi:Update(target, data)
 		end
 	end
 
-	-- Name.
 	if textsCfg.Name.Enabled then
 		if not objects.TargetName.Visible then
 			objects.TargetName.Visible = true
@@ -1166,7 +1161,6 @@ function Arbuzi:Update(target, data)
 		end
 	end
 
-	-- Distance.
 	if textsCfg.Distance.Enabled then
 		if not objects.Distance.Visible then
 			objects.Distance.Visible = true
@@ -1187,7 +1181,6 @@ function Arbuzi:Update(target, data)
 		end
 	end
 
-	-- State Flags.
 	if textsCfg.State.Enabled then
 		if data.LastStateColor ~= textsCfg.State.Color then
 			objects.StateFlag.TextColor3 = textsCfg.State.Color
@@ -1201,7 +1194,6 @@ function Arbuzi:Update(target, data)
 		objects.JumpFlag.Visible = false
 	end
 
-	-- Health Bar.
 	local healthCfg = config.Bars["Health Bar"]
 	if healthCfg.Enabled then
 		local health = data.Health or 0
@@ -1256,7 +1248,6 @@ function Arbuzi:Update(target, data)
 		end
 	end
 
-	-- Weapon.
 	local weaponCfg = textsCfg.Weapon
 	if weaponCfg.Enabled then
 		if not objects.Weapon.Visible then
@@ -1286,14 +1277,57 @@ function Arbuzi:Update(target, data)
 	end
 end
 
--- Render Loops and Folder Watching.
-do
-	local postRenderCounter = 0
-	local postRenderInterval = 2
+function Arbuzi:Load()
+	if self.Loaded then
+		return self
+	end
 
-	Arbuzi.PreRender = runService.RenderStepped:Connect(function()
+	updateCameraCache()
+	self:CreateThreads("CameraFOV", camera:GetPropertyChangedSignal("FieldOfView"), updateCameraCache)
+	self:CreateThreads("CameraVP", camera:GetPropertyChangedSignal("ViewportSize"), updateCameraCache)
+
+	self.Holder = self:CreateObjects("ScreenGui", {
+		Name = "\n",
+		Parent = getGuiParent(),
+		ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets,
+		ZIndexBehavior = Enum.ZIndexBehavior.Global,
+		ResetOnSpawn = false,
+		DisplayOrder = -1,
+		IgnoreGuiInset = true
+	})
+
+	local function hookPlayersFolder(folder)
+		for _, model in ipairs(folder:GetChildren()) do
+			if model:IsA("Model") then
+				self:AddTarget(model)
+			end
+		end
+
+		self:CreateThreads("FolderChildAdded", folder.ChildAdded, function(child)
+			if child:IsA("Model") then
+				self:AddTarget(child)
+			end
+		end)
+
+		self:CreateThreads("FolderChildRemoved", folder.ChildRemoved, function(child)
+			self:RemoveTarget(child)
+		end)
+	end
+
+	local playersFolder = workspaceService:FindFirstChild("Players")
+	if playersFolder then
+		hookPlayersFolder(playersFolder)
+	else
+		self:CreateThreads("WorkspaceFolderWatcher", workspaceService.ChildAdded, function(child)
+			if child.Name == "Players" and child:IsA("Folder") then
+				hookPlayersFolder(child)
+			end
+		end)
+	end
+
+	self.PreRender = runService.RenderStepped:Connect(function()
 		if not config.Enabled then
-			for _, data in pairs(Arbuzi.Cache) do
+			for _, data in pairs(self.Cache) do
 				if data.Objects.TargetHolder and data.Objects.TargetHolder.Visible then
 					data.Objects.TargetHolder.Visible = false
 				end
@@ -1302,43 +1336,17 @@ do
 		end
 
 		cameraPosition = camera.CFrame.Position
-		for target, data in pairs(Arbuzi.Cache) do
+		for target, data in pairs(self.Cache) do
 			pcall(function()
-				Arbuzi:Update(target, data)
+				self:Update(target, data)
 			end)
 		end
 	end)
 
-	local function hookPlayersFolder(folder)
-		for _, model in ipairs(folder:GetChildren()) do
-			if model:IsA("Model") then
-				Arbuzi:AddTarget(model)
-			end
-		end
+	local postRenderCounter = 0
+	local postRenderInterval = 2
 
-		Arbuzi:CreateThreads("FolderChildAdded", folder.ChildAdded, function(child)
-			if child:IsA("Model") then
-				Arbuzi:AddTarget(child)
-			end
-		end)
-
-		Arbuzi:CreateThreads("FolderChildRemoved", folder.ChildRemoved, function(child)
-			Arbuzi:RemoveTarget(child)
-		end)
-	end
-
-	local playersFolder = workspaceService:FindFirstChild("Players")
-	if playersFolder then
-		hookPlayersFolder(playersFolder)
-	else
-		Arbuzi:CreateThreads("WorkspaceFolderWatcher", workspaceService.ChildAdded, function(child)
-			if child.Name == "Players" and child:IsA("Folder") then
-				hookPlayersFolder(child)
-			end
-		end)
-	end
-
-	Arbuzi.PostRender = runService.Heartbeat:Connect(function()
+	self.PostRender = runService.Heartbeat:Connect(function()
 		postRenderCounter = postRenderCounter + 1
 		if postRenderCounter < postRenderInterval then
 			return
@@ -1349,13 +1357,21 @@ do
 			local currentFolder = workspaceService:FindFirstChild("Players")
 			if currentFolder then
 				for _, model in ipairs(currentFolder:GetChildren()) do
-					if model:IsA("Model") and not Arbuzi.Cache[model] then
-						Arbuzi:AddTarget(model)
+					if model:IsA("Model") and not self.Cache[model] then
+						self:AddTarget(model)
 					end
 				end
 			end
 		end)
 	end)
+
+	self.Loaded = true
+	shared.Arbuzi = self
+	return self
+end
+
+function Arbuzi:GetConfig()
+	return self.Table
 end
 
 function Arbuzi:Unload()
@@ -1388,8 +1404,8 @@ function Arbuzi:Unload()
 	end
 
 	tableClear(self.Cache)
+	self.Loaded = false
+	shared.Arbuzi = nil
 end
-
-shared.Arbuzi = Arbuzi
 
 return Arbuzi
