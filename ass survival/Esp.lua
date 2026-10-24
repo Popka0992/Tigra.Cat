@@ -138,7 +138,7 @@ end
 
 ---Refresh cached camera-dependent math.
 local function updateCameraCache()
-	camera = workspaceService.CurrentCamera
+	camera = workspaceService.CurrentCamera or camera
 	if not camera then return end
 	local vp = camera.ViewportSize
 	if vp.Y > 0 then
@@ -792,24 +792,30 @@ end
 ---@param target Model
 function Arbuzi:AddTarget(target)
 	if not target or not target:IsA("Model") then return end
-	if target == localPlayer.Character or target.Name == localPlayer.Name then return end
-	if self.Cache[target] then return end
+	if target == localPlayer.Character or (localPlayer and target.Name == localPlayer.Name) then return end
+	if self.Cache[target] and typeof(self.Cache[target]) == "table" then return end
+	if self.Cache[target] == "pending" then return end
 
-	self.Cache[target] = true
+	self.Cache[target] = "pending"
 
 	task.spawn(function()
 		local rootPart, humanoid
 		local attempts = 0
 
-		while target.Parent and self.Cache[target] == true and attempts < 30 do
-			rootPart = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Torso") or target:FindFirstChild("UpperTorso")
+		while target.Parent and self.Cache[target] == "pending" and attempts < 25 do
+			rootPart = target:FindFirstChild("HumanoidRootPart")
+				or target:FindFirstChild("Torso")
+				or target:FindFirstChild("UpperTorso")
+				or target.PrimaryPart
+				or target:FindFirstChild("Head")
+
 			humanoid = target:FindFirstChildOfClass("Humanoid")
 			if rootPart and humanoid then break end
 			attempts = attempts + 1
 			task.wait(0.1)
 		end
 
-		if not target.Parent or self.Cache[target] ~= true or not (rootPart and humanoid) then
+		if not target.Parent or self.Cache[target] ~= "pending" or not rootPart or not humanoid then
 			self.Cache[target] = nil
 			return
 		end
@@ -961,7 +967,11 @@ function Arbuzi:Update(target, data)
 	local humanoid = data.Humanoid
 
 	if not rootPart or not rootPart.Parent then
-		rootPart = character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
+		rootPart = character:FindFirstChild("HumanoidRootPart")
+			or character:FindFirstChild("Torso")
+			or character:FindFirstChild("UpperTorso")
+			or character.PrimaryPart
+			or character:FindFirstChild("Head")
 		data.RootPart = rootPart
 	end
 
@@ -1074,7 +1084,7 @@ function Arbuzi:Update(target, data)
 	if textsCfg.Name.Enabled then
 		if not objects.TargetName.Visible then objects.TargetName.Visible = true end
 		local playerObj = playersService:GetPlayerFromCharacter(target) or playersService:FindFirstChild(target.Name)
-		local displayName = playerObj and playerObj.DisplayName or target.Name
+		local displayName = playerObj and (playerObj.DisplayName or playerObj.Name) or target.Name
 		if data.LastDisplayName ~= displayName then
 			objects.TargetName.Text = displayName
 			data.LastDisplayName = displayName
@@ -1194,7 +1204,7 @@ function Arbuzi:Load()
 		IgnoreGuiInset = true
 	})
 
-	-- Player tracking with proper character cycle handling.
+	-- Primary event hook for player character lifecycle.
 	local function bindPlayer(player)
 		if player == localPlayer then return end
 
@@ -1222,29 +1232,90 @@ function Arbuzi:Load()
 		end
 	end)
 
-	-- Recover targets and camera on LocalPlayer respawn.
+	-- Respawn recovery handler for LocalPlayer.
 	self.Threads["LocalPlayerRespawn"] = localPlayer.CharacterAdded:Connect(function()
 		task.defer(function()
 			updateCameraCache()
 			for _, player in ipairs(playersService:GetPlayers()) do
-				if player ~= localPlayer and player.Character and not self.Cache[player.Character] then
-					self:AddTarget(player.Character)
+				if player ~= localPlayer then
+					local char = player.Character or workspaceService:FindFirstChild(player.Name)
+					if char and char:IsA("Model") and not self.Cache[char] then
+						self:AddTarget(char)
+					end
 				end
 			end
 		end)
 	end)
 
-	-- Fallback for Bot/NPC Models in Workspace.
-	if config.Bots and config.Bots.Enabled then
-		self.Threads["WorkspaceNPCs"] = workspaceService.ChildAdded:Connect(function(child)
-			if child:IsA("Model") and not playersService:GetPlayerFromCharacter(child) then
-				local hum = child:FindFirstChildOfClass("Humanoid")
-				if hum then
-					self:AddTarget(child)
+	-- Periodic watchdog scanner for delayed replication, stream-ins, and nicknames.
+	self.Threads["WatchdogScanner"] = task.spawn(function()
+		while self.Loaded do
+			task.wait(1.2)
+
+			-- Ensure GUI holder integrity.
+			if not self.Holder or not self.Holder.Parent then
+				self.Holder = self:CreateObjects("ScreenGui", {
+					Name = "\n",
+					Parent = getGuiParent(),
+					ResetOnSpawn = false,
+					DisplayOrder = -1,
+					IgnoreGuiInset = true
+				})
+				for _, data in pairs(self.Cache) do
+					if typeof(data) == "table" and data.Objects and data.Objects.TargetHolder then
+						data.Objects.TargetHolder.Parent = self.Holder
+					end
 				end
 			end
-		end)
-	end
+
+			-- Sweep players list for missed characters or unlinked workspace models.
+			for _, player in ipairs(playersService:GetPlayers()) do
+				if player == localPlayer then continue end
+				local char = player.Character or workspaceService:FindFirstChild(player.Name)
+				if char and char:IsA("Model") and char.Parent then
+					if not self.Cache[char] then
+						self:AddTarget(char)
+					else
+						local data = self.Cache[char]
+						if typeof(data) == "table" then
+							if not data.RootPart or not data.RootPart.Parent or not data.Humanoid or not data.Humanoid.Parent then
+								data.RootPart = char:FindFirstChild("HumanoidRootPart")
+									or char:FindFirstChild("Torso")
+									or char:FindFirstChild("UpperTorso")
+									or char.PrimaryPart
+									or char:FindFirstChild("Head")
+								data.Humanoid = char:FindFirstChildOfClass("Humanoid")
+							end
+							if data.Humanoid then
+								data.Health = data.Humanoid.Health
+								data.MaxHealth = data.Humanoid.MaxHealth
+								data.Alive = data.Humanoid.Health > 0
+							end
+						end
+					end
+				end
+			end
+
+			-- Sweep bots / NPCs if enabled.
+			if config.Bots and config.Bots.Enabled then
+				for _, model in ipairs(workspaceService:GetChildren()) do
+					if model:IsA("Model") and model ~= localPlayer.Character and not self.Cache[model] then
+						local hum = model:FindFirstChildOfClass("Humanoid")
+						if hum then
+							self:AddTarget(model)
+						end
+					end
+				end
+			end
+
+			-- Purge destroyed or unparented models.
+			for target in pairs(self.Cache) do
+				if typeof(target) ~= "Instance" or not target.Parent or not target:IsDescendantOf(workspaceService) then
+					self:RemoveTarget(target)
+				end
+			end
+		end
+	end)
 
 	self.PreRender = runService.RenderStepped:Connect(function()
 		if not config.Enabled then
