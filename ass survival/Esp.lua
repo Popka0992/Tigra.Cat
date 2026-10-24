@@ -1,4 +1,3 @@
-
 -- Check for table that is shared between executions.
 if not shared then
 	return warn("No shared, no script.")
@@ -141,8 +140,14 @@ end
 local function updateCameraCache()
 	camera = workspaceService.CurrentCamera
 	if not camera then return end
-	viewPortY = camera.ViewportSize.Y
-	cachedFocalLength = viewPortY / (2 * mathTan(mathRad(camera.FieldOfView) * 0.5))
+	local vp = camera.ViewportSize
+	if vp.Y > 0 then
+		viewPortY = vp.Y
+		local fov = camera.FieldOfView
+		if fov and fov > 0 then
+			cachedFocalLength = viewPortY / (2 * mathTan(mathRad(fov) * 0.5))
+		end
+	end
 end
 
 local function getGuiParent()
@@ -716,12 +721,12 @@ function Arbuzi:CalculateBox(data)
 	end
 
 	local rootPart = data.RootPart
-	if not rootPart then
+	if not rootPart or not rootPart.Parent then
 		return nil, nil, nil, nil, false
 	end
 
 	local rootScreen, onScreen = camera:WorldToViewportPoint(rootPart.Position)
-	if not onScreen then
+	if not onScreen or rootScreen.Z <= 0 then
 		return nil, nil, nil, nil, false
 	end
 
@@ -750,7 +755,7 @@ function Arbuzi:CalculateBox(data)
 				local sz = part.Size
 				local hx, hy, hz = sz.X * 0.5, sz.Y * 0.5, sz.Z * 0.5
 				local rx, uy, lz = cf.RightVector, cf.UpVector, cf.LookVector
-				local depthScale = cachedFocalLength / partScreen.Z
+				local depthScale = (cachedFocalLength > 0 and cachedFocalLength or (viewPortY * 0.7)) / partScreen.Z
 
 				local ex = (mathAbs(rx.X * hx) + mathAbs(uy.X * hy) + mathAbs(lz.X * hz)) * depthScale
 				local ey = (mathAbs(rx.Y * hx) + mathAbs(uy.Y * hy) + mathAbs(lz.Y * hz)) * depthScale
@@ -786,7 +791,7 @@ end
 ---Add a target model.
 ---@param target Model
 function Arbuzi:AddTarget(target)
-	if not target:IsA("Model") then return end
+	if not target or not target:IsA("Model") then return end
 	if target == localPlayer.Character or target.Name == localPlayer.Name then return end
 	if self.Cache[target] then return end
 
@@ -946,21 +951,37 @@ function Arbuzi:Update(target, data)
 	local character = data.Character
 
 	if not character or not character.Parent then
-		if objects.TargetHolder.Visible then objects.TargetHolder.Visible = false end
+		if objects.TargetHolder and objects.TargetHolder.Visible then
+			objects.TargetHolder.Visible = false
+		end
 		return
 	end
 
 	local rootPart = data.RootPart
 	local humanoid = data.Humanoid
 
+	if not rootPart or not rootPart.Parent then
+		rootPart = character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
+		data.RootPart = rootPart
+	end
+
+	if not humanoid or not humanoid.Parent then
+		humanoid = character:FindFirstChildOfClass("Humanoid")
+		data.Humanoid = humanoid
+	end
+
 	if not rootPart or not humanoid or humanoid.Health <= 0 then
-		if objects.TargetHolder.Visible then objects.TargetHolder.Visible = false end
+		if objects.TargetHolder and objects.TargetHolder.Visible then
+			objects.TargetHolder.Visible = false
+		end
 		return
 	end
 
 	local w, h, x, y, onScreen = self:CalculateBox(data)
 	if not onScreen or not w then
-		if objects.TargetHolder.Visible then objects.TargetHolder.Visible = false end
+		if objects.TargetHolder and objects.TargetHolder.Visible then
+			objects.TargetHolder.Visible = false
+		end
 		return
 	end
 
@@ -1085,8 +1106,8 @@ function Arbuzi:Update(target, data)
 
 	local healthCfg = config.Bars["Health Bar"]
 	if healthCfg.Enabled then
-		local health = data.Health or 0
-		local maxHealth = data.MaxHealth or 100
+		local health = humanoid.Health or data.Health or 0
+		local maxHealth = humanoid.MaxHealth or data.MaxHealth or 100
 		local ratio = mathClamp(health / maxHealth, 0, 1)
 
 		if not objects.LeftBarHolder.Visible then objects.LeftBarHolder.Visible = true end
@@ -1164,25 +1185,6 @@ function Arbuzi:Load()
 	if self.Loaded then return self end
 
 	updateCameraCache()
-	self.Threads["CameraFOV"] = camera:GetPropertyChangedSignal("FieldOfView"):Connect(updateCameraCache)
-	self.Threads["CameraVP"] = camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateCameraCache)
-
-	self.Threads["CameraChanged"] = workspaceService:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
-		if self.Threads["CameraFOV"] then
-			self.Threads["CameraFOV"]:Disconnect()
-			self.Threads["CameraFOV"] = nil
-		end
-		if self.Threads["CameraVP"] then
-			self.Threads["CameraVP"]:Disconnect()
-			self.Threads["CameraVP"] = nil
-		end
-
-		updateCameraCache()
-		if camera then
-			self.Threads["CameraFOV"] = camera:GetPropertyChangedSignal("FieldOfView"):Connect(updateCameraCache)
-			self.Threads["CameraVP"] = camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateCameraCache)
-		end
-	end)
 
 	self.Holder = self:CreateObjects("ScreenGui", {
 		Name = "\n",
@@ -1192,14 +1194,20 @@ function Arbuzi:Load()
 		IgnoreGuiInset = true
 	})
 
-	-- Universal Players Connection.
+	-- Player tracking with proper character cycle handling.
 	local function bindPlayer(player)
 		if player == localPlayer then return end
+
 		if player.Character then
 			self:AddTarget(player.Character)
 		end
+
 		player.CharacterAdded:Connect(function(char)
 			self:AddTarget(char)
+		end)
+
+		player.CharacterRemoving:Connect(function(char)
+			self:RemoveTarget(char)
 		end)
 	end
 
@@ -1212,6 +1220,18 @@ function Arbuzi:Load()
 		if player.Character then
 			self:RemoveTarget(player.Character)
 		end
+	end)
+
+	-- Recover targets and camera on LocalPlayer respawn.
+	self.Threads["LocalPlayerRespawn"] = localPlayer.CharacterAdded:Connect(function()
+		task.defer(function()
+			updateCameraCache()
+			for _, player in ipairs(playersService:GetPlayers()) do
+				if player ~= localPlayer and player.Character and not self.Cache[player.Character] then
+					self:AddTarget(player.Character)
+				end
+			end
+		end)
 	end)
 
 	-- Fallback for Bot/NPC Models in Workspace.
@@ -1244,9 +1264,19 @@ function Arbuzi:Load()
 			self.LastRenderTime = now
 		end
 
+		camera = workspaceService.CurrentCamera
 		if not camera then return end
 
+		local vpY = camera.ViewportSize.Y
+		if vpY > 0 then
+			viewPortY = vpY
+			local fov = camera.FieldOfView
+			if fov and fov > 0 then
+				cachedFocalLength = vpY / (2 * mathTan(mathRad(fov) * 0.5))
+			end
+		end
 		cameraPosition = camera.CFrame.Position
+
 		for target, data in pairs(self.Cache) do
 			if typeof(data) == "table" then
 				self:Update(target, data)
