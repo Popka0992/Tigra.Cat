@@ -1,4 +1,3 @@
-
 -- Services.
 local lightingService = cloneref(game:GetService("Lighting"))
 local runService = cloneref(game:GetService("RunService"))
@@ -235,20 +234,39 @@ local originalClockTime = lightingService.ClockTime
 local originalBrightness = lightingService.Brightness
 local originalExposure = lightingService.ExposureCompensation
 
-local customSky = lightingService:FindFirstChildOfClass("Sky")
+local initialSky = lightingService:FindFirstChildOfClass("Sky")
 local originalSkyProps = {
-	SkyboxBk = customSky and customSky.SkyboxBk or "rbxasset://textures/sky/sky512_bk.tex",
-	SkyboxDn = customSky and customSky.SkyboxDn or "rbxasset://textures/sky/sky512_dn.tex",
-	SkyboxFt = customSky and customSky.SkyboxFt or "rbxasset://textures/sky/sky512_ft.tex",
-	SkyboxLf = customSky and customSky.SkyboxLf or "rbxasset://textures/sky/sky512_lf.tex",
-	SkyboxRt = customSky and customSky.SkyboxRt or "rbxasset://textures/sky/sky512_rt.tex",
-	SkyboxUp = customSky and customSky.SkyboxUp or "rbxasset://textures/sky/sky512_up.tex"
+	SkyboxBk = initialSky and initialSky.SkyboxBk or "rbxasset://textures/sky/sky512_bk.tex",
+	SkyboxDn = initialSky and initialSky.SkyboxDn or "rbxasset://textures/sky/sky512_dn.tex",
+	SkyboxFt = initialSky and initialSky.SkyboxFt or "rbxasset://textures/sky/sky512_ft.tex",
+	SkyboxLf = initialSky and initialSky.SkyboxLf or "rbxasset://textures/sky/sky512_lf.tex",
+	SkyboxRt = initialSky and initialSky.SkyboxRt or "rbxasset://textures/sky/sky512_rt.tex",
+	SkyboxUp = initialSky and initialSky.SkyboxUp or "rbxasset://textures/sky/sky512_up.tex"
 }
 
+local initialAtmosphere = lightingService:FindFirstChildOfClass("Atmosphere")
+local originalAtmosphere = {
+	Density = initialAtmosphere and initialAtmosphere.Density or 0.3,
+	Offset = initialAtmosphere and initialAtmosphere.Offset or 0.25,
+	Haze = initialAtmosphere and initialAtmosphere.Haze or 0,
+	Glare = initialAtmosphere and initialAtmosphere.Glare or 0,
+	Color = initialAtmosphere and initialAtmosphere.Color or Color3.fromRGB(199, 199, 199),
+	Decay = initialAtmosphere and initialAtmosphere.Decay or Color3.fromRGB(106, 112, 125)
+}
+
+-- Managed visual instances.
+local customSky = initialSky
 if not customSky then
 	customSky = Instance.new("Sky")
 	customSky.Name = "CustomSky"
 	customSky.Parent = lightingService
+end
+
+local customAtmosphere = initialAtmosphere
+if not customAtmosphere then
+	customAtmosphere = Instance.new("Atmosphere")
+	customAtmosphere.Name = "CustomAtmosphere"
+	customAtmosphere.Parent = lightingService
 end
 
 local customColorCorrection = lightingService:FindFirstChild("CustomColorCorrection")
@@ -257,22 +275,6 @@ if not customColorCorrection then
 	customColorCorrection.Name = "CustomColorCorrection"
 	customColorCorrection.Enabled = false
 	customColorCorrection.Parent = lightingService
-end
-
-local customAtmosphere = lightingService:FindFirstChildOfClass("Atmosphere")
-local originalAtmosphere = {
-	Density = customAtmosphere and customAtmosphere.Density or 0.3,
-	Offset = customAtmosphere and customAtmosphere.Offset or 0.25,
-	Haze = customAtmosphere and customAtmosphere.Haze or 0,
-	Glare = customAtmosphere and customAtmosphere.Glare or 0,
-	Color = customAtmosphere and customAtmosphere.Color or Color3.fromRGB(199, 199, 199),
-	Decay = customAtmosphere and customAtmosphere.Decay or Color3.fromRGB(106, 112, 125)
-}
-
-if not customAtmosphere then
-	customAtmosphere = Instance.new("Atmosphere")
-	customAtmosphere.Name = "CustomAtmosphere"
-	customAtmosphere.Parent = lightingService
 end
 
 WorldVisuals.Config = {
@@ -311,28 +313,64 @@ WorldVisuals.Config = {
 	AtmosphereDecay = originalAtmosphere.Decay
 }
 
-function WorldVisuals:ApplySkybox(name)
-	local targetData = SKYBOX_ASSETS[name]
+-- Helpers to keep instance references valid.
+local function getActiveSky()
 	if not customSky or not customSky.Parent then
 		customSky = lightingService:FindFirstChildOfClass("Sky") or Instance.new("Sky", lightingService)
 	end
+	return customSky
+end
 
-	if targetData then
-		customSky.SkyboxBk = targetData.Bk
-		customSky.SkyboxDn = targetData.Dn
-		customSky.SkyboxFt = targetData.Ft
-		customSky.SkyboxLf = targetData.Lf
-		customSky.SkyboxRt = targetData.Rt
-		customSky.SkyboxUp = targetData.Up
-	else
-		for prop, val in pairs(originalSkyProps) do
-			customSky[prop] = val
+local function getActiveAtmosphere()
+	if not customAtmosphere or not customAtmosphere.Parent then
+		customAtmosphere = lightingService:FindFirstChildOfClass("Atmosphere") or Instance.new("Atmosphere", lightingService)
+	end
+	return customAtmosphere
+end
+
+local function getActiveColorCorrection()
+	if not customColorCorrection or not customColorCorrection.Parent then
+		customColorCorrection = lightingService:FindFirstChild("CustomColorCorrection") or Instance.new("ColorCorrectionEffect", lightingService)
+		customColorCorrection.Name = "CustomColorCorrection"
+	end
+	return customColorCorrection
+end
+
+---Apply selected Skybox assets to all Sky instances.
+function WorldVisuals:ApplySkybox(name)
+	local targetData = SKYBOX_ASSETS[name]
+	local skies = {}
+	for _, child in ipairs(lightingService:GetChildren()) do
+		if child:IsA("Sky") then
+			table.insert(skies, child)
+		end
+	end
+	if #skies == 0 then
+		table.insert(skies, getActiveSky())
+	end
+
+	for _, sky in ipairs(skies) do
+		if targetData then
+			sky.SkyboxBk = targetData.Bk
+			sky.SkyboxDn = targetData.Dn
+			sky.SkyboxFt = targetData.Ft
+			sky.SkyboxLf = targetData.Lf
+			sky.SkyboxRt = targetData.Rt
+			sky.SkyboxUp = targetData.Up
+		else
+			for prop, val in pairs(originalSkyProps) do
+				sky[prop] = val
+			end
 		end
 	end
 end
 
+---Synchronize current state.
 function WorldVisuals:Update()
 	local config = self.Config
+	local atmo = getActiveAtmosphere()
+	local cc = getActiveColorCorrection()
+
 	if config.Enabled then
 		lightingService.Ambient = config.Ambient and config.AmbientColor or originalAmbient
 		lightingService.OutdoorAmbient = config.OutdoorAmbient and config.OutdoorAmbientColor or originalOutdoorAmbient
@@ -347,43 +385,34 @@ function WorldVisuals:Update()
 			lightingService.FogEnd = originalFogEnd
 		end
 
-		if config.TimeChanger then
-			lightingService.ClockTime = config.ClockTime
-		else
-			lightingService.ClockTime = originalClockTime
-		end
-
+		lightingService.ClockTime = config.TimeChanger and config.ClockTime or originalClockTime
 		lightingService.Brightness = config.Brightness and config.BrightnessValue or originalBrightness
 		lightingService.ExposureCompensation = config.Exposure and config.ExposureValue or originalExposure
 
-		customColorCorrection.Enabled = config.ColorCorrection
+		cc.Enabled = config.ColorCorrection
 		if config.ColorCorrection then
-			customColorCorrection.Saturation = config.Saturation
-			customColorCorrection.Contrast = config.Contrast
-			customColorCorrection.TintColor = config.Tint
+			cc.Saturation = config.Saturation
+			cc.Contrast = config.Contrast
+			cc.TintColor = config.Tint
 		end
 
 		if config.Atmosphere then
-			customAtmosphere.Density = config.AtmosphereDensity
-			customAtmosphere.Offset = config.AtmosphereOffset
-			customAtmosphere.Haze = config.AtmosphereHaze
-			customAtmosphere.Glare = config.AtmosphereGlare
-			customAtmosphere.Color = config.AtmosphereColor
-			customAtmosphere.Decay = config.AtmosphereDecay
+			atmo.Density = config.AtmosphereDensity
+			atmo.Offset = config.AtmosphereOffset
+			atmo.Haze = config.AtmosphereHaze
+			atmo.Glare = config.AtmosphereGlare
+			atmo.Color = config.AtmosphereColor
+			atmo.Decay = config.AtmosphereDecay
 		else
-			customAtmosphere.Density = originalAtmosphere.Density
-			customAtmosphere.Offset = originalAtmosphere.Offset
-			customAtmosphere.Haze = originalAtmosphere.Haze
-			customAtmosphere.Glare = originalAtmosphere.Glare
-			customAtmosphere.Color = originalAtmosphere.Color
-			customAtmosphere.Decay = originalAtmosphere.Decay
+			atmo.Density = originalAtmosphere.Density
+			atmo.Offset = originalAtmosphere.Offset
+			atmo.Haze = originalAtmosphere.Haze
+			atmo.Glare = originalAtmosphere.Glare
+			atmo.Color = originalAtmosphere.Color
+			atmo.Decay = originalAtmosphere.Decay
 		end
 
-		if config.SkyChanger then
-			self:ApplySkybox(config.SelectedSky)
-		else
-			self:ApplySkybox(nil)
-		end
+		self:ApplySkybox(config.SkyChanger and config.SelectedSky or nil)
 	else
 		lightingService.Ambient = originalAmbient
 		lightingService.OutdoorAmbient = originalOutdoorAmbient
@@ -394,14 +423,14 @@ function WorldVisuals:Update()
 		lightingService.Brightness = originalBrightness
 		lightingService.ExposureCompensation = originalExposure
 
-		customColorCorrection.Enabled = false
+		cc.Enabled = false
 
-		customAtmosphere.Density = originalAtmosphere.Density
-		customAtmosphere.Offset = originalAtmosphere.Offset
-		customAtmosphere.Haze = originalAtmosphere.Haze
-		customAtmosphere.Glare = originalAtmosphere.Glare
-		customAtmosphere.Color = originalAtmosphere.Color
-		customAtmosphere.Decay = originalAtmosphere.Decay
+		atmo.Density = originalAtmosphere.Density
+		atmo.Offset = originalAtmosphere.Offset
+		atmo.Haze = originalAtmosphere.Haze
+		atmo.Glare = originalAtmosphere.Glare
+		atmo.Color = originalAtmosphere.Color
+		atmo.Decay = originalAtmosphere.Decay
 
 		self:ApplySkybox(nil)
 	end
@@ -415,30 +444,84 @@ function WorldVisuals:GetSkyboxList()
 	return self.SkyboxNames
 end
 
+---Initialize anti-rollback metatable hook and render loop.
 function WorldVisuals:Load()
+	-- Intercept game scripts modifying lighting properties.
+	local oldNewindex
+	oldNewindex = hookmetamethod(game, "__newindex", newcclosure(function(self, property, value)
+		if not checkcaller() and typeof(self) == "Instance" then
+			local config = WorldVisuals.Config
+			if config and config.Enabled then
+				if self == lightingService then
+					if config.Ambient and property == "Ambient" then return end
+					if config.OutdoorAmbient and property == "OutdoorAmbient" then return end
+					if config.Fog and (property == "FogColor" or property == "FogStart" or property == "FogEnd") then return end
+					if config.TimeChanger and (property == "ClockTime" or property == "TimeOfDay") then return end
+					if config.Brightness and property == "Brightness" then return end
+					if config.Exposure and property == "ExposureCompensation" then return end
+				elseif self:IsA("Atmosphere") and config.Atmosphere then
+					if property == "Density" or property == "Offset" or property == "Haze" or property == "Glare" or property == "Color" or property == "Decay" then
+						return
+					end
+				elseif self:IsA("Sky") and config.SkyChanger then
+					if string.sub(property, 1, 6) == "Skybox" then
+						return
+					end
+				elseif self:IsA("ColorCorrectionEffect") and config.ColorCorrection then
+					if property == "Saturation" or property == "Contrast" or property == "TintColor" or property == "Enabled" then
+						return
+					end
+				end
+			end
+		end
+		return oldNewindex(self, property, value)
+	end))
+
+	-- Enforce active visuals every render step to prevent engine rollbacks.
 	runService.RenderStepped:Connect(function()
-		if not self.Config.Enabled then return end
-		if self.Config.Ambient then
-			lightingService.Ambient = self.Config.AmbientColor
+		local config = self.Config
+		if not config.Enabled then return end
+
+		if config.Ambient then
+			lightingService.Ambient = config.AmbientColor
 		end
-		if self.Config.OutdoorAmbient then
-			lightingService.OutdoorAmbient = self.Config.OutdoorAmbientColor
+		if config.OutdoorAmbient then
+			lightingService.OutdoorAmbient = config.OutdoorAmbientColor
 		end
-		if self.Config.Fog then
-			lightingService.FogColor = self.Config.FogColor
-			lightingService.FogStart = self.Config.FogStart
-			lightingService.FogEnd = self.Config.FogEnd
+		if config.Fog then
+			lightingService.FogColor = config.FogColor
+			lightingService.FogStart = config.FogStart
+			lightingService.FogEnd = config.FogEnd
 		end
-		if self.Config.TimeChanger then
-			lightingService.ClockTime = self.Config.ClockTime
+		if config.TimeChanger then
+			lightingService.ClockTime = config.ClockTime
 		end
-		if self.Config.Brightness then
-			lightingService.Brightness = self.Config.BrightnessValue
+		if config.Brightness then
+			lightingService.Brightness = config.BrightnessValue
 		end
-		if self.Config.Exposure then
-			lightingService.ExposureCompensation = self.Config.ExposureValue
+		if config.Exposure then
+			lightingService.ExposureCompensation = config.ExposureValue
+		end
+
+		if config.Atmosphere then
+			local atmo = getActiveAtmosphere()
+			atmo.Density = config.AtmosphereDensity
+			atmo.Offset = config.AtmosphereOffset
+			atmo.Haze = config.AtmosphereHaze
+			atmo.Glare = config.AtmosphereGlare
+			atmo.Color = config.AtmosphereColor
+			atmo.Decay = config.AtmosphereDecay
+		end
+
+		if config.ColorCorrection then
+			local cc = getActiveColorCorrection()
+			cc.Enabled = true
+			cc.Saturation = config.Saturation
+			cc.Contrast = config.Contrast
+			cc.TintColor = config.Tint
 		end
 	end)
+
 	return self
 end
 
