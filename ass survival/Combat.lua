@@ -1,3 +1,4 @@
+-- combat module optimized for FustGuns & FustCombat (Bow Ballistics)
 local cloneref = cloneref or function(o) return o end
 
 local playersService = cloneref(game:GetService("Players"))
@@ -31,7 +32,7 @@ local CombatConfig = {
 	Wallbang = false,
 	ProjectionOverride = true,
 	MagicBullet = true,
-	BowPrediction = true,
+	BowPrediction = true, 
 
 	TargetPlayers = true,
 	TargetBots = true,
@@ -303,31 +304,67 @@ function Combat:Load()
 		local method = getnamecallmethod()
 		local args = {...}
 
+		-- Перехват сетевых событий (Server-Authoritative для Bow, Client-Authoritative для Guns)
 		if method == "FireServer" and CombatConfig.Methods.Network and CombatConfig.AimMode == "Silent Aim" and targetPart and rollHitChance() then
 			local payload = args[1]
 			if type(payload) == "table" and payload.shotId ~= nil then
 				
-				if payload.dir ~= nil and payload.origin ~= nil then
+				-- 1. Логика лука (FustCombat) - сервер сам симулирует полёт, меняем только dir
+				if payload.charge ~= nil and payload.dir ~= nil and payload.origin ~= nil then
 					local hitpos = targetPart.Position
 					
-					if payload.charge ~= nil and CombatConfig.BowPrediction then
-						local dist = (hitpos - payload.origin).Magnitude
-						local speed = 220 * math.clamp(payload.charge, 0.15, 1)
-						if speed > 0 then
-							local timeToHit = dist / speed
-							local drop = 0.5 * 50 * (timeToHit * timeToHit)
-							hitpos = hitpos + Vector3.new(0, drop, 0)
+					if CombatConfig.BowPrediction then
+						local charge = math.clamp(payload.charge, 0.15, 1)
+						local speed = 125 * charge + 95
+						local gravity = 50
+						
+						-- Предсказание движения цели
+						if targetPart.AssemblyLinearVelocity.Magnitude > 0 then
+							local dist = (hitpos - payload.origin).Magnitude
+							local t = dist / speed
+							hitpos = hitpos + targetPart.AssemblyLinearVelocity * t
 						end
+						
+						-- Точная баллистическая дуга
+						local delta = hitpos - payload.origin
+						local hDelta = Vector3.new(delta.X, 0, delta.Z)
+						local x = hDelta.Magnitude
+						local y = delta.Y
+
+						local v2 = speed * speed
+						local v4 = v2 * v2
+						local root = v4 - gravity * (gravity * x * x + 2 * y * v2)
+
+						if root > 0 then
+							local angle = math.atan2(v2 - math.sqrt(root), gravity * x)
+							payload.dir = (hDelta.Unit * math.cos(angle) + Vector3.new(0, 1, 0) * math.sin(angle)).Unit
+						else
+							-- Фолбэк для дальних (out-of-range)
+							local timeToHit = delta.Magnitude / speed
+							local drop = 0.5 * gravity * (timeToHit * timeToHit)
+							payload.dir = (hitpos + Vector3.new(0, drop, 0) - payload.origin).Unit
+						end
+					else
+						payload.dir = (hitpos - payload.origin).Unit
 					end
 					
-					payload.dir = (hitpos - payload.origin).Unit
-					return oldNamecall(self, payload)
+					args[1] = payload
+					return oldNamecall(self, unpack(args))
+				end
+
+				-- 2. Логика отправки выстрела (FustGuns)
+				if payload.aiming ~= nil and payload.dir ~= nil and payload.origin ~= nil then
+					payload.dir = (targetPart.Position - payload.origin).Unit
+					args[1] = payload
+					return oldNamecall(self, unpack(args))
 				end
 				
+				-- 3. Логика регистрации попадания (FustGuns)
 				if payload.pellet ~= nil and payload.part ~= nil and payload.pos ~= nil then
 					payload.part = targetPart
 					payload.pos = targetPart.Position
-					return oldNamecall(self, payload)
+					args[1] = payload
+					return oldNamecall(self, unpack(args))
 				end
 			end
 			return oldNamecall(self, ...)
