@@ -457,4 +457,5 @@ function Combat:Load()
 	end))
 end
 
+print("hello")
 return Combat
