@@ -1,7 +1,5 @@
--- combat module from universal xdd full work 
 local cloneref = cloneref or function(o) return o end
 
--- Services.
 local playersService = cloneref(game:GetService("Players"))
 local runService = cloneref(game:GetService("RunService"))
 local userInputService = cloneref(game:GetService("UserInputService"))
@@ -31,12 +29,12 @@ local CombatConfig = {
 	Smoothness = 2,
 
 	Wallbang = false,
-	ProjectionOverride = false,
-	MagicBullet = false,
+	ProjectionOverride = true,
+	MagicBullet = true,
+	BowPrediction = true,
 
 	TargetPlayers = true,
 	TargetBots = true,
-
 	TeamCheck = false,
 	DeadCheck = true,
 	DistCheck = false,
@@ -49,12 +47,14 @@ local CombatConfig = {
 
 	Methods = {
 		Raycast = true,
+		Spherecast = true,
 		FindPartOnRay = true,
 		FindPartOnRayWithWhitelist = true,
 		FindPartOnRayWithIgnoreList = true,
 		ScreenPointToRay = true,
 		ViewportPointToRay = true,
-		Mouse = true
+		Mouse = true,
+		Network = true
 	},
 
 	HitboxEnabled = false,
@@ -85,8 +85,6 @@ circleInline.Filled = false
 circleInline.ZIndex = 2
 circleInline.Visible = false
 
----Scan workspace for targets 
----@return table
 local function getTargetEntities()
 	local entities = {}
 	local myChar = localPlayer.Character
@@ -303,7 +301,39 @@ function Combat:Load()
 		end
 
 		local method = getnamecallmethod()
-		if not (method == "Raycast" or method == "ScreenPointToRay" or method == "ViewportPointToRay" or method:find("FindPartOnRay")) then
+		local args = {...}
+
+		if method == "FireServer" and CombatConfig.Methods.Network and CombatConfig.AimMode == "Silent Aim" and targetPart and rollHitChance() then
+			local payload = args[1]
+			if type(payload) == "table" and payload.shotId ~= nil then
+				
+				if payload.dir ~= nil and payload.origin ~= nil then
+					local hitpos = targetPart.Position
+					
+					if payload.charge ~= nil and CombatConfig.BowPrediction then
+						local dist = (hitpos - payload.origin).Magnitude
+						local speed = 220 * math.clamp(payload.charge, 0.15, 1)
+						if speed > 0 then
+							local timeToHit = dist / speed
+							local drop = 0.5 * 50 * (timeToHit * timeToHit)
+							hitpos = hitpos + Vector3.new(0, drop, 0)
+						end
+					end
+					
+					payload.dir = (hitpos - payload.origin).Unit
+					return oldNamecall(self, payload)
+				end
+				
+				if payload.pellet ~= nil and payload.part ~= nil and payload.pos ~= nil then
+					payload.part = targetPart
+					payload.pos = targetPart.Position
+					return oldNamecall(self, payload)
+				end
+			end
+			return oldNamecall(self, ...)
+		end
+
+		if not (method == "Raycast" or method == "Spherecast" or method == "ScreenPointToRay" or method == "ViewportPointToRay" or method:find("FindPartOnRay")) then
 			return oldNamecall(self, ...)
 		end
 
@@ -322,7 +352,7 @@ function Combat:Load()
 		)
 
 		if method == "Raycast" and CombatConfig.Methods.Raycast then
-			local origin, direction, params = ...
+			local origin, direction, params = args[1], args[2], args[3]
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
 				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
 
@@ -345,6 +375,30 @@ function Combat:Load()
 			end
 		end
 
+		if method == "Spherecast" and CombatConfig.Methods.Spherecast then
+			local origin, radius, direction, params = args[1], args[2], args[3], args[4]
+			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
+				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
+				
+				if CombatConfig.Wallbang then
+					local fakeParams = RaycastParams.new()
+					fakeParams.FilterType = Enum.RaycastFilterType.Include
+					fakeParams.FilterDescendantsInstances = {hitpart}
+					fakeParams.IgnoreWater = true
+
+					isInternalRaycast = true
+					local forcedResult = workspaceService:Raycast(hitpos + Vector3.new(0, 2, 0), Vector3.new(0, -5, 0), fakeParams)
+					isInternalRaycast = false
+
+					if forcedResult then
+						return forcedResult
+					end
+				end
+
+				return oldNamecall(self, origin, radius, newDir, params)
+			end
+		end
+
 		if (method == "ScreenPointToRay" and CombatConfig.Methods.ScreenPointToRay) or (method == "ViewportPointToRay" and CombatConfig.Methods.ViewportPointToRay) then
 			local ray = oldNamecall(self, ...)
 			local origin = ray.Origin
@@ -355,7 +409,7 @@ function Combat:Load()
 		end
 
 		if method:find("FindPartOnRay") and (CombatConfig.Methods[method] or CombatConfig.Methods.FindPartOnRay) then
-			local ray, ignoreList, terrainCellsAreCubes, ignoreWater = ...
+			local ray, ignoreList, terrainCellsAreCubes, ignoreWater = args[1], args[2], args[3], args[4]
 			if typeof(ray) == "Ray" then
 				local origin = ray.Origin
 				local direction = ray.Direction
