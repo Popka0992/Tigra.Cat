@@ -34,7 +34,8 @@ local CombatConfig = {
 	BowPrediction = true, 
 
 	InstaHit = false,
-	InstaMethod = "Trust Client",
+	-- Поддерживаемые методы: "Blink" (для Fust), "Trust Client", "Origin Spoof", "Speed Abuse", "Skip Raycast"
+	InstaMethod = "Blink", 
 
 	TargetPlayers = true,
 	TargetBots = true,
@@ -317,16 +318,42 @@ function Combat:Load()
 				local modified = false
 				local tPos = targetPart.Position
 				
+				-- Проверка структуры Fust лука (присутствует charge, нет part/hit)
 				if newPayload.charge ~= nil then
 					if CombatConfig.InstaHit then
-						newPayload.origin = tPos + Vector3.new(0, 2, 0)
-						newPayload.dir = Vector3.new(0, -1, 0)
-						newPayload.charge = 999999
-						modified = true
+						if CombatConfig.InstaMethod == "Blink" then
+							-- Телепорт за спину цели (обход серверной проверки дистанции)
+							local rootPart = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+							if rootPart then
+								local originalCFrame = rootPart.CFrame
+								local attackPos = tPos - (targetPart.CFrame.LookVector * 3) -- Смещаемся на 3 стада назад от цели
+								
+								rootPart.Anchored = true
+								rootPart.CFrame = CFrame.new(attackPos, tPos)
+								
+								newPayload.origin = attackPos
+								newPayload.dir = (tPos - attackPos).Unit
+								newPayload.charge = 1 -- Отправляем максимальный легальный заряд
+								
+								task.spawn(function()
+									runService.RenderStepped:Wait()
+									rootPart.CFrame = originalCFrame
+									rootPart.Anchored = false
+								end)
+								modified = true
+							end
+						elseif CombatConfig.InstaMethod == "Speed Abuse" then
+							-- Выстрел с забагованной скоростью
+							newPayload.origin = currentCamera.CFrame.Position
+							newPayload.dir = (tPos - newPayload.origin).Unit
+							newPayload.charge = 999999
+							modified = true
+						end
 					else
+						-- Идеальная предикция лука Fust (без багов, 100% легит для сервера)
 						local charge = math.clamp(newPayload.charge, 0.15, 1)
-						local speed = 125 * charge + 95
-						local gravity = 50
+						local speed = 125 * charge + 95 -- SPEED_CHARGE + SPEED_BASE
+						local gravity = 50 -- Константа GRAVITY из лука Fust
 						local origin = newPayload.origin or currentCamera.CFrame.Position
 						
 						if CombatConfig.BowPrediction then
@@ -348,6 +375,7 @@ function Combat:Load()
 						modified = true
 					end
 				else
+					-- Логика для обычного огнестрела
 					if CombatConfig.InstaHit then
 						if CombatConfig.InstaMethod == "Trust Client" then
 							if newPayload.pellet ~= nil or newPayload.part ~= nil then
@@ -506,5 +534,5 @@ function Combat:Load()
 	end))
 end
 
-print("hello232323232")
+print("hamovnik")
 return Combat
