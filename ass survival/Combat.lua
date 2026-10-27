@@ -29,9 +29,8 @@ local CombatConfig = {
 	WallCheck = true,
 	BowPrediction = true, 
 
-	-- Безопасный InstaHit возвращен
 	InstaHit = false,
-	InstaMethod = "Safe Inject", -- "Safe Inject", "Time Sync"
+	InstaMethod = "Trust Client", -- "Trust Client", "Origin Spoof", "Speed Abuse", "Skip Raycast"
 
 	TargetPlayers = true,
 	TargetBots = true,
@@ -265,53 +264,18 @@ function Combat:Load()
 				
 				local modified = false
 				local tPos = targetPart.Position
-				local origin = newPayload.origin or currentCamera.CFrame.Position
 				
-				if CombatConfig.InstaHit then
-					if CombatConfig.InstaMethod == "Safe Inject" then
-						-- Передает точные данные попадания, но не трогает origin и время, не вызывает AC детекты
-						if newPayload.dir ~= nil then
-							newPayload.dir = (tPos - origin).Unit
-						end
-						if newPayload.part ~= nil or newPayload.pellet ~= nil then
-							newPayload.part = targetPart
-							newPayload.pos = tPos
-							newPayload.normal = (origin - tPos).Unit
-						end
-						if newPayload.charge ~= nil then
-							newPayload.charge = 1 -- Легит макс. натяжение
-						end
+				if newPayload.charge ~= nil then
+					if CombatConfig.InstaHit then
+						newPayload.origin = tPos + Vector3.new(0, 2, 0)
+						newPayload.dir = Vector3.new(0, -1, 0)
+						newPayload.charge = 999999
 						modified = true
-
-					elseif CombatConfig.InstaMethod == "Time Sync" then
-						-- Высчитывает точное время полета до цели, чтобы серверная валидация пропустила
-						local dist = (tPos - origin).Magnitude
-						if newPayload.dir ~= nil then
-							newPayload.dir = (tPos - origin).Unit
-						end
-						if newPayload.part ~= nil then
-							newPayload.part = targetPart
-							newPayload.pos = tPos
-							newPayload.normal = (origin - tPos).Unit
-						end
-						
-						local speed = 1500
-						if newPayload.charge ~= nil then
-							local charge = math.clamp(newPayload.charge or 1, 0.15, 1)
-							speed = 125 * charge + 95
-							newPayload.charge = 1
-						end
-						
-						if newPayload.t ~= nil then newPayload.t = dist / speed end
-						if newPayload.time ~= nil then newPayload.time = dist / speed end
-						modified = true
-					end
-				else
-					-- Обычный Prediction
-					if newPayload.charge ~= nil then
+					else
 						local charge = math.clamp(newPayload.charge, 0.15, 1)
 						local speed = 125 * charge + 95
 						local gravity = 50
+						local origin = newPayload.origin or currentCamera.CFrame.Position
 						
 						if CombatConfig.BowPrediction then
 							local dist = (tPos - origin).Magnitude
@@ -325,17 +289,72 @@ function Combat:Load()
 							
 							local finalDrop = 0.5 * gravity * (t * t)
 							local finalTarget = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, finalDrop, 0)
-							newPayload.dir = (finalTarget - origin).Unit 
+							newPayload.dir = (finalTarget - origin).Unit
 						else
 							newPayload.dir = (tPos - origin).Unit
 						end
 						modified = true
-					else
-						if newPayload.dir ~= nil and newPayload.origin ~= nil then
-							newPayload.dir = (tPos - origin).Unit
+					end
+				else
+					if CombatConfig.InstaHit then
+						if CombatConfig.InstaMethod == "Trust Client" then
+							if newPayload.pellet ~= nil or newPayload.part ~= nil then
+								newPayload.part = targetPart
+								newPayload.pos = tPos
+								newPayload.normal = Vector3.new(0, 1, 0)
+								modified = true
+							end
+							if newPayload.dir ~= nil and newPayload.origin ~= nil then
+								newPayload.dir = (tPos - newPayload.origin).Unit
+								modified = true
+							end
+							
+						elseif CombatConfig.InstaMethod == "Origin Spoof" then
+							if newPayload.dir ~= nil and newPayload.origin ~= nil then
+								newPayload.origin = tPos
+								newPayload.dir = Vector3.new(0, -1, 0)
+								modified = true
+							end
+							if newPayload.pellet ~= nil or newPayload.part ~= nil then
+								newPayload.part = targetPart
+								newPayload.pos = tPos
+								newPayload.normal = Vector3.new(0, 1, 0)
+								modified = true
+							end
+							
+						elseif CombatConfig.InstaMethod == "Speed Abuse" then
+							if newPayload.pellet ~= nil or newPayload.part ~= nil then
+								newPayload.part = targetPart
+								newPayload.pos = tPos
+								newPayload.normal = Vector3.new(0, 1, 0)
+								modified = true
+							end
+							if newPayload.dir ~= nil and newPayload.origin ~= nil then
+								newPayload.dir = (tPos - newPayload.origin).Unit
+								modified = true
+							end
+							
+						elseif CombatConfig.InstaMethod == "Skip Raycast" then
+							newPayload.t = 0
+							newPayload.time = 0
+							if newPayload.pellet ~= nil or newPayload.part ~= nil then
+								newPayload.part = targetPart
+								newPayload.pos = tPos
+								newPayload.normal = Vector3.new(0, 1, 0)
+							end
+							if newPayload.dir ~= nil and newPayload.origin ~= nil then
+								newPayload.dir = (tPos - newPayload.origin).Unit
+							end
 							modified = true
-						elseif newPayload.aiming ~= nil and newPayload.dir ~= nil then
-							newPayload.dir = (tPos - origin).Unit
+						end
+					else
+						if newPayload.aiming ~= nil and newPayload.dir ~= nil and newPayload.origin ~= nil then
+							newPayload.dir = (tPos - newPayload.origin).Unit
+							modified = true
+						elseif newPayload.pellet ~= nil and newPayload.part ~= nil and newPayload.pos ~= nil then
+							newPayload.part = targetPart
+							newPayload.pos = tPos
+							newPayload.normal = Vector3.new(0, 1, 0)
 							modified = true
 						end
 					end
@@ -360,7 +379,7 @@ function Combat:Load()
 
 		local hitpos = targetPart.Position
 
-		-- Только .Unit * Magnitude. Убран сырой hitpos - origin (Projection Override AC Flag)
+		-- Легитная длина луча (Без Projection Override)
 		if method == "Raycast" and CombatConfig.Methods.Raycast then
 			local origin, direction, params = args[1], args[2], args[3]
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
@@ -400,5 +419,5 @@ function Combat:Load()
 	end))
 end
 
-print("im detected")
+print("im 100000 detected insta ban")
 return Combat
