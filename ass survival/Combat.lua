@@ -307,7 +307,8 @@ function Combat:Load()
 		local args = {...}
 
 		if method == "FireServer" and CombatConfig.Methods.Network and CombatConfig.AimMode == "Silent Aim" and targetPart and rollHitChance() then
-			local payload = args[1]
+			local pIndex = (type(args[1]) == "string" and type(args[2]) == "table") and 2 or 1
+			local payload = args[pIndex]
 			
 			if type(payload) == "table" then
 				local newPayload = {}
@@ -318,19 +319,10 @@ function Combat:Load()
 				
 				if newPayload.charge ~= nil then
 					if CombatConfig.InstaHit then
-						if CombatConfig.InstaMethod == "Origin Spoof" or CombatConfig.InstaMethod == "Trust Client" then
-							newPayload.origin = tPos + Vector3.new(0, 0.1, 0)
-							newPayload.dir = Vector3.new(0, -1, 0)
-							newPayload.charge = 1
-						elseif CombatConfig.InstaMethod == "Speed Abuse" then
-							newPayload.charge = 50000
-							newPayload.dir = (tPos - (newPayload.origin or currentCamera.CFrame.Position)).Unit
-						elseif CombatConfig.InstaMethod == "Skip Raycast" then
-							newPayload.origin = tPos
-							newPayload.dir = Vector3.new(0, -1, 0)
-							newPayload.t = 0
-							newPayload.time = 0
-						end
+						newPayload.origin = tPos + Vector3.new(0, 2, 0)
+						newPayload.dir = Vector3.new(0, -1, 0)
+						newPayload.charge = 999999
+						modified = true
 					else
 						local charge = math.clamp(newPayload.charge, 0.15, 1)
 						local speed = 125 * charge + 95
@@ -353,8 +345,8 @@ function Combat:Load()
 						else
 							newPayload.dir = (tPos - origin).Unit
 						end
+						modified = true
 					end
-					modified = true
 				else
 					if CombatConfig.InstaHit then
 						if CombatConfig.InstaMethod == "Trust Client" then
@@ -421,7 +413,8 @@ function Combat:Load()
 				end
 				
 				if modified then
-					return oldNamecall(self, newPayload)
+					args[pIndex] = newPayload
+					return oldNamecall(self, unpack(args))
 				end
 			end
 			
