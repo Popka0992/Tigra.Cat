@@ -34,11 +34,7 @@ local CombatConfig = {
 	BowPrediction = true, 
 
 	InstaHit = false,
-	InstaMethod = "Blink", -- "Blink", "Trust Client", "Origin Spoof", "Speed Abuse", "Skip Raycast"
-
-	PredictionDot = false,
-	PredictionDotColor = Color3.fromRGB(255, 0, 0),
-	PredictionDotSize = 4,
+	InstaMethod = "Trust Client",
 
 	TargetPlayers = true,
 	TargetBots = true,
@@ -91,24 +87,6 @@ circleInline.Thickness = 1
 circleInline.Filled = false
 circleInline.ZIndex = 2
 circleInline.Visible = false
-
-local predDotOutline = Drawing.new("Circle")
-predDotOutline.Thickness = 2
-predDotOutline.Color = Color3.new(0, 0, 0)
-predDotOutline.Filled = false
-predDotOutline.ZIndex = 3
-predDotOutline.Visible = false
-
-local predDot = Drawing.new("Circle")
-predDot.Thickness = 1
-predDot.Filled = true
-predDot.ZIndex = 4
-predDot.Visible = false
-
--- Константы Fust Combat
-local FUST_BASE_SPEED = 95
-local FUST_CHARGE_SPEED = 125
-local FUST_GRAVITY = 50
 
 local function getTargetEntities()
 	local entities = {}
@@ -190,17 +168,6 @@ local function getClosestTarget()
 	return closestPart, closestTarget
 end
 
-local function getPredictedPosition(tPos, tVel, origin, speed, gravity)
-	local t = (tPos - origin).Magnitude / speed
-	for i = 1, 4 do
-		local drop = 0.5 * gravity * (t * t)
-		local aimPoint = tPos + (tVel * t) + Vector3.new(0, drop, 0)
-		t = (aimPoint - origin).Magnitude / speed
-	end
-	local finalDrop = 0.5 * gravity * (t * t)
-	return tPos + (tVel * t) + Vector3.new(0, finalDrop, 0)
-end
-
 function Combat:GetConfig()
 	return CombatConfig
 end
@@ -237,44 +204,13 @@ function Combat:Load()
 		else
 			targetPart, targetPlayer = nil, nil
 		end
-
-		if CombatConfig.Enabled and CombatConfig.PredictionDot and targetPart then
-			local origin = currentCamera.CFrame.Position
-			local maxSpeed = FUST_BASE_SPEED + FUST_CHARGE_SPEED 
-			local predPos = getPredictedPosition(targetPart.Position, targetPart.AssemblyLinearVelocity, origin, maxSpeed, FUST_GRAVITY)
-
-			local screenPos, onScreen = currentCamera:WorldToViewportPoint(predPos)
-			if onScreen then
-				predDot.Position = Vector2.new(screenPos.X, screenPos.Y)
-				predDot.Radius = CombatConfig.PredictionDotSize
-				predDot.Color = CombatConfig.PredictionDotColor
-				predDot.Visible = true
-
-				predDotOutline.Position = predDot.Position
-				predDotOutline.Radius = CombatConfig.PredictionDotSize + 1
-				predDotOutline.Visible = true
-			else
-				predDot.Visible = false
-				predDotOutline.Visible = false
-			end
-		else
-			predDot.Visible = false
-			predDotOutline.Visible = false
-		end
 	end)
 
 	runService:BindToRenderStep("CombatAimbot", Enum.RenderPriority.Camera.Value + 1, function()
 		local isAiming = aimKeyActive or CombatConfig.AimActive
 		if CombatConfig.Enabled and CombatConfig.AimMode == "Aimbot" and isAiming and targetPart and targetPart.Parent then
-			local origin = currentCamera.CFrame.Position
-			local aimPos = targetPart.Position
-
-			if CombatConfig.BowPrediction then
-				local maxSpeed = FUST_BASE_SPEED + FUST_CHARGE_SPEED
-				aimPos = getPredictedPosition(targetPart.Position, targetPart.AssemblyLinearVelocity, origin, maxSpeed, FUST_GRAVITY)
-			end
-
-			local targetLook = CFrame.lookAt(origin, aimPos)
+			local camPos = currentCamera.CFrame.Position
+			local targetLook = CFrame.lookAt(camPos, targetPart.Position)
 			local smoothFactor = math.clamp(CombatConfig.Smoothness, 1, 30)
 
 			if smoothFactor <= 1 then
@@ -381,44 +317,31 @@ function Combat:Load()
 				local modified = false
 				local tPos = targetPart.Position
 				
-				if newPayload.charge ~= nil and newPayload.dir ~= nil then
+				if newPayload.charge ~= nil then
 					if CombatConfig.InstaHit then
-						if CombatConfig.InstaMethod == "Blink" then
-							local rootPart = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
-							if rootPart then
-								local originalCFrame = rootPart.CFrame
-								local attackPos = tPos - (targetPart.CFrame.LookVector * 3)
-								
-								rootPart.Anchored = true
-								rootPart.CFrame = CFrame.new(attackPos, tPos)
-								
-								newPayload.origin = attackPos
-								newPayload.dir = (tPos - attackPos).Unit
-								newPayload.charge = 1 
-								
-								task.spawn(function()
-									runService.RenderStepped:Wait()
-									if rootPart then
-										rootPart.CFrame = originalCFrame
-										rootPart.Anchored = false
-									end
-								end)
-								modified = true
-							end
-						elseif CombatConfig.InstaMethod == "Speed Abuse" then
-							newPayload.origin = currentCamera.CFrame.Position
-							newPayload.dir = (tPos - newPayload.origin).Unit
-							newPayload.charge = 999999
-							modified = true
-						end
+						newPayload.origin = tPos + Vector3.new(0, 2, 0)
+						newPayload.dir = Vector3.new(0, -1, 0)
+						newPayload.charge = 999999
+						modified = true
 					else
 						local charge = math.clamp(newPayload.charge, 0.15, 1)
-						local speed = FUST_CHARGE_SPEED * charge + FUST_BASE_SPEED
+						local speed = 125 * charge + 95
+						local gravity = 50
 						local origin = newPayload.origin or currentCamera.CFrame.Position
 						
 						if CombatConfig.BowPrediction then
-							local aimPos = getPredictedPosition(targetPart.Position, targetPart.AssemblyLinearVelocity, origin, speed, FUST_GRAVITY)
-							newPayload.dir = (aimPos - origin).Unit
+							local dist = (tPos - origin).Magnitude
+							local t = dist / speed
+							
+							for i = 1, 2 do
+								local drop = 0.5 * gravity * (t * t)
+								local predictedPos = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, drop, 0)
+								t = (predictedPos - origin).Magnitude / speed
+							end
+							
+							local finalDrop = 0.5 * gravity * (t * t)
+							local finalTarget = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, finalDrop, 0)
+							newPayload.dir = (finalTarget - origin).Unit
 						else
 							newPayload.dir = (tPos - origin).Unit
 						end
@@ -583,4 +506,5 @@ function Combat:Load()
 	end))
 end
 
+print("hello232323232")
 return Combat
