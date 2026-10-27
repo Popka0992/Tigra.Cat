@@ -281,7 +281,7 @@ do
 	Fonts.SmallestPixel = registerFont("SmallestPixel", 400, "Normal", {
 		Id = "smallest_pixel-7.ttf",
 		-- Рабочий линк на Smallest Pixel
-		Font = fetchSource("https://raw.githubusercontent.com/BocusBot/font/main/smallest_pixel-7.ttf")
+		Font = fetchSource("https://github.com/i77lhm/storage/blob/main/fonts/smallest_pixel-7.ttf")
 	})
 
 	Arbuzi.Tahoma = Font.new(Fonts.Tahoma, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
