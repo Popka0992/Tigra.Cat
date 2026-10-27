@@ -1,4 +1,3 @@
--- combat module optimized for FustGuns & FustCombat (Bow Ballistics)
 local cloneref = cloneref or function(o) return o end
 
 local playersService = cloneref(game:GetService("Players"))
@@ -33,6 +32,9 @@ local CombatConfig = {
 	ProjectionOverride = true,
 	MagicBullet = true,
 	BowPrediction = true, 
+
+	InstaHit = false,
+	InstaMethod = "Trust Client",
 
 	TargetPlayers = true,
 	TargetBots = true,
@@ -304,55 +306,101 @@ function Combat:Load()
 		local method = getnamecallmethod()
 		local args = {...}
 
-		-- Перехват сетевых событий (Server-Authoritative для Bow, Client-Authoritative для Guns)
 		if method == "FireServer" and CombatConfig.Methods.Network and CombatConfig.AimMode == "Silent Aim" and targetPart and rollHitChance() then
 			local payload = args[1]
 			
-			if type(payload) == "table" and payload.shotId ~= nil then
-				-- Создаем полную копию таблицы, чтобы обойти защиту от изменения Read-Only таблиц в pcall
+			if type(payload) == "table" then
 				local newPayload = {}
 				for k, v in pairs(payload) do newPayload[k] = v end
 				
 				local modified = false
+				local tPos = targetPart.Position
 				
-				-- 1. Логика лука (FustCombat) - сервер сам симулирует полёт
-				if newPayload.charge ~= nil and newPayload.dir ~= nil and newPayload.origin ~= nil then
-					local targetPos = targetPart.Position
-					
-					if CombatConfig.BowPrediction then
-						local charge = math.clamp(newPayload.charge, 0.15, 1)
-						local speed = 125 * charge + 95
-						local gravity = 50
-						
-						-- Итеративное баллистическое предсказание
-						local dist = (targetPos - newPayload.origin).Magnitude
-						local t = dist / speed
-						
-						for i = 1, 2 do
-							local drop = 0.5 * gravity * (t * t)
-							local predictedPos = targetPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, drop, 0)
-							t = (predictedPos - newPayload.origin).Magnitude / speed
+				if CombatConfig.InstaHit then
+					if CombatConfig.InstaMethod == "Trust Client" then
+						if newPayload.pellet ~= nil or newPayload.part ~= nil then
+							newPayload.part = targetPart
+							newPayload.pos = tPos
+							modified = true
+						end
+						if newPayload.dir ~= nil and newPayload.origin ~= nil then
+							newPayload.dir = (tPos - newPayload.origin).Unit
+							modified = true
 						end
 						
-						local finalDrop = 0.5 * gravity * (t * t)
-						local finalTarget = targetPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, finalDrop, 0)
+					elseif CombatConfig.InstaMethod == "Origin Spoof" then
+						if newPayload.dir ~= nil and newPayload.origin ~= nil then
+							newPayload.origin = tPos
+							newPayload.dir = Vector3.new(0, -1, 0)
+							modified = true
+						end
+						if newPayload.pellet ~= nil or newPayload.part ~= nil then
+							newPayload.part = targetPart
+							newPayload.pos = tPos
+							modified = true
+						end
 						
-						newPayload.dir = (finalTarget - newPayload.origin).Unit
-					else
-						newPayload.dir = (targetPos - newPayload.origin).Unit
+					elseif CombatConfig.InstaMethod == "Speed Abuse" then
+						if newPayload.charge ~= nil then
+							newPayload.charge = 999999
+							if newPayload.speed ~= nil then newPayload.speed = 999999 end
+							if newPayload.origin ~= nil then
+								newPayload.dir = (tPos - newPayload.origin).Unit
+							end
+							modified = true
+						end
+						if newPayload.pellet ~= nil or newPayload.part ~= nil then
+							newPayload.part = targetPart
+							newPayload.pos = tPos
+							modified = true
+						end
+						if newPayload.dir ~= nil and newPayload.origin ~= nil and newPayload.charge == nil then
+							newPayload.dir = (tPos - newPayload.origin).Unit
+							modified = true
+						end
+						
+					elseif CombatConfig.InstaMethod == "Skip Raycast" then
+						newPayload.t = 0
+						newPayload.time = 0
+						if newPayload.pellet ~= nil or newPayload.part ~= nil then
+							newPayload.part = targetPart
+							newPayload.pos = tPos
+						end
+						if newPayload.dir ~= nil and newPayload.origin ~= nil then
+							newPayload.dir = (tPos - newPayload.origin).Unit
+						end
+						modified = true
 					end
-					modified = true
-					
-				-- 2. Логика отправки выстрела (FustGuns)
-				elseif newPayload.aiming ~= nil and newPayload.dir ~= nil and newPayload.origin ~= nil then
-					newPayload.dir = (targetPart.Position - newPayload.origin).Unit
-					modified = true
-					
-				-- 3. Логика регистрации попадания (FustGuns)
-				elseif newPayload.pellet ~= nil and newPayload.part ~= nil and newPayload.pos ~= nil then
-					newPayload.part = targetPart
-					newPayload.pos = targetPart.Position
-					modified = true
+				else
+					if newPayload.charge ~= nil and newPayload.dir ~= nil and newPayload.origin ~= nil then
+						if CombatConfig.BowPrediction then
+							local charge = math.clamp(newPayload.charge, 0.15, 1)
+							local speed = 125 * charge + 95
+							local gravity = 50
+							local dist = (tPos - newPayload.origin).Magnitude
+							local t = dist / speed
+							
+							for i = 1, 2 do
+								local drop = 0.5 * gravity * (t * t)
+								local predictedPos = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, drop, 0)
+								t = (predictedPos - newPayload.origin).Magnitude / speed
+							end
+							
+							local finalDrop = 0.5 * gravity * (t * t)
+							local finalTarget = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, finalDrop, 0)
+							newPayload.dir = (finalTarget - newPayload.origin).Unit
+						else
+							newPayload.dir = (tPos - newPayload.origin).Unit
+						end
+						modified = true
+					elseif newPayload.aiming ~= nil and newPayload.dir ~= nil and newPayload.origin ~= nil then
+						newPayload.dir = (tPos - newPayload.origin).Unit
+						modified = true
+					elseif newPayload.pellet ~= nil and newPayload.part ~= nil and newPayload.pos ~= nil then
+						newPayload.part = targetPart
+						newPayload.pos = tPos
+						modified = true
+					end
 				end
 				
 				if modified then
