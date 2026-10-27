@@ -16,7 +16,6 @@ local aimKeyActive = false
 local targetPart = nil
 local targetPlayer = nil
 
--- Убраны детекты: Hitbox, InstaHit, Wallbang, MagicBullet
 local CombatConfig = {
 	AimMode = "Silent Aim",
 	Enabled = false,
@@ -27,8 +26,12 @@ local CombatConfig = {
 	HitChance = 100,
 	Smoothness = 2,
 
-	WallCheck = true, -- Добавлена проверка на препятствия (Line of Sight)
+	WallCheck = true,
 	BowPrediction = true, 
+
+	-- Безопасный InstaHit возвращен
+	InstaHit = false,
+	InstaMethod = "Safe Inject", -- "Safe Inject", "Time Sync"
 
 	TargetPlayers = true,
 	TargetBots = true,
@@ -126,7 +129,6 @@ local function rollHitChance()
 	return math.random(1, 100) <= CombatConfig.HitChance
 end
 
--- Валидная проверка видимости (Raycast от камеры к цели)
 local function checkVisibility(origin, targetPos, ignoreChar)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
@@ -134,7 +136,7 @@ local function checkVisibility(origin, targetPos, ignoreChar)
 	params.IgnoreWater = true
 
 	local result = workspaceService:Raycast(origin, (targetPos - origin), params)
-	return result == nil -- Возвращает true, если препятствий нет
+	return result == nil 
 end
 
 local function getClosestTarget()
@@ -155,7 +157,6 @@ local function getClosestTarget()
 		local screenPos, onScreen = currentCamera:WorldToViewportPoint(part.Position)
 		if not onScreen then continue end
 
-		-- Проверка препятствий перед захватом цели
 		if CombatConfig.WallCheck and not checkVisibility(camPos, part.Position, char) then continue end
 
 		local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
@@ -232,7 +233,6 @@ function Combat:Load()
 			return oldIndex(self, key)
 		end
 
-		-- Перехват мыши оставлен только для базовой проекции, без форсирования попадания сквозь стены
 		if CombatConfig.AimMode == "Silent Aim" and targetPart and CombatConfig.Methods.Mouse then
 			if rollHitChance() then
 				if key == "Target" then
@@ -265,39 +265,79 @@ function Combat:Load()
 				
 				local modified = false
 				local tPos = targetPart.Position
+				local origin = newPayload.origin or currentCamera.CFrame.Position
 				
-				if newPayload.charge ~= nil then
-					local charge = math.clamp(newPayload.charge, 0.15, 1)
-					local speed = 125 * charge + 95
-					local gravity = 50
-					local origin = newPayload.origin or currentCamera.CFrame.Position
-					
-					if CombatConfig.BowPrediction then
+				if CombatConfig.InstaHit then
+					if CombatConfig.InstaMethod == "Safe Inject" then
+						-- Передает точные данные попадания, но не трогает origin и время, не вызывает AC детекты
+						if newPayload.dir ~= nil then
+							newPayload.dir = (tPos - origin).Unit
+						end
+						if newPayload.part ~= nil or newPayload.pellet ~= nil then
+							newPayload.part = targetPart
+							newPayload.pos = tPos
+							newPayload.normal = (origin - tPos).Unit
+						end
+						if newPayload.charge ~= nil then
+							newPayload.charge = 1 -- Легит макс. натяжение
+						end
+						modified = true
+
+					elseif CombatConfig.InstaMethod == "Time Sync" then
+						-- Высчитывает точное время полета до цели, чтобы серверная валидация пропустила
 						local dist = (tPos - origin).Magnitude
-						local t = dist / speed
-						
-						for i = 1, 2 do
-							local drop = 0.5 * gravity * (t * t)
-							local predictedPos = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, drop, 0)
-							t = (predictedPos - origin).Magnitude / speed
+						if newPayload.dir ~= nil then
+							newPayload.dir = (tPos - origin).Unit
+						end
+						if newPayload.part ~= nil then
+							newPayload.part = targetPart
+							newPayload.pos = tPos
+							newPayload.normal = (origin - tPos).Unit
 						end
 						
-						local finalDrop = 0.5 * gravity * (t * t)
-						local finalTarget = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, finalDrop, 0)
-						-- Изменяется только вектор направления, origin остается оригинальным
-						newPayload.dir = (finalTarget - origin).Unit 
-					else
-						newPayload.dir = (tPos - origin).Unit
+						local speed = 1500
+						if newPayload.charge ~= nil then
+							local charge = math.clamp(newPayload.charge or 1, 0.15, 1)
+							speed = 125 * charge + 95
+							newPayload.charge = 1
+						end
+						
+						if newPayload.t ~= nil then newPayload.t = dist / speed end
+						if newPayload.time ~= nil then newPayload.time = dist / speed end
+						modified = true
 					end
-					modified = true
 				else
-					-- Легит подмена для огнестрела: меняется только направление (dir), если оно есть
-					if newPayload.dir ~= nil and newPayload.origin ~= nil then
-						newPayload.dir = (tPos - newPayload.origin).Unit
+					-- Обычный Prediction
+					if newPayload.charge ~= nil then
+						local charge = math.clamp(newPayload.charge, 0.15, 1)
+						local speed = 125 * charge + 95
+						local gravity = 50
+						
+						if CombatConfig.BowPrediction then
+							local dist = (tPos - origin).Magnitude
+							local t = dist / speed
+							
+							for i = 1, 2 do
+								local drop = 0.5 * gravity * (t * t)
+								local predictedPos = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, drop, 0)
+								t = (predictedPos - origin).Magnitude / speed
+							end
+							
+							local finalDrop = 0.5 * gravity * (t * t)
+							local finalTarget = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, finalDrop, 0)
+							newPayload.dir = (finalTarget - origin).Unit 
+						else
+							newPayload.dir = (tPos - origin).Unit
+						end
 						modified = true
-					elseif newPayload.aiming ~= nil and newPayload.dir ~= nil and newPayload.origin ~= nil then
-						newPayload.dir = (tPos - newPayload.origin).Unit
-						modified = true
+					else
+						if newPayload.dir ~= nil and newPayload.origin ~= nil then
+							newPayload.dir = (tPos - origin).Unit
+							modified = true
+						elseif newPayload.aiming ~= nil and newPayload.dir ~= nil then
+							newPayload.dir = (tPos - origin).Unit
+							modified = true
+						end
 					end
 				end
 				
@@ -320,7 +360,7 @@ function Combat:Load()
 
 		local hitpos = targetPart.Position
 
-		-- Raycast: подмена только направления, движок сам выполнит честный рейкаст (защита от wallbang детекта)
+		-- Только .Unit * Magnitude. Убран сырой hitpos - origin (Projection Override AC Flag)
 		if method == "Raycast" and CombatConfig.Methods.Raycast then
 			local origin, direction, params = args[1], args[2], args[3]
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
@@ -360,5 +400,5 @@ function Combat:Load()
 	end))
 end
 
-print("fust fuck")
+print("im detected")
 return Combat
