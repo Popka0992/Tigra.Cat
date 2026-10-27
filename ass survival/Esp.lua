@@ -244,6 +244,14 @@ do
 	end
 
 	local function registerFont(name, weight, style, asset)
+		-- Удаляем битый 14-байтовый файл (404 Not Found), чтобы скрипт перекачал нормальный шрифт
+		if isfile(asset.Id) then
+			local content = readfile(asset.Id)
+			if #content < 1000 then
+				delfile(asset.Id)
+			end
+		end
+
 		if not isfile(asset.Id) then
 			writefile(asset.Id, asset.Font)
 		end
@@ -272,7 +280,8 @@ do
 
 	Fonts.SmallestPixel = registerFont("SmallestPixel", 400, "Normal", {
 		Id = "smallest_pixel-7.ttf",
-		Font = fetchSource("https://raw.githubusercontent.com/sametexe001/luas/main/smallest_pixel-7.ttf")
+		-- Рабочий линк на Smallest Pixel
+		Font = fetchSource("https://raw.githubusercontent.com/BocusBot/font/main/smallest_pixel-7.ttf")
 	})
 
 	Arbuzi.Tahoma = Font.new(Fonts.Tahoma, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
