@@ -1399,6 +1399,8 @@ function Arbuzi:Unload()
 		self.Holder = nil
 	end
 
+print("hey")
+	
 	tableClear(self.Cache)
 	shared.Arbuzi = nil
 end
