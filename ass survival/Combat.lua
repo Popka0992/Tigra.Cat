@@ -1,8 +1,3 @@
---[=[
-    ✦ COMPONENT: Combat (Fust Optimization + Prediction Dot)
-    ✦ SAVE AS: Combat.lua in your repo
-]=]
-
 local cloneref = cloneref or function(o) return o end
 
 local playersService = cloneref(game:GetService("Players"))
