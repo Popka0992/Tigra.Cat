@@ -34,7 +34,7 @@ local CombatConfig = {
 	BowPrediction = true, 
 
 	InstaHit = false,
-	InstaMethod = "Method 1", -- Method 1-4 (Trust Client, Origin Spoof, etc.)
+	InstaMethod = "Trust Client",
 
 	TargetPlayers = true,
 	TargetBots = true,
@@ -63,7 +63,7 @@ local CombatConfig = {
 	HitboxEnabled = false,
 	HitboxSize = 6,
 	HitboxTrans = 0.6,
-	HitboxPart = "HumanoidRootPart",
+	HitboxPart = "All Parts",
 	HitboxCustom = true
 }
 
@@ -222,17 +222,18 @@ function Combat:Load()
 	end)
 
 	runService.Heartbeat:Connect(function()
-		-- Надежный Hitbox Expander с очисткой мертвых партов
 		if not CombatConfig.HitboxEnabled then
-			for part, data in pairs(originalPartSizes) do
-				if part and part.Parent and part:IsA("BasePart") then
-					part.Size = data.Size
-					part.Transparency = data.Transparency
-					part.CanCollide = data.CanCollide
-					part.Massless = data.Massless
+			if next(originalPartSizes) ~= nil then
+				for part, data in pairs(originalPartSizes) do
+					if part and part.Parent and part:IsA("BasePart") then
+						part.Size = data.Size
+						part.Transparency = data.Transparency
+						part.CanCollide = data.CanCollide
+						part.Massless = data.Massless
+					end
 				end
+				table.clear(originalPartSizes)
 			end
-			table.clear(originalPartSizes)
 			return
 		end
 
@@ -241,17 +242,19 @@ function Combat:Load()
 		for _, entity in ipairs(getTargetEntities()) do
 			local pChar = entity.Model
 			for _, part in ipairs(pChar:GetDescendants()) do
-				if part:IsA("BasePart") then
-					local expand = false
-					if CombatConfig.HitboxPart == "All Parts" then
-						if part.Name == "Head" or part.Name:match("Torso") or part.Name:match("Arm") or part.Name:match("Leg") or part.Name == "HumanoidRootPart" then
-							expand = true
-						end
-					elseif part.Name == CombatConfig.HitboxPart then
-						expand = true
+				if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+					local isDefaultLimb = (part.Name == "Head" or part.Name:find("Torso") or part.Name:find("Arm") or part.Name:find("Leg"))
+
+					local shouldExpand = false
+					if CombatConfig.HitboxPart == "All Parts" or CombatConfig.HitboxPart == part.Name then
+						shouldExpand = true
 					end
 
-					if expand then
+					if not isDefaultLimb and CombatConfig.HitboxCustom then
+						shouldExpand = true
+					end
+
+					if shouldExpand then
 						if not originalPartSizes[part] then
 							originalPartSizes[part] = {
 								Size = part.Size,
@@ -267,12 +270,6 @@ function Combat:Load()
 						part.Massless = true
 					end
 				end
-			end
-		end
-
-		for part, _ in pairs(originalPartSizes) do
-			if not part or not part.Parent then
-				originalPartSizes[part] = nil
 			end
 		end
 	end)
@@ -321,35 +318,38 @@ function Combat:Load()
 				local tPos = targetPart.Position
 				
 				if newPayload.charge ~= nil then
-					-- Предикт лука fustcombat: точный расчет гравитации и скорости (95 + 125*charge)
-					local charge = math.clamp(newPayload.charge, 0.15, 1)
-					local speed = 125 * charge + 95
-					local gravity = 50
-					local origin = newPayload.origin or currentCamera.CFrame.Position
-					
-					if CombatConfig.BowPrediction then
-						local tVel = targetPart.AssemblyLinearVelocity
-						local dist = (tPos - origin).Magnitude
-						local t = dist / speed
-						
-						-- Точная математика упреждения (4 итерации)
-						for i = 1, 4 do
-							local drop = 0.5 * gravity * (t * t)
-							local predictedPos = tPos + (tVel * t) + Vector3.new(0, drop, 0)
-							t = (predictedPos - origin).Magnitude / speed
-						end
-						
-						local finalDrop = 0.5 * gravity * (t * t)
-						local finalTarget = tPos + (tVel * t) + Vector3.new(0, finalDrop, 0)
-						newPayload.dir = (finalTarget - origin).Unit
-					else
-						newPayload.dir = (tPos - origin).Unit
-					end
-					modified = true
-				else
-					-- Оружие: Минималистичные методы
 					if CombatConfig.InstaHit then
-						if CombatConfig.InstaMethod == "Method 1" then
+						newPayload.origin = tPos + Vector3.new(0, 2, 0)
+						newPayload.dir = Vector3.new(0, -1, 0)
+						newPayload.charge = 999999
+						modified = true
+					else
+						local charge = math.clamp(newPayload.charge, 0.15, 1)
+						local speed = 125 * charge + 95
+						local gravity = 50
+						local origin = newPayload.origin or currentCamera.CFrame.Position
+						
+						if CombatConfig.BowPrediction then
+							local dist = (tPos - origin).Magnitude
+							local t = dist / speed
+							
+							for i = 1, 2 do
+								local drop = 0.5 * gravity * (t * t)
+								local predictedPos = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, drop, 0)
+								t = (predictedPos - origin).Magnitude / speed
+							end
+							
+							local finalDrop = 0.5 * gravity * (t * t)
+							local finalTarget = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, finalDrop, 0)
+							newPayload.dir = (finalTarget - origin).Unit
+						else
+							newPayload.dir = (tPos - origin).Unit
+						end
+						modified = true
+					end
+				else
+					if CombatConfig.InstaHit then
+						if CombatConfig.InstaMethod == "Trust Client" then
 							if newPayload.pellet ~= nil or newPayload.part ~= nil then
 								newPayload.part = targetPart
 								newPayload.pos = tPos
@@ -360,7 +360,8 @@ function Combat:Load()
 								newPayload.dir = (tPos - newPayload.origin).Unit
 								modified = true
 							end
-						elseif CombatConfig.InstaMethod == "Method 2" then
+							
+						elseif CombatConfig.InstaMethod == "Origin Spoof" then
 							if newPayload.dir ~= nil and newPayload.origin ~= nil then
 								newPayload.origin = tPos
 								newPayload.dir = Vector3.new(0, -1, 0)
@@ -372,7 +373,8 @@ function Combat:Load()
 								newPayload.normal = Vector3.new(0, 1, 0)
 								modified = true
 							end
-						elseif CombatConfig.InstaMethod == "Method 3" then
+							
+						elseif CombatConfig.InstaMethod == "Speed Abuse" then
 							if newPayload.pellet ~= nil or newPayload.part ~= nil then
 								newPayload.part = targetPart
 								newPayload.pos = tPos
@@ -383,7 +385,8 @@ function Combat:Load()
 								newPayload.dir = (tPos - newPayload.origin).Unit
 								modified = true
 							end
-						elseif CombatConfig.InstaMethod == "Method 4" then
+							
+						elseif CombatConfig.InstaMethod == "Skip Raycast" then
 							newPayload.t = 0
 							newPayload.time = 0
 							if newPayload.pellet ~= nil or newPayload.part ~= nil then
@@ -503,5 +506,5 @@ function Combat:Load()
 	end))
 end
 
-print("furbbot tech")
+print("hello232323232")
 return Combat
