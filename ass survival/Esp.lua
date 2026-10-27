@@ -1,20 +1,16 @@
--- Check for table that is shared between executions.
 if not shared then
 	return warn("No shared, no script.")
 end
 
--- Initialize Luraph globals if they do not exist.
 loadstring("getfenv().LPH_NO_VIRTUALIZE = function(...) return ... end")()
 getfenv().PP_SCRAMBLE_NUM = function(...) return ... end
 getfenv().PP_SCRAMBLE_STR = function(...) return ... end
 getfenv().PP_SCRAMBLE_RE_NUM = function(...) return ... end
 
--- Unload previous instance.
 if shared.Arbuzi and shared.Arbuzi.Unload then
 	pcall(shared.Arbuzi.Unload, shared.Arbuzi)
 end
 
--- Services.
 local cloneref = cloneref or function(instance) return instance end
 local workspaceService = cloneref(game:GetService("Workspace"))
 local playersService = cloneref(game:GetService("Players"))
@@ -48,12 +44,10 @@ local cameraPosition = newVector3(0, 0, 0)
 local cachedFocalLength = 0
 local viewPortY = 0
 
--- Weapon Database for fingerprinting & Icons.
 local weaponMeshMap = {}
 local toolSignatures = {}
 local weaponIcons = {}
 
----Scan UI or tools if present in game without hanging threads.
 local function indexUniversalTools()
 	pcall(function()
 		local prefabs = workspaceService:FindFirstChild("Prefabs", true) or replicatedStorage:FindFirstChild("Prefabs", true) or workspaceService:FindFirstChild("Tools", true)
@@ -76,9 +70,6 @@ local function indexUniversalTools()
 end
 task.spawn(indexUniversalTools)
 
----Universal weapon resolution with fallback to classic Tools.
----@param character Model
----@return string
 local function resolveEquippedWeapon(character)
 	local tool = character:FindFirstChildOfClass("Tool")
 	if tool then
@@ -136,7 +127,6 @@ local function resolveEquippedWeapon(character)
 	return "Worldmodel"
 end
 
----Refresh cached camera-dependent math.
 local function updateCameraCache()
 	camera = workspaceService.CurrentCamera or camera
 	if not camera then return end
@@ -235,7 +225,6 @@ local Arbuzi = {
 Arbuzi.__index = Arbuzi
 local config = Arbuzi.Table
 
--- Font Registration.
 local Fonts = {}
 do
 	local function fetchSource(url)
@@ -244,7 +233,6 @@ do
 	end
 
 	local function registerFont(name, weight, style, asset)
-		-- Удаляем битый 14-байтовый файл (404 Not Found), чтобы скрипт перекачал нормальный шрифт
 		if isfile(asset.Id) then
 			local content = readfile(asset.Id)
 			if #content < 1000 then
@@ -275,13 +263,12 @@ do
 
 	Fonts.Tahoma = registerFont("Tahoma", 400, "Normal", {
 		Id = "Tahoma.ttf",
-		Font = fetchSource("https://github.com/i77lhm/storage/raw/refs/heads/main/fonts/fs-tahoma-8px.ttf")
+		Font = fetchSource("https://raw.githubusercontent.com/i77lhm/storage/main/fonts/fs-tahoma-8px.ttf")
 	})
 
 	Fonts.SmallestPixel = registerFont("SmallestPixel", 400, "Normal", {
 		Id = "smallest_pixel-7.ttf",
-		-- Рабочий линк на Smallest Pixel
-		Font = fetchSource("https://github.com/i77lhm/storage/blob/main/fonts/smallest_pixel-7.ttf")
+		Font = fetchSource("https://raw.githubusercontent.com/i77lhm/storage/main/fonts/smallest_pixel-7.ttf")
 	})
 
 	Arbuzi.Tahoma = Font.new(Fonts.Tahoma, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
@@ -797,8 +784,6 @@ function Arbuzi:CalculateBox(data)
 	end
 end
 
----Add a target model.
----@param target Model
 function Arbuzi:AddTarget(target)
 	if not target or not target:IsA("Model") then return end
 	if target == localPlayer.Character or (localPlayer and target.Name == localPlayer.Name) then return end
@@ -937,8 +922,6 @@ function Arbuzi:AddTarget(target)
 	end)
 end
 
----Remove target from ESP cache.
----@param target Model
 function Arbuzi:RemoveTarget(target)
 	local data = self.Cache[target]
 	if not data then return end
@@ -1213,7 +1196,6 @@ function Arbuzi:Load()
 		IgnoreGuiInset = true
 	})
 
-	-- Primary event hook for player character lifecycle.
 	local function bindPlayer(player)
 		if player == localPlayer then return end
 
@@ -1241,7 +1223,6 @@ function Arbuzi:Load()
 		end
 	end)
 
-	-- Respawn recovery handler for LocalPlayer.
 	self.Threads["LocalPlayerRespawn"] = localPlayer.CharacterAdded:Connect(function()
 		task.defer(function()
 			updateCameraCache()
@@ -1256,12 +1237,10 @@ function Arbuzi:Load()
 		end)
 	end)
 
-	-- Periodic watchdog scanner for delayed replication, stream-ins, and nicknames.
 	self.Threads["WatchdogScanner"] = task.spawn(function()
 		while self.Loaded do
 			task.wait(1.2)
 
-			-- Ensure GUI holder integrity.
 			if not self.Holder or not self.Holder.Parent then
 				self.Holder = self:CreateObjects("ScreenGui", {
 					Name = "\n",
@@ -1277,7 +1256,6 @@ function Arbuzi:Load()
 				end
 			end
 
-			-- Sweep players list for missed characters or unlinked workspace models.
 			for _, player in ipairs(playersService:GetPlayers()) do
 				if player == localPlayer then continue end
 				local char = player.Character or workspaceService:FindFirstChild(player.Name)
@@ -1305,7 +1283,6 @@ function Arbuzi:Load()
 				end
 			end
 
-			-- Sweep bots / NPCs if enabled.
 			if config.Bots and config.Bots.Enabled then
 				for _, model in ipairs(workspaceService:GetChildren()) do
 					if model:IsA("Model") and model ~= localPlayer.Character and not self.Cache[model] then
@@ -1317,7 +1294,6 @@ function Arbuzi:Load()
 				end
 			end
 
-			-- Purge destroyed or unparented models.
 			for target in pairs(self.Cache) do
 				if typeof(target) ~= "Instance" or not target.Parent or not target:IsDescendantOf(workspaceService) then
 					self:RemoveTarget(target)
@@ -1399,10 +1375,8 @@ function Arbuzi:Unload()
 		self.Holder = nil
 	end
 
-print("hey")
-	
 	tableClear(self.Cache)
 	shared.Arbuzi = nil
 end
-
+print("hello nigga")
 return Arbuzi
