@@ -261,17 +261,11 @@ do
 		return getcustomasset(name .. ".font")
 	end
 
-	Fonts.Tahoma = registerFont("Tahoma", 400, "Normal", {
-		Id = "Tahoma.ttf",
-		Font = fetchSource("https://raw.githubusercontent.com/i77lhm/storage/main/fonts/fs-tahoma-8px.ttf")
-	})
-
 	Fonts.SmallestPixel = registerFont("SmallestPixel", 400, "Normal", {
 		Id = "smallest_pixel-7.ttf",
 		Font = fetchSource("https://raw.githubusercontent.com/i77lhm/storage/main/fonts/smallest_pixel-7.ttf")
 	})
 
-	Arbuzi.Tahoma = Font.new(Fonts.Tahoma, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
 	Arbuzi.SmallestPixel = Font.new(Fonts.SmallestPixel, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
 end
 
@@ -579,8 +573,8 @@ function Arbuzi:InitEsp(data)
 
 	objects.TargetName = self:CreateObjects("TextLabel", {
 		Parent = objects.TopTextHolder,
-		FontFace = Arbuzi.Tahoma,
-		TextSize = 12,
+		FontFace = Arbuzi.SmallestPixel,
+		TextSize = 9,
 		LayoutOrder = 2,
 		TextColor3 = config.Texts.Name.Color,
 		Text = "",
@@ -1378,5 +1372,5 @@ function Arbuzi:Unload()
 	tableClear(self.Cache)
 	shared.Arbuzi = nil
 end
-print("hello nigga")
+
 return Arbuzi
