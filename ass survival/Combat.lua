@@ -321,6 +321,7 @@ function Combat:Load()
 						if newPayload.pellet ~= nil or newPayload.part ~= nil then
 							newPayload.part = targetPart
 							newPayload.pos = tPos
+							newPayload.normal = Vector3.new(0, 1, 0)
 							modified = true
 						end
 						if newPayload.dir ~= nil and newPayload.origin ~= nil then
@@ -337,6 +338,7 @@ function Combat:Load()
 						if newPayload.pellet ~= nil or newPayload.part ~= nil then
 							newPayload.part = targetPart
 							newPayload.pos = tPos
+							newPayload.normal = Vector3.new(0, 1, 0)
 							modified = true
 						end
 						
@@ -352,10 +354,7 @@ function Combat:Load()
 						if newPayload.pellet ~= nil or newPayload.part ~= nil then
 							newPayload.part = targetPart
 							newPayload.pos = tPos
-							modified = true
-						end
-						if newPayload.dir ~= nil and newPayload.origin ~= nil and newPayload.charge == nil then
-							newPayload.dir = (tPos - newPayload.origin).Unit
+							newPayload.normal = Vector3.new(0, 1, 0)
 							modified = true
 						end
 						
@@ -365,6 +364,7 @@ function Combat:Load()
 						if newPayload.pellet ~= nil or newPayload.part ~= nil then
 							newPayload.part = targetPart
 							newPayload.pos = tPos
+							newPayload.normal = Vector3.new(0, 1, 0)
 						end
 						if newPayload.dir ~= nil and newPayload.origin ~= nil then
 							newPayload.dir = (tPos - newPayload.origin).Unit
@@ -399,6 +399,7 @@ function Combat:Load()
 					elseif newPayload.pellet ~= nil and newPayload.part ~= nil and newPayload.pos ~= nil then
 						newPayload.part = targetPart
 						newPayload.pos = tPos
+						newPayload.normal = Vector3.new(0, 1, 0)
 						modified = true
 					end
 				end
@@ -420,21 +421,12 @@ function Combat:Load()
 		end
 
 		local hitpart = targetPart
-		local hitsize = hitpart.Size
-		local orgpos = hitpart.Position
-
-		local hitpos = orgpos + Vector3.new(
-			(math.random() - math.random()) * (hitsize.X / 10),
-			(math.random() - math.random()) * (hitsize.Y / 10),
-			(math.random() - math.random()) * (hitsize.Z / 10)
-		)
+		local hitpos = hitpart.Position
 
 		if method == "Raycast" and CombatConfig.Methods.Raycast then
 			local origin, direction, params = args[1], args[2], args[3]
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
-
-				if CombatConfig.Wallbang then
+				if CombatConfig.InstaHit or CombatConfig.MagicBullet or CombatConfig.Wallbang then
 					local fakeParams = RaycastParams.new()
 					fakeParams.FilterType = Enum.RaycastFilterType.Include
 					fakeParams.FilterDescendantsInstances = {hitpart}
@@ -449,6 +441,7 @@ function Combat:Load()
 					end
 				end
 
+				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
 				return oldNamecall(self, origin, newDir, params)
 			end
 		end
@@ -456,9 +449,7 @@ function Combat:Load()
 		if method == "Spherecast" and CombatConfig.Methods.Spherecast then
 			local origin, radius, direction, params = args[1], args[2], args[3], args[4]
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
-				
-				if CombatConfig.Wallbang then
+				if CombatConfig.InstaHit or CombatConfig.MagicBullet or CombatConfig.Wallbang then
 					local fakeParams = RaycastParams.new()
 					fakeParams.FilterType = Enum.RaycastFilterType.Include
 					fakeParams.FilterDescendantsInstances = {hitpart}
@@ -473,6 +464,7 @@ function Combat:Load()
 					end
 				end
 
+				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
 				return oldNamecall(self, origin, radius, newDir, params)
 			end
 		end
@@ -491,12 +483,12 @@ function Combat:Load()
 			if typeof(ray) == "Ray" then
 				local origin = ray.Origin
 				local direction = ray.Direction
-				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
 
-				if CombatConfig.Wallbang then
-					return hitpart, CombatConfig.MagicBullet and Vector3.new(0/0, 0/0, 0/0) or hitpos, (origin - hitpos).Unit, hitpart.Material
+				if CombatConfig.InstaHit or CombatConfig.MagicBullet or CombatConfig.Wallbang then
+					return hitpart, hitpos, (origin - hitpos).Unit, hitpart.Material
 				end
 
+				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
 				return oldNamecall(self, Ray.new(origin, newDir), ignoreList, terrainCellsAreCubes, ignoreWater)
 			end
 		end
@@ -505,5 +497,5 @@ function Combat:Load()
 	end))
 end
 
-print("hello")
+print("hello123")
 return Combat
