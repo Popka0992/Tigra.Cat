@@ -29,7 +29,7 @@ local CombatConfig = {
 	Smoothness = 2,
 
 	Wallbang = false,
-	-- ProjectionOverride = true, -- Убрано из конфига полностью
+	-- Projection Override удален для обхода детекта
 	MagicBullet = true,
 	BowPrediction = true, 
 
@@ -221,7 +221,6 @@ function Combat:Load()
 		end
 	end)
 
-	-- Восстановлен оригинальный хитбокс экспандер
 	runService.Heartbeat:Connect(function()
 		if not CombatConfig.HitboxEnabled then
 			if next(originalPartSizes) ~= nil then
@@ -307,7 +306,6 @@ function Combat:Load()
 		local method = getnamecallmethod()
 		local args = {...}
 
-		-- Оригинальная логика FireServer и InstaHit возвращена 1 к 1
 		if method == "FireServer" and CombatConfig.Methods.Network and CombatConfig.AimMode == "Silent Aim" and targetPart and rollHitChance() then
 			local pIndex = (type(args[1]) == "string" and type(args[2]) == "table") and 2 or 1
 			local payload = args[pIndex]
@@ -434,9 +432,9 @@ function Combat:Load()
 		local hitpart = targetPart
 		local hitpos = hitpart.Position
 
-		-- ВАЖНО: Projection Override УДАЛЕН. Оставлен только легитный множитель вектора (direction.Magnitude)
+		-- Использование args мутации для предотвращения ошибки RaycastParams
 		if method == "Raycast" and CombatConfig.Methods.Raycast then
-			local origin, direction, params = args[1], args[2], args[3]
+			local origin, direction = args[1], args[2]
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
 				if CombatConfig.InstaHit or CombatConfig.MagicBullet or CombatConfig.Wallbang then
 					local fakeParams = RaycastParams.new()
@@ -453,14 +451,13 @@ function Combat:Load()
 					end
 				end
 
-				-- Убрана возможность стрелять бесконечным лучом
-				local newDir = (hitpos - origin).Unit * direction.Magnitude
-				return oldNamecall(self, origin, newDir, params)
+				args[2] = (hitpos - origin).Unit * direction.Magnitude
+				return oldNamecall(self, unpack(args))
 			end
 		end
 
 		if method == "Spherecast" and CombatConfig.Methods.Spherecast then
-			local origin, radius, direction, params = args[1], args[2], args[3], args[4]
+			local origin, radius, direction = args[1], args[2], args[3]
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
 				if CombatConfig.InstaHit or CombatConfig.MagicBullet or CombatConfig.Wallbang then
 					local fakeParams = RaycastParams.new()
@@ -477,24 +474,22 @@ function Combat:Load()
 					end
 				end
 
-				-- Убрана возможность стрелять бесконечным лучом
-				local newDir = (hitpos - origin).Unit * direction.Magnitude
-				return oldNamecall(self, origin, radius, newDir, params)
+				args[3] = (hitpos - origin).Unit * direction.Magnitude
+				return oldNamecall(self, unpack(args))
 			end
 		end
 
 		if (method == "ScreenPointToRay" and CombatConfig.Methods.ScreenPointToRay) or (method == "ViewportPointToRay" and CombatConfig.Methods.ViewportPointToRay) then
-			local ray = oldNamecall(self, ...)
+			local ray = oldNamecall(self, unpack(args))
 			local origin = ray.Origin
 			local direction = ray.Direction
 			
-			-- Убрана возможность стрелять бесконечным лучом
 			local newDir = (hitpos - origin).Unit * direction.Magnitude
 			return Ray.new(origin, newDir)
 		end
 
 		if method:find("FindPartOnRay") and (CombatConfig.Methods[method] or CombatConfig.Methods.FindPartOnRay) then
-			local ray, ignoreList, terrainCellsAreCubes, ignoreWater = args[1], args[2], args[3], args[4]
+			local ray = args[1]
 			if typeof(ray) == "Ray" then
 				local origin = ray.Origin
 				local direction = ray.Direction
@@ -503,15 +498,15 @@ function Combat:Load()
 					return hitpart, hitpos, (origin - hitpos).Unit, hitpart.Material
 				end
 
-				-- Убрана возможность стрелять бесконечным лучом
 				local newDir = (hitpos - origin).Unit * direction.Magnitude
-				return oldNamecall(self, Ray.new(origin, newDir), ignoreList, terrainCellsAreCubes, ignoreWater)
+				args[1] = Ray.new(origin, newDir)
+				return oldNamecall(self, unpack(args))
 			end
 		end
 
-		return oldNamecall(self, ...)
+		return oldNamecall(self, unpack(args))
 	end))
 end
 
-print("say wallahi bra im detected")
+print("im tired make insta hit.")
 return Combat
