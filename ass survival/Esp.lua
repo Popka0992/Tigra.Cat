@@ -781,29 +781,13 @@ end
 function Arbuzi:AddTarget(target)
 	if not target or not target:IsA("Model") then return end
 	if target == localPlayer.Character or (localPlayer and target.Name == localPlayer.Name) then return end
-	if self.Cache[target] and typeof(self.Cache[target]) == "table" then return end
-	if self.Cache[target] == "pending" then return end
+	if self.Cache[target] then return end
 
 	self.Cache[target] = "pending"
 
 	task.spawn(function()
-		local rootPart, humanoid
-		local attempts = 0
-
-		while target.Parent and self.Cache[target] == "pending" and attempts < 25 do
-			rootPart = target:FindFirstChild("HumanoidRootPart")
-				or target:FindFirstChild("Torso")
-				or target:FindFirstChild("UpperTorso")
-				or target.PrimaryPart
-				or target:FindFirstChild("Head")
-
-			humanoid = target:FindFirstChildOfClass("Humanoid")
-			if rootPart and humanoid then break end
-			attempts = attempts + 1
-			task.wait(0.1)
-		end
-
-		if not target.Parent or self.Cache[target] ~= "pending" or not rootPart or not humanoid then
+		-- Убираем ограничение на 25 попыток. Кешируем модель моментально, чтобы не блочить StreamingEnabled.
+		if not target.Parent or self.Cache[target] ~= "pending" then
 			self.Cache[target] = nil
 			return
 		end
@@ -813,11 +797,11 @@ function Arbuzi:AddTarget(target)
 			Objects = {},
 			Conns = {},
 			Character = target,
-			RootPart = rootPart,
-			Humanoid = humanoid,
-			Health = humanoid.Health,
-			MaxHealth = humanoid.MaxHealth,
-			Alive = humanoid.Health > 0,
+			RootPart = nil, 
+			Humanoid = nil, 
+			Health = 100,
+			MaxHealth = 100,
+			Alive = true,
 			CurrentWeapon = resolveEquippedWeapon(target),
 			WalkActive = false,
 			JumpActive = false,
@@ -852,15 +836,6 @@ function Arbuzi:AddTarget(target)
 		self:InitEsp(data)
 		self.Cache[target] = data
 
-		data.Conns.Health = humanoid.HealthChanged:Connect(function(newHealth)
-			data.Alive = newHealth > 0
-			data.Health = newHealth
-		end)
-
-		data.Conns.Died = humanoid.Died:Connect(function()
-			data.Alive = false
-		end)
-
 		data.Conns.ChildAdded = target.ChildAdded:Connect(function(child)
 			if child:IsA("Tool") or child.Name == "Worldmodel" then
 				task.delay(0.05, function()
@@ -874,37 +849,6 @@ function Arbuzi:AddTarget(target)
 				task.delay(0.05, function()
 					data.CurrentWeapon = resolveEquippedWeapon(target)
 				end)
-			end
-		end)
-
-		local objects = data.Objects
-		data.Conns.MoveDir = humanoid:GetPropertyChangedSignal("MoveDirection"):Connect(function()
-			local walking = humanoid.MoveDirection ~= zeroVector3
-			if walking and not data.WalkActive then
-				data.WalkActive = true
-				objects.StateFlag.Visible = false
-				objects.WalkFlag.Visible = true
-			elseif not walking and data.WalkActive then
-				data.WalkActive = false
-				objects.WalkFlag.Visible = false
-				if not data.JumpActive then
-					objects.StateFlag.Visible = true
-				end
-			end
-		end)
-
-		data.Conns.StateChange = humanoid.StateChanged:Connect(function(_, newState)
-			local jumping = newState == Enum.HumanoidStateType.Jumping or newState == Enum.HumanoidStateType.Freefall
-			if jumping and not data.JumpActive then
-				data.JumpActive = true
-				objects.StateFlag.Visible = false
-				objects.JumpFlag.Visible = true
-			elseif not jumping and data.JumpActive then
-				data.JumpActive = false
-				objects.JumpFlag.Visible = false
-				if not data.WalkActive then
-					objects.StateFlag.Visible = true
-				end
 			end
 		end)
 
@@ -952,6 +896,7 @@ function Arbuzi:Update(target, data)
 	local rootPart = data.RootPart
 	local humanoid = data.Humanoid
 
+	-- Динамический поиск партов (спасает от недогруза в StreamingEnabled)
 	if not rootPart or not rootPart.Parent then
 		rootPart = character:FindFirstChild("HumanoidRootPart")
 			or character:FindFirstChild("Torso")
@@ -964,6 +909,48 @@ function Arbuzi:Update(target, data)
 	if not humanoid or not humanoid.Parent then
 		humanoid = character:FindFirstChildOfClass("Humanoid")
 		data.Humanoid = humanoid
+		
+		-- Биндим ивенты только когда хуманоид наконец загрузился
+		if humanoid and not data.Conns.Health then
+			data.Conns.Health = humanoid.HealthChanged:Connect(function(newHealth)
+				data.Alive = newHealth > 0
+				data.Health = newHealth
+			end)
+
+			data.Conns.Died = humanoid.Died:Connect(function()
+				data.Alive = false
+			end)
+
+			data.Conns.MoveDir = humanoid:GetPropertyChangedSignal("MoveDirection"):Connect(function()
+				local walking = humanoid.MoveDirection ~= zeroVector3
+				if walking and not data.WalkActive then
+					data.WalkActive = true
+					objects.StateFlag.Visible = false
+					objects.WalkFlag.Visible = true
+				elseif not walking and data.WalkActive then
+					data.WalkActive = false
+					objects.WalkFlag.Visible = false
+					if not data.JumpActive then
+						objects.StateFlag.Visible = true
+					end
+				end
+			end)
+
+			data.Conns.StateChange = humanoid.StateChanged:Connect(function(_, newState)
+				local jumping = newState == Enum.HumanoidStateType.Jumping or newState == Enum.HumanoidStateType.Freefall
+				if jumping and not data.JumpActive then
+					data.JumpActive = true
+					objects.StateFlag.Visible = false
+					objects.JumpFlag.Visible = true
+				elseif not jumping and data.JumpActive then
+					data.JumpActive = false
+					objects.JumpFlag.Visible = false
+					if not data.WalkActive then
+						objects.StateFlag.Visible = true
+					end
+				end
+			end)
+		end
 	end
 
 	if not rootPart or not humanoid or humanoid.Health <= 0 then
@@ -1256,23 +1243,6 @@ function Arbuzi:Load()
 				if char and char:IsA("Model") and char.Parent then
 					if not self.Cache[char] then
 						self:AddTarget(char)
-					else
-						local data = self.Cache[char]
-						if typeof(data) == "table" then
-							if not data.RootPart or not data.RootPart.Parent or not data.Humanoid or not data.Humanoid.Parent then
-								data.RootPart = char:FindFirstChild("HumanoidRootPart")
-									or char:FindFirstChild("Torso")
-									or char:FindFirstChild("UpperTorso")
-									or char.PrimaryPart
-									or char:FindFirstChild("Head")
-								data.Humanoid = char:FindFirstChildOfClass("Humanoid")
-							end
-							if data.Humanoid then
-								data.Health = data.Humanoid.Health
-								data.MaxHealth = data.Humanoid.MaxHealth
-								data.Alive = data.Humanoid.Health > 0
-							end
-						end
 					end
 				end
 			end
