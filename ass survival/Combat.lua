@@ -12,9 +12,11 @@ local localPlayer = playersService.LocalPlayer
 local mouse = localPlayer:GetMouse()
 local currentCamera = workspaceService.CurrentCamera
 
+local isInternalRaycast = false
 local aimKeyActive = false
 local targetPart = nil
 local targetPlayer = nil
+local originalPartSizes = {}
 
 local CombatConfig = {
 	AimMode = "Silent Aim",
@@ -26,11 +28,13 @@ local CombatConfig = {
 	HitChance = 100,
 	Smoothness = 2,
 
-	WallCheck = true,
+	Wallbang = false,
+	-- ProjectionOverride = true, -- Убрано из конфига полностью
+	MagicBullet = true,
 	BowPrediction = true, 
 
 	InstaHit = false,
-	InstaMethod = "Trust Client", -- "Trust Client", "Origin Spoof", "Speed Abuse", "Skip Raycast"
+	InstaMethod = "Trust Client",
 
 	TargetPlayers = true,
 	TargetBots = true,
@@ -54,7 +58,13 @@ local CombatConfig = {
 		ViewportPointToRay = true,
 		Mouse = true,
 		Network = true
-	}
+	},
+
+	HitboxEnabled = false,
+	HitboxSize = 6,
+	HitboxTrans = 0.6,
+	HitboxPart = "All Parts",
+	HitboxCustom = true
 }
 
 local scannedPartsList = {"All Parts", "Head", "HumanoidRootPart", "Torso", "UpperTorso", "LowerTorso"}
@@ -62,6 +72,7 @@ local scannedPartsSet = {}
 for _, name in ipairs(scannedPartsList) do
 	scannedPartsSet[name] = true
 end
+
 Combat.PartsList = scannedPartsList
 
 local circleOutline = Drawing.new("Circle")
@@ -128,16 +139,6 @@ local function rollHitChance()
 	return math.random(1, 100) <= CombatConfig.HitChance
 end
 
-local function checkVisibility(origin, targetPos, ignoreChar)
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = {localPlayer.Character, ignoreChar, currentCamera}
-	params.IgnoreWater = true
-
-	local result = workspaceService:Raycast(origin, (targetPos - origin), params)
-	return result == nil 
-end
-
 local function getClosestTarget()
 	local closestPart, closestTarget = nil, nil
 	local viewportSize = currentCamera.ViewportSize
@@ -155,8 +156,6 @@ local function getClosestTarget()
 
 		local screenPos, onScreen = currentCamera:WorldToViewportPoint(part.Position)
 		if not onScreen then continue end
-
-		if CombatConfig.WallCheck and not checkVisibility(camPos, part.Position, char) then continue end
 
 		local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
 		if dist <= maxFovRadius then
@@ -222,6 +221,60 @@ function Combat:Load()
 		end
 	end)
 
+	-- Восстановлен оригинальный хитбокс экспандер
+	runService.Heartbeat:Connect(function()
+		if not CombatConfig.HitboxEnabled then
+			if next(originalPartSizes) ~= nil then
+				for part, data in pairs(originalPartSizes) do
+					if part and part.Parent and part:IsA("BasePart") then
+						part.Size = data.Size
+						part.Transparency = data.Transparency
+						part.CanCollide = data.CanCollide
+						part.Massless = data.Massless
+					end
+				end
+				table.clear(originalPartSizes)
+			end
+			return
+		end
+
+		local targetSize = Vector3.new(CombatConfig.HitboxSize, CombatConfig.HitboxSize, CombatConfig.HitboxSize)
+
+		for _, entity in ipairs(getTargetEntities()) do
+			local pChar = entity.Model
+			for _, part in ipairs(pChar:GetDescendants()) do
+				if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+					local isDefaultLimb = (part.Name == "Head" or part.Name:find("Torso") or part.Name:find("Arm") or part.Name:find("Leg"))
+
+					local shouldExpand = false
+					if CombatConfig.HitboxPart == "All Parts" or CombatConfig.HitboxPart == part.Name then
+						shouldExpand = true
+					end
+
+					if not isDefaultLimb and CombatConfig.HitboxCustom then
+						shouldExpand = true
+					end
+
+					if shouldExpand then
+						if not originalPartSizes[part] then
+							originalPartSizes[part] = {
+								Size = part.Size,
+								Transparency = part.Transparency,
+								CanCollide = part.CanCollide,
+								Massless = part.Massless
+							}
+						end
+
+						part.Size = targetSize
+						part.Transparency = CombatConfig.HitboxTrans
+						part.CanCollide = false
+						part.Massless = true
+					end
+				end
+			end
+		end
+	end)
+
 	local oldIndex
 	oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
 		if self ~= mouse or checkcaller() or not CombatConfig.Enabled then
@@ -247,13 +300,14 @@ function Combat:Load()
 
 	local oldNamecall
 	oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-		if checkcaller() or not CombatConfig.Enabled then
+		if isInternalRaycast or checkcaller() or not CombatConfig.Enabled then
 			return oldNamecall(self, ...)
 		end
 
 		local method = getnamecallmethod()
 		local args = {...}
 
+		-- Оригинальная логика FireServer и InstaHit возвращена 1 к 1
 		if method == "FireServer" and CombatConfig.Methods.Network and CombatConfig.AimMode == "Silent Aim" and targetPart and rollHitChance() then
 			local pIndex = (type(args[1]) == "string" and type(args[2]) == "table") and 2 or 1
 			local payload = args[pIndex]
@@ -377,12 +431,29 @@ function Combat:Load()
 			return oldNamecall(self, ...)
 		end
 
-		local hitpos = targetPart.Position
+		local hitpart = targetPart
+		local hitpos = hitpart.Position
 
-		-- Легитная длина луча (Без Projection Override)
+		-- ВАЖНО: Projection Override УДАЛЕН. Оставлен только легитный множитель вектора (direction.Magnitude)
 		if method == "Raycast" and CombatConfig.Methods.Raycast then
 			local origin, direction, params = args[1], args[2], args[3]
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
+				if CombatConfig.InstaHit or CombatConfig.MagicBullet or CombatConfig.Wallbang then
+					local fakeParams = RaycastParams.new()
+					fakeParams.FilterType = Enum.RaycastFilterType.Include
+					fakeParams.FilterDescendantsInstances = {hitpart}
+					fakeParams.IgnoreWater = true
+
+					isInternalRaycast = true
+					local forcedResult = workspaceService:Raycast(hitpos + Vector3.new(0, 2, 0), Vector3.new(0, -5, 0), fakeParams)
+					isInternalRaycast = false
+
+					if forcedResult then
+						return forcedResult
+					end
+				end
+
+				-- Убрана возможность стрелять бесконечным лучом
 				local newDir = (hitpos - origin).Unit * direction.Magnitude
 				return oldNamecall(self, origin, newDir, params)
 			end
@@ -391,6 +462,22 @@ function Combat:Load()
 		if method == "Spherecast" and CombatConfig.Methods.Spherecast then
 			local origin, radius, direction, params = args[1], args[2], args[3], args[4]
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
+				if CombatConfig.InstaHit or CombatConfig.MagicBullet or CombatConfig.Wallbang then
+					local fakeParams = RaycastParams.new()
+					fakeParams.FilterType = Enum.RaycastFilterType.Include
+					fakeParams.FilterDescendantsInstances = {hitpart}
+					fakeParams.IgnoreWater = true
+
+					isInternalRaycast = true
+					local forcedResult = workspaceService:Raycast(hitpos + Vector3.new(0, 2, 0), Vector3.new(0, -5, 0), fakeParams)
+					isInternalRaycast = false
+
+					if forcedResult then
+						return forcedResult
+					end
+				end
+
+				-- Убрана возможность стрелять бесконечным лучом
 				local newDir = (hitpos - origin).Unit * direction.Magnitude
 				return oldNamecall(self, origin, radius, newDir, params)
 			end
@@ -400,8 +487,9 @@ function Combat:Load()
 			local ray = oldNamecall(self, ...)
 			local origin = ray.Origin
 			local direction = ray.Direction
+			
+			-- Убрана возможность стрелять бесконечным лучом
 			local newDir = (hitpos - origin).Unit * direction.Magnitude
-
 			return Ray.new(origin, newDir)
 		end
 
@@ -410,6 +498,12 @@ function Combat:Load()
 			if typeof(ray) == "Ray" then
 				local origin = ray.Origin
 				local direction = ray.Direction
+
+				if CombatConfig.InstaHit or CombatConfig.MagicBullet or CombatConfig.Wallbang then
+					return hitpart, hitpos, (origin - hitpos).Unit, hitpart.Material
+				end
+
+				-- Убрана возможность стрелять бесконечным лучом
 				local newDir = (hitpos - origin).Unit * direction.Magnitude
 				return oldNamecall(self, Ray.new(origin, newDir), ignoreList, terrainCellsAreCubes, ignoreWater)
 			end
@@ -419,5 +513,5 @@ function Combat:Load()
 	end))
 end
 
-print("im 100000 detected insta ban")
+print("say wallahi bra im detected")
 return Combat
