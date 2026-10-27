@@ -316,34 +316,46 @@ function Combat:Load()
 				local modified = false
 				local tPos = targetPart.Position
 				
-				-- Лук (FustCombat) отправляет charge, симулирует сервер
 				if newPayload.charge ~= nil then
-					local charge = math.clamp(newPayload.charge, 0.15, 1)
-					local speed = 125 * charge + 95
-					local gravity = 50
-					
-					local origin = newPayload.origin or currentCamera.CFrame.Position
-					
-					if CombatConfig.BowPrediction then
-						local dist = (tPos - origin).Magnitude
-						local t = dist / speed
-						
-						for i = 1, 2 do
-							local drop = 0.5 * gravity * (t * t)
-							local predictedPos = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, drop, 0)
-							t = (predictedPos - origin).Magnitude / speed
+					if CombatConfig.InstaHit then
+						if CombatConfig.InstaMethod == "Origin Spoof" or CombatConfig.InstaMethod == "Trust Client" then
+							newPayload.origin = tPos + Vector3.new(0, 0.1, 0)
+							newPayload.dir = Vector3.new(0, -1, 0)
+							newPayload.charge = 1
+						elseif CombatConfig.InstaMethod == "Speed Abuse" then
+							newPayload.charge = 50000
+							newPayload.dir = (tPos - (newPayload.origin or currentCamera.CFrame.Position)).Unit
+						elseif CombatConfig.InstaMethod == "Skip Raycast" then
+							newPayload.origin = tPos
+							newPayload.dir = Vector3.new(0, -1, 0)
+							newPayload.t = 0
+							newPayload.time = 0
 						end
-						
-						local finalDrop = 0.5 * gravity * (t * t)
-						local finalTarget = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, finalDrop, 0)
-						newPayload.dir = (finalTarget - origin).Unit
 					else
-						newPayload.dir = (tPos - origin).Unit
+						local charge = math.clamp(newPayload.charge, 0.15, 1)
+						local speed = 125 * charge + 95
+						local gravity = 50
+						local origin = newPayload.origin or currentCamera.CFrame.Position
+						
+						if CombatConfig.BowPrediction then
+							local dist = (tPos - origin).Magnitude
+							local t = dist / speed
+							
+							for i = 1, 2 do
+								local drop = 0.5 * gravity * (t * t)
+								local predictedPos = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, drop, 0)
+								t = (predictedPos - origin).Magnitude / speed
+							end
+							
+							local finalDrop = 0.5 * gravity * (t * t)
+							local finalTarget = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, finalDrop, 0)
+							newPayload.dir = (finalTarget - origin).Unit
+						else
+							newPayload.dir = (tPos - origin).Unit
+						end
 					end
-					
 					modified = true
 				else
-					-- Огнестрел (FustGuns), доверяет клиенту, работает InstaHit
 					if CombatConfig.InstaHit then
 						if CombatConfig.InstaMethod == "Trust Client" then
 							if newPayload.pellet ~= nil or newPayload.part ~= nil then
@@ -396,7 +408,6 @@ function Combat:Load()
 							modified = true
 						end
 					else
-						-- Обычный сайлент аим огнестрела
 						if newPayload.aiming ~= nil and newPayload.dir ~= nil and newPayload.origin ~= nil then
 							newPayload.dir = (tPos - newPayload.origin).Unit
 							modified = true
@@ -502,5 +513,5 @@ function Combat:Load()
 	end))
 end
 
-print("hello")
+print("hello232323232")
 return Combat
