@@ -12,11 +12,9 @@ local localPlayer = playersService.LocalPlayer
 local mouse = localPlayer:GetMouse()
 local currentCamera = workspaceService.CurrentCamera
 
-local isInternalRaycast = false
 local aimKeyActive = false
 local targetPart = nil
 local targetPlayer = nil
-local originalPartSizes = {}
 
 local CombatConfig = {
 	AimMode = "Silent Aim",
@@ -28,13 +26,11 @@ local CombatConfig = {
 	HitChance = 100,
 	Smoothness = 2,
 
-	Wallbang = false,
-	-- Projection Override удален для обхода детекта
-	MagicBullet = true,
+	WallCheck = true, -- Обязательно для обхода forged hit
 	BowPrediction = true, 
 
 	InstaHit = false,
-	InstaMethod = "Trust Client",
+	InstaMethod = "Time Sync", -- Математически безопасный метод
 
 	TargetPlayers = true,
 	TargetBots = true,
@@ -58,13 +54,7 @@ local CombatConfig = {
 		ViewportPointToRay = true,
 		Mouse = true,
 		Network = true
-	},
-
-	HitboxEnabled = false,
-	HitboxSize = 6,
-	HitboxTrans = 0.6,
-	HitboxPart = "All Parts",
-	HitboxCustom = true
+	}
 }
 
 local scannedPartsList = {"All Parts", "Head", "HumanoidRootPart", "Torso", "UpperTorso", "LowerTorso"}
@@ -72,7 +62,6 @@ local scannedPartsSet = {}
 for _, name in ipairs(scannedPartsList) do
 	scannedPartsSet[name] = true
 end
-
 Combat.PartsList = scannedPartsList
 
 local circleOutline = Drawing.new("Circle")
@@ -87,6 +76,16 @@ circleInline.Thickness = 1
 circleInline.Filled = false
 circleInline.ZIndex = 2
 circleInline.Visible = false
+
+local function checkVisibility(origin, targetPos, ignoreChar)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = {localPlayer.Character, ignoreChar, currentCamera}
+	params.IgnoreWater = true
+
+	local result = workspaceService:Raycast(origin, (targetPos - origin), params)
+	return result == nil 
+end
 
 local function getTargetEntities()
 	local entities = {}
@@ -157,6 +156,8 @@ local function getClosestTarget()
 		local screenPos, onScreen = currentCamera:WorldToViewportPoint(part.Position)
 		if not onScreen then continue end
 
+		if CombatConfig.WallCheck and not checkVisibility(camPos, part.Position, char) then continue end
+
 		local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
 		if dist <= maxFovRadius then
 			maxFovRadius = dist
@@ -221,69 +222,14 @@ function Combat:Load()
 		end
 	end)
 
-	runService.Heartbeat:Connect(function()
-		if not CombatConfig.HitboxEnabled then
-			if next(originalPartSizes) ~= nil then
-				for part, data in pairs(originalPartSizes) do
-					if part and part.Parent and part:IsA("BasePart") then
-						part.Size = data.Size
-						part.Transparency = data.Transparency
-						part.CanCollide = data.CanCollide
-						part.Massless = data.Massless
-					end
-				end
-				table.clear(originalPartSizes)
-			end
-			return
-		end
-
-		local targetSize = Vector3.new(CombatConfig.HitboxSize, CombatConfig.HitboxSize, CombatConfig.HitboxSize)
-
-		for _, entity in ipairs(getTargetEntities()) do
-			local pChar = entity.Model
-			for _, part in ipairs(pChar:GetDescendants()) do
-				if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-					local isDefaultLimb = (part.Name == "Head" or part.Name:find("Torso") or part.Name:find("Arm") or part.Name:find("Leg"))
-
-					local shouldExpand = false
-					if CombatConfig.HitboxPart == "All Parts" or CombatConfig.HitboxPart == part.Name then
-						shouldExpand = true
-					end
-
-					if not isDefaultLimb and CombatConfig.HitboxCustom then
-						shouldExpand = true
-					end
-
-					if shouldExpand then
-						if not originalPartSizes[part] then
-							originalPartSizes[part] = {
-								Size = part.Size,
-								Transparency = part.Transparency,
-								CanCollide = part.CanCollide,
-								Massless = part.Massless
-							}
-						end
-
-						part.Size = targetSize
-						part.Transparency = CombatConfig.HitboxTrans
-						part.CanCollide = false
-						part.Massless = true
-					end
-				end
-			end
-		end
-	end)
-
 	local oldIndex
 	oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
 		if self ~= mouse or checkcaller() or not CombatConfig.Enabled then
 			return oldIndex(self, key)
 		end
-
 		if key ~= "Hit" and key ~= "Target" then
 			return oldIndex(self, key)
 		end
-
 		if CombatConfig.AimMode == "Silent Aim" and targetPart and CombatConfig.Methods.Mouse then
 			if rollHitChance() then
 				if key == "Target" then
@@ -293,13 +239,12 @@ function Combat:Load()
 				end
 			end
 		end
-
 		return oldIndex(self, key)
 	end))
 
 	local oldNamecall
 	oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-		if isInternalRaycast or checkcaller() or not CombatConfig.Enabled then
+		if checkcaller() or not CombatConfig.Enabled then
 			return oldNamecall(self, ...)
 		end
 
@@ -317,96 +262,65 @@ function Combat:Load()
 				local modified = false
 				local tPos = targetPart.Position
 				
+				-- Использование реального origin, чтобы избежать "forged hit" (AC Flag)
+				local realOrigin = newPayload.origin or currentCamera.CFrame.Position
+				local realDir = (tPos - realOrigin).Unit
+				local realDist = (tPos - realOrigin).Magnitude
+				
 				if newPayload.charge ~= nil then
-					if CombatConfig.InstaHit then
-						newPayload.origin = tPos + Vector3.new(0, 2, 0)
-						newPayload.dir = Vector3.new(0, -1, 0)
-						newPayload.charge = 999999
+					local charge = math.clamp(newPayload.charge, 0.15, 1)
+					local speed = 125 * charge + 95
+					local gravity = 50
+					
+					if CombatConfig.InstaHit and CombatConfig.InstaMethod == "Time Sync" then
+						-- Синхронизируем время полета с физикой сервера, пуля прилетает мгновенно для клиента,
+						-- но пакет выглядит легитно для AC.
+						newPayload.dir = realDir
+						newPayload.charge = 1
+						if newPayload.t ~= nil then newPayload.t = realDist / speed end
+						if newPayload.time ~= nil then newPayload.time = realDist / speed end
+						if newPayload.part ~= nil then
+							newPayload.part = targetPart
+							newPayload.pos = tPos
+							newPayload.normal = -realDir
+						end
 						modified = true
 					else
-						local charge = math.clamp(newPayload.charge, 0.15, 1)
-						local speed = 125 * charge + 95
-						local gravity = 50
-						local origin = newPayload.origin or currentCamera.CFrame.Position
-						
 						if CombatConfig.BowPrediction then
-							local dist = (tPos - origin).Magnitude
-							local t = dist / speed
-							
+							local t = realDist / speed
 							for i = 1, 2 do
 								local drop = 0.5 * gravity * (t * t)
 								local predictedPos = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, drop, 0)
-								t = (predictedPos - origin).Magnitude / speed
+								t = (predictedPos - realOrigin).Magnitude / speed
 							end
-							
 							local finalDrop = 0.5 * gravity * (t * t)
 							local finalTarget = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, finalDrop, 0)
-							newPayload.dir = (finalTarget - origin).Unit
+							newPayload.dir = (finalTarget - realOrigin).Unit
 						else
-							newPayload.dir = (tPos - origin).Unit
+							newPayload.dir = realDir
 						end
 						modified = true
 					end
 				else
-					if CombatConfig.InstaHit then
-						if CombatConfig.InstaMethod == "Trust Client" then
-							if newPayload.pellet ~= nil or newPayload.part ~= nil then
-								newPayload.part = targetPart
-								newPayload.pos = tPos
-								newPayload.normal = Vector3.new(0, 1, 0)
-								modified = true
-							end
-							if newPayload.dir ~= nil and newPayload.origin ~= nil then
-								newPayload.dir = (tPos - newPayload.origin).Unit
-								modified = true
-							end
-							
-						elseif CombatConfig.InstaMethod == "Origin Spoof" then
-							if newPayload.dir ~= nil and newPayload.origin ~= nil then
-								newPayload.origin = tPos
-								newPayload.dir = Vector3.new(0, -1, 0)
-								modified = true
-							end
-							if newPayload.pellet ~= nil or newPayload.part ~= nil then
-								newPayload.part = targetPart
-								newPayload.pos = tPos
-								newPayload.normal = Vector3.new(0, 1, 0)
-								modified = true
-							end
-							
-						elseif CombatConfig.InstaMethod == "Speed Abuse" then
-							if newPayload.pellet ~= nil or newPayload.part ~= nil then
-								newPayload.part = targetPart
-								newPayload.pos = tPos
-								newPayload.normal = Vector3.new(0, 1, 0)
-								modified = true
-							end
-							if newPayload.dir ~= nil and newPayload.origin ~= nil then
-								newPayload.dir = (tPos - newPayload.origin).Unit
-								modified = true
-							end
-							
-						elseif CombatConfig.InstaMethod == "Skip Raycast" then
-							newPayload.t = 0
-							newPayload.time = 0
-							if newPayload.pellet ~= nil or newPayload.part ~= nil then
-								newPayload.part = targetPart
-								newPayload.pos = tPos
-								newPayload.normal = Vector3.new(0, 1, 0)
-							end
-							if newPayload.dir ~= nil and newPayload.origin ~= nil then
-								newPayload.dir = (tPos - newPayload.origin).Unit
-							end
-							modified = true
-						end
-					else
-						if newPayload.aiming ~= nil and newPayload.dir ~= nil and newPayload.origin ~= nil then
-							newPayload.dir = (tPos - newPayload.origin).Unit
-							modified = true
-						elseif newPayload.pellet ~= nil and newPayload.part ~= nil and newPayload.pos ~= nil then
+					if CombatConfig.InstaHit and CombatConfig.InstaMethod == "Time Sync" then
+						newPayload.dir = realDir
+						if newPayload.t ~= nil then newPayload.t = realDist / 1500 end
+						if newPayload.time ~= nil then newPayload.time = realDist / 1500 end
+						if newPayload.part ~= nil or newPayload.pellet ~= nil then
 							newPayload.part = targetPart
 							newPayload.pos = tPos
-							newPayload.normal = Vector3.new(0, 1, 0)
+							newPayload.normal = -realDir
+						end
+						modified = true
+					else
+						if newPayload.dir ~= nil then
+							newPayload.dir = realDir
+							modified = true
+						end
+						if newPayload.part ~= nil and newPayload.pos ~= nil then
+							newPayload.part = targetPart
+							newPayload.pos = tPos
+							newPayload.normal = -realDir
 							modified = true
 						end
 					end
@@ -417,40 +331,22 @@ function Combat:Load()
 					return oldNamecall(self, unpack(args))
 				end
 			end
-			
 			return oldNamecall(self, ...)
 		end
 
 		if not (method == "Raycast" or method == "Spherecast" or method == "ScreenPointToRay" or method == "ViewportPointToRay" or method:find("FindPartOnRay")) then
-			return oldNamecall(self, ...)
+			return oldNamecall(self, unpack(args))
 		end
 
 		if CombatConfig.AimMode ~= "Silent Aim" or not targetPart or not rollHitChance() then
-			return oldNamecall(self, ...)
+			return oldNamecall(self, unpack(args))
 		end
 
-		local hitpart = targetPart
-		local hitpos = hitpart.Position
+		local hitpos = targetPart.Position
 
-		-- Использование args мутации для предотвращения ошибки RaycastParams
 		if method == "Raycast" and CombatConfig.Methods.Raycast then
 			local origin, direction = args[1], args[2]
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-				if CombatConfig.InstaHit or CombatConfig.MagicBullet or CombatConfig.Wallbang then
-					local fakeParams = RaycastParams.new()
-					fakeParams.FilterType = Enum.RaycastFilterType.Include
-					fakeParams.FilterDescendantsInstances = {hitpart}
-					fakeParams.IgnoreWater = true
-
-					isInternalRaycast = true
-					local forcedResult = workspaceService:Raycast(hitpos + Vector3.new(0, 2, 0), Vector3.new(0, -5, 0), fakeParams)
-					isInternalRaycast = false
-
-					if forcedResult then
-						return forcedResult
-					end
-				end
-
 				args[2] = (hitpos - origin).Unit * direction.Magnitude
 				return oldNamecall(self, unpack(args))
 			end
@@ -459,21 +355,6 @@ function Combat:Load()
 		if method == "Spherecast" and CombatConfig.Methods.Spherecast then
 			local origin, radius, direction = args[1], args[2], args[3]
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-				if CombatConfig.InstaHit or CombatConfig.MagicBullet or CombatConfig.Wallbang then
-					local fakeParams = RaycastParams.new()
-					fakeParams.FilterType = Enum.RaycastFilterType.Include
-					fakeParams.FilterDescendantsInstances = {hitpart}
-					fakeParams.IgnoreWater = true
-
-					isInternalRaycast = true
-					local forcedResult = workspaceService:Raycast(hitpos + Vector3.new(0, 2, 0), Vector3.new(0, -5, 0), fakeParams)
-					isInternalRaycast = false
-
-					if forcedResult then
-						return forcedResult
-					end
-				end
-
 				args[3] = (hitpos - origin).Unit * direction.Magnitude
 				return oldNamecall(self, unpack(args))
 			end
@@ -483,7 +364,6 @@ function Combat:Load()
 			local ray = oldNamecall(self, unpack(args))
 			local origin = ray.Origin
 			local direction = ray.Direction
-			
 			local newDir = (hitpos - origin).Unit * direction.Magnitude
 			return Ray.new(origin, newDir)
 		end
@@ -493,11 +373,6 @@ function Combat:Load()
 			if typeof(ray) == "Ray" then
 				local origin = ray.Origin
 				local direction = ray.Direction
-
-				if CombatConfig.InstaHit or CombatConfig.MagicBullet or CombatConfig.Wallbang then
-					return hitpart, hitpos, (origin - hitpos).Unit, hitpart.Material
-				end
-
 				local newDir = (hitpos - origin).Unit * direction.Magnitude
 				args[1] = Ray.new(origin, newDir)
 				return oldNamecall(self, unpack(args))
@@ -508,5 +383,4 @@ function Combat:Load()
 	end))
 end
 
-print("im tired make insta hit.")
 return Combat
