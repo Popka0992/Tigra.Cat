@@ -41,6 +41,11 @@ local freecamPos = nil
 local freecamRotX = 0
 local freecamRotY = 0
 
+local wasThirdPerson = false
+local savedCameraMode = nil
+local savedMinZoom = nil
+local savedMaxZoom = nil
+
 local function getMovementVector()
 	local moveDir = Vector3.zero
 	if userInputService:IsKeyDown(Enum.KeyCode.W) then
@@ -81,6 +86,15 @@ function Misc:Load()
 		end
 	end)
 
+	userInputService.InputChanged:Connect(function(input)
+		if MiscConfig.Freecam and input.UserInputType == Enum.UserInputType.MouseMovement then
+			if userInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+				freecamRotY = freecamRotY - (input.Delta.X * 0.003)
+				freecamRotX = math.clamp(freecamRotX - (input.Delta.Y * 0.003), -math.rad(89), math.rad(89))
+			end
+		end
+	end)
+
 	runService.RenderStepped:Connect(function(dt)
 		currentCamera = workspaceService.CurrentCamera or currentCamera
 
@@ -89,6 +103,13 @@ function Misc:Load()
 		end
 
 		if MiscConfig.ThirdPerson then
+			if not wasThirdPerson then
+				wasThirdPerson = true
+				savedCameraMode = localPlayer.CameraMode
+				savedMinZoom = localPlayer.CameraMinZoomDistance
+				savedMaxZoom = localPlayer.CameraMaxZoomDistance
+			end
+
 			localPlayer.CameraMode = Enum.CameraMode.Classic
 			localPlayer.CameraMinZoomDistance = MiscConfig.ThirdPersonDist
 			localPlayer.CameraMaxZoomDistance = MiscConfig.ThirdPersonDist
@@ -97,8 +118,23 @@ function Misc:Load()
 				userInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
 			end
 		else
-			localPlayer.CameraMinZoomDistance = 0.5
-			localPlayer.CameraMaxZoomDistance = 400
+			if wasThirdPerson then
+				wasThirdPerson = false
+				localPlayer.CameraMode = savedCameraMode or Enum.CameraMode.Classic
+				localPlayer.CameraMinZoomDistance = 0.5
+				localPlayer.CameraMaxZoomDistance = 0.5
+
+				task.defer(function()
+					if not MiscConfig.ThirdPerson then
+						localPlayer.CameraMinZoomDistance = savedMinZoom or 0.5
+						localPlayer.CameraMaxZoomDistance = savedMaxZoom or 400
+					end
+				end)
+
+				if userInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
+					userInputService.MouseBehavior = Enum.MouseBehavior.Default
+				end
+			end
 		end
 
 		if MiscConfig.Freecam then
@@ -111,9 +147,9 @@ function Misc:Load()
 			end
 
 			if userInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
-				local delta = userInputService:GetMouseDelta()
-				freecamRotY = freecamRotY - delta.X * 0.004
-				freecamRotX = math.clamp(freecamRotX - delta.Y * 0.004, -math.rad(89), math.rad(89))
+				userInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+			elseif userInputService.MouseBehavior == Enum.MouseBehavior.LockCurrentPosition then
+				userInputService.MouseBehavior = Enum.MouseBehavior.Default
 			end
 
 			local rotCF = CFrame.Angles(0, freecamRotY, 0) * CFrame.Angles(freecamRotX, 0, 0)
@@ -135,6 +171,9 @@ function Misc:Load()
 			if freecamPos then
 				currentCamera.CameraType = Enum.CameraType.Custom
 				freecamPos = nil
+				if userInputService.MouseBehavior == Enum.MouseBehavior.LockCurrentPosition then
+					userInputService.MouseBehavior = Enum.MouseBehavior.Default
+				end
 			end
 		end
 
