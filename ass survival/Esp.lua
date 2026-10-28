@@ -1,7 +1,9 @@
+-- Check for table that is shared between executions.
 if not shared then
 	return warn("No shared, no script.")
 end
 
+-- Initialize Luraph globals if they do not exist.
 loadstring("getfenv().LPH_NO_VIRTUALIZE = function(...) return ... end")()
 getfenv().PP_SCRAMBLE_NUM = function(...) return ... end
 getfenv().PP_SCRAMBLE_STR = function(...) return ... end
@@ -11,6 +13,7 @@ if shared.Arbuzi and shared.Arbuzi.Unload then
 	pcall(shared.Arbuzi.Unload, shared.Arbuzi)
 end
 
+-- Services.
 local cloneref = cloneref or function(instance) return instance end
 local workspaceService = cloneref(game:GetService("Workspace"))
 local playersService = cloneref(game:GetService("Players"))
@@ -46,8 +49,9 @@ local viewPortY = 0
 
 local weaponMeshMap = {}
 local toolSignatures = {}
-local weaponIcons = {}
+local weaponViewportCache = {}
 
+---Scan prefabs to map weapon meshes to their respective tool names.
 local function indexUniversalTools()
 	pcall(function()
 		local prefabs = workspaceService:FindFirstChild("Prefabs", true) or replicatedStorage:FindFirstChild("Prefabs", true) or workspaceService:FindFirstChild("Tools", true)
@@ -70,6 +74,35 @@ local function indexUniversalTools()
 end
 task.spawn(indexUniversalTools)
 
+---Cache ViewportFrames from the crafting interface to use as icons.
+local function indexCraftingIcons()
+	task.spawn(function()
+		local playerGui = localPlayer:WaitForChild("PlayerGui", 15)
+		if not playerGui then return end
+
+		local craftingGui = playerGui:WaitForChild("FustCrafting", 15)
+		if not craftingGui then return end
+
+		local recipes = craftingGui:FindFirstChild("Recipes", true)
+		if not recipes then return end
+
+		for _, item in ipairs(recipes:GetChildren()) do
+			local icon = item:FindFirstChild("Icon")
+			local view = icon and icon:FindFirstChild("View")
+			if view and view:IsA("ViewportFrame") then
+				view.Archivable = true
+				local clonedView = view:Clone()
+				clonedView.BackgroundTransparency = 1
+				clonedView.BorderSizePixel = 0
+				weaponViewportCache[item.Name:lower()] = clonedView
+				weaponViewportCache[item.Name:lower():gsub("_", " ")] = clonedView
+			end
+		end
+	end)
+end
+task.spawn(indexCraftingIcons)
+
+---Determine the equipped weapon on a target character.
 local function resolveEquippedWeapon(character)
 	local tool = character:FindFirstChildOfClass("Tool")
 	if tool then
@@ -127,6 +160,7 @@ local function resolveEquippedWeapon(character)
 	return "Worldmodel"
 end
 
+---Update camera perspective variables for projection.
 local function updateCameraCache()
 	camera = workspaceService.CurrentCamera or camera
 	if not camera then return end
@@ -140,6 +174,7 @@ local function updateCameraCache()
 	end
 end
 
+---Retrieve the safest GUI parent container available.
 local function getGuiParent()
 	local success, result = pcall(function()
 		return gethui()
@@ -693,14 +728,13 @@ function Arbuzi:InitEsp(data)
 		LineJoinMode = Enum.LineJoinMode.Miter
 	})
 
-	objects.WeaponIcon = self:CreateObjects("ImageLabel", {
+	objects.WeaponIcon = self:CreateObjects("Frame", {
 		Parent = objects.BottomTextHolder,
 		LayoutOrder = 4,
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		Visible = false,
 		Size = udim2FromOffset(24, 24),
-		ScaleType = Enum.ScaleType.Fit,
 		ZIndex = 5
 	})
 end
@@ -786,7 +820,6 @@ function Arbuzi:AddTarget(target)
 	self.Cache[target] = "pending"
 
 	task.spawn(function()
-		-- Убираем ограничение на 25 попыток. Кешируем модель моментально, чтобы не блочить StreamingEnabled.
 		if not target.Parent or self.Cache[target] ~= "pending" then
 			self.Cache[target] = nil
 			return
@@ -829,7 +862,7 @@ function Arbuzi:AddTarget(target)
 			LastWeapon = nil,
 			LastWeaponColor = nil,
 			LastStateColor = nil,
-			LastIcon = nil,
+			LastIconWeapon = nil,
 			LastIconSize = nil
 		}
 
@@ -896,7 +929,6 @@ function Arbuzi:Update(target, data)
 	local rootPart = data.RootPart
 	local humanoid = data.Humanoid
 
-	-- Динамический поиск партов (спасает от недогруза в StreamingEnabled)
 	if not rootPart or not rootPart.Parent then
 		rootPart = character:FindFirstChild("HumanoidRootPart")
 			or character:FindFirstChild("Torso")
@@ -910,7 +942,6 @@ function Arbuzi:Update(target, data)
 		humanoid = character:FindFirstChildOfClass("Humanoid")
 		data.Humanoid = humanoid
 		
-		-- Биндим ивенты только когда хуманоид наконец загрузился
 		if humanoid and not data.Conns.Health then
 			data.Conns.Health = humanoid.HealthChanged:Connect(function(newHealth)
 				data.Alive = newHealth > 0
@@ -1128,9 +1159,10 @@ function Arbuzi:Update(target, data)
 	end
 
 	local currentWeapon = data.CurrentWeapon or "none"
-	local iconId = weaponIcons[currentWeapon]
+	local cleanKey = currentWeapon:lower():gsub(" ", "_"):gsub("%-", "_")
+	local cachedViewport = weaponViewportCache[cleanKey] or weaponViewportCache[currentWeapon:lower()]
 	local iconCfg = textsCfg.WeaponIcon
-	local showIcon = iconCfg and iconCfg.Enabled and iconId ~= nil
+	local showIcon = iconCfg and iconCfg.Enabled and cachedViewport ~= nil
 
 	local weaponCfg = textsCfg.Weapon
 	if weaponCfg.Enabled and not showIcon then
@@ -1150,17 +1182,27 @@ function Arbuzi:Update(target, data)
 
 	if showIcon then
 		if not objects.WeaponIcon.Visible then objects.WeaponIcon.Visible = true end
-		if data.LastIcon ~= iconId then
-			objects.WeaponIcon.Image = iconId
-			data.LastIcon = iconId
-		end
 		local iconSize = iconCfg.Size or 24
 		if data.LastIconSize ~= iconSize then
 			objects.WeaponIcon.Size = udim2FromOffset(iconSize, iconSize)
 			data.LastIconSize = iconSize
 		end
+
+		if data.LastIconWeapon ~= currentWeapon then
+			objects.WeaponIcon:ClearAllChildren()
+			local newViewport = cachedViewport:Clone()
+			newViewport.Size = newUDim2(1, 0, 1, 0)
+			newViewport.Position = newUDim2(0, 0, 0, 0)
+			newViewport.Visible = true
+			newViewport.Parent = objects.WeaponIcon
+			data.LastIconWeapon = currentWeapon
+		end
 	else
-		if objects.WeaponIcon.Visible then objects.WeaponIcon.Visible = false end
+		if objects.WeaponIcon.Visible then
+			objects.WeaponIcon.Visible = false
+			objects.WeaponIcon:ClearAllChildren()
+			data.LastIconWeapon = nil
+		end
 	end
 end
 
@@ -1207,6 +1249,7 @@ function Arbuzi:Load()
 	self.Threads["LocalPlayerRespawn"] = localPlayer.CharacterAdded:Connect(function()
 		task.defer(function()
 			updateCameraCache()
+			task.spawn(indexCraftingIcons)
 			for _, player in ipairs(playersService:GetPlayers()) do
 				if player ~= localPlayer then
 					local char = player.Character or workspaceService:FindFirstChild(player.Name)
@@ -1269,7 +1312,7 @@ function Arbuzi:Load()
 	self.PreRender = runService.RenderStepped:Connect(function()
 		if not config.Enabled then
 			for _, data in pairs(self.Cache) do
-				if typeof(data) == "table" and data.Objects.TargetHolder and data.Objects.TargetHolder.Visible then
+				if typeof(data) == "table" and data.Objects and data.Objects.TargetHolder and data.Objects.TargetHolder.Visible then
 					data.Objects.TargetHolder.Visible = false
 				end
 			end
@@ -1339,10 +1382,10 @@ function Arbuzi:Unload()
 		self.Holder = nil
 	end
 
-print("want some font error?")
-	
 	tableClear(self.Cache)
 	shared.Arbuzi = nil
 end
+
+print("download furry esp fonts")
 
 return Arbuzi
