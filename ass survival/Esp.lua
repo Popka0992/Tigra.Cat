@@ -51,6 +51,12 @@ local weaponMeshMap = {}
 local toolSignatures = {}
 local weaponViewportCache = {}
 
+---Normalize names by removing spaces, underscores, and casing differences.
+local function normalizeName(name)
+	if not name or typeof(name) ~= "string" then return "" end
+	return name:lower():gsub("[%s_%-]", "")
+end
+
 ---Scan prefabs to map weapon meshes to their respective tool names.
 local function indexUniversalTools()
 	pcall(function()
@@ -58,7 +64,7 @@ local function indexUniversalTools()
 		if not prefabs then return end
 		local tools = prefabs:FindFirstChild("Tools") or prefabs
 		for _, tool in ipairs(tools:GetChildren()) do
-			local worldModel = tool:FindFirstChild("Worldmodel")
+			local worldModel = tool:FindFirstChild("Worldmodel") or tool:FindFirstChild("WorldModel")
 			if worldModel then
 				local signature = {}
 				for _, part in ipairs(worldModel:GetChildren()) do
@@ -74,33 +80,81 @@ local function indexUniversalTools()
 end
 task.spawn(indexUniversalTools)
 
----Cache ViewportFrames from the crafting interface to use as icons.
+---Process and cache a recipe item's ViewportFrame.
+local function cacheRecipeItem(item)
+	local view = item:FindFirstChildWhichIsA("ViewportFrame", true)
+	if not view then return end
+
+	view.Archivable = true
+	for _, desc in ipairs(view:GetDescendants()) do
+		desc.Archivable = true
+	end
+
+	local clonedView = view:Clone()
+	clonedView.BackgroundTransparency = 1
+	clonedView.BorderSizePixel = 0
+	clonedView.ImageTransparency = 0
+
+	local cam = clonedView:FindFirstChildOfClass("Camera")
+	if not cam and view.CurrentCamera then
+		cam = view.CurrentCamera:Clone()
+		cam.Parent = clonedView
+	end
+	if cam then
+		clonedView.CurrentCamera = cam
+	end
+
+	local raw = item.Name:lower()
+	local clean = normalizeName(raw)
+
+	weaponViewportCache[raw] = clonedView
+	weaponViewportCache[clean] = clonedView
+	weaponViewportCache[raw:gsub("_", " ")] = clonedView
+	weaponViewportCache[raw:gsub(" ", "_")] = clonedView
+end
+
+---Cache ViewportFrames from the crafting interface with retry logic.
 local function indexCraftingIcons()
 	task.spawn(function()
-		local playerGui = localPlayer:WaitForChild("PlayerGui", 15)
+		local playerGui = localPlayer:WaitForChild("PlayerGui", 20)
 		if not playerGui then return end
 
-		local craftingGui = playerGui:WaitForChild("FustCrafting", 15)
-		if not craftingGui then return end
-
-		local recipes = craftingGui:FindFirstChild("Recipes", true)
-		if not recipes then return end
-
-		for _, item in ipairs(recipes:GetChildren()) do
-			local icon = item:FindFirstChild("Icon")
-			local view = icon and icon:FindFirstChild("View")
-			if view and view:IsA("ViewportFrame") then
-				view.Archivable = true
-				local clonedView = view:Clone()
-				clonedView.BackgroundTransparency = 1
-				clonedView.BorderSizePixel = 0
-				weaponViewportCache[item.Name:lower()] = clonedView
-				weaponViewportCache[item.Name:lower():gsub("_", " ")] = clonedView
+		local function scanRecipes()
+			local craftingGui = playerGui:FindFirstChild("FustCrafting") or playerGui:FindFirstChild("Crafting", true)
+			local recipes = craftingGui and craftingGui:FindFirstChild("Recipes", true)
+			if recipes then
+				for _, item in ipairs(recipes:GetChildren()) do
+					cacheRecipeItem(item)
+				end
+				if not recipes:GetAttribute("Indexed") then
+					recipes:SetAttribute("Indexed", true)
+					recipes.ChildAdded:Connect(cacheRecipeItem)
+				end
 			end
+		end
+
+		scanRecipes()
+		for _ = 1, 10 do
+			if next(weaponViewportCache) then break end
+			task.wait(1)
+			scanRecipes()
 		end
 	end)
 end
 task.spawn(indexCraftingIcons)
+
+---Retrieve cached ViewportFrame by matching variants of weapon name.
+local function getWeaponViewport(weaponName)
+	if not weaponName or weaponName == "none" or weaponName == "Worldmodel" then
+		return nil
+	end
+	local raw = weaponName:lower()
+	local clean = normalizeName(raw)
+	return weaponViewportCache[clean]
+		or weaponViewportCache[raw]
+		or weaponViewportCache[raw:gsub(" ", "_")]
+		or weaponViewportCache[raw:gsub("_", " ")]
+end
 
 ---Determine the equipped weapon on a target character.
 local function resolveEquippedWeapon(character)
@@ -110,6 +164,9 @@ local function resolveEquippedWeapon(character)
 	end
 
 	local worldModel = character:FindFirstChild("Worldmodel")
+		or character:FindFirstChild("WorldModel")
+		or character:FindFirstChildOfClass("WorldModel")
+
 	if not worldModel then
 		for _, child in ipairs(character:GetChildren()) do
 			if child:IsA("Tool") then
@@ -870,7 +927,7 @@ function Arbuzi:AddTarget(target)
 		self.Cache[target] = data
 
 		data.Conns.ChildAdded = target.ChildAdded:Connect(function(child)
-			if child:IsA("Tool") or child.Name == "Worldmodel" then
+			if child:IsA("Tool") or child.Name:lower():find("worldmodel") then
 				task.delay(0.05, function()
 					data.CurrentWeapon = resolveEquippedWeapon(target)
 				end)
@@ -878,7 +935,7 @@ function Arbuzi:AddTarget(target)
 		end)
 
 		data.Conns.ChildRemoved = target.ChildRemoved:Connect(function(child)
-			if child:IsA("Tool") or child.Name == "Worldmodel" then
+			if child:IsA("Tool") or child.Name:lower():find("worldmodel") then
 				task.delay(0.05, function()
 					data.CurrentWeapon = resolveEquippedWeapon(target)
 				end)
@@ -1159,8 +1216,7 @@ function Arbuzi:Update(target, data)
 	end
 
 	local currentWeapon = data.CurrentWeapon or "none"
-	local cleanKey = currentWeapon:lower():gsub(" ", "_"):gsub("%-", "_")
-	local cachedViewport = weaponViewportCache[cleanKey] or weaponViewportCache[currentWeapon:lower()]
+	local cachedViewport = getWeaponViewport(currentWeapon)
 	local iconCfg = textsCfg.WeaponIcon
 	local showIcon = iconCfg and iconCfg.Enabled and cachedViewport ~= nil
 
@@ -1190,10 +1246,24 @@ function Arbuzi:Update(target, data)
 
 		if data.LastIconWeapon ~= currentWeapon then
 			objects.WeaponIcon:ClearAllChildren()
+
 			local newViewport = cachedViewport:Clone()
 			newViewport.Size = newUDim2(1, 0, 1, 0)
 			newViewport.Position = newUDim2(0, 0, 0, 0)
+			newViewport.BackgroundTransparency = 1
+			newViewport.BorderSizePixel = 0
+			newViewport.ImageTransparency = 0
 			newViewport.Visible = true
+
+			local cam = newViewport:FindFirstChildOfClass("Camera")
+			if not cam and cachedViewport.CurrentCamera then
+				cam = cachedViewport.CurrentCamera:Clone()
+				cam.Parent = newViewport
+			end
+			if cam then
+				newViewport.CurrentCamera = cam
+			end
+
 			newViewport.Parent = objects.WeaponIcon
 			data.LastIconWeapon = currentWeapon
 		end
@@ -1385,7 +1455,5 @@ function Arbuzi:Unload()
 	tableClear(self.Cache)
 	shared.Arbuzi = nil
 end
-
 print("download furry esp fonts")
-
 return Arbuzi
