@@ -50,140 +50,210 @@ local viewPortY = 0
 local weaponMeshMap = {}
 local toolSignatures = {}
 local weaponViewportCache = {}
+local toolViewportCache = {}
 local meshToWeapon = {}
 
----Normalize strings by stripping whitespace and non-alphanumeric separators.
 local function normalizeName(name)
 	if not name or typeof(name) ~= "string" then return "" end
 	return name:lower():gsub("[%s_%-]", "")
 end
 
----Locate the recipes container inside PlayerGui.
-local function findRecipesContainer()
-	local playerGui = localPlayer:FindFirstChild("PlayerGui")
-	if not playerGui then return nil end
+local function isIgnoredPartName(name)
+	local lower = name:lower()
+	return lower:find("hitbox")
+		or lower:find("collider")
+		or lower:find("trigger")
+		or lower:find("root")
+		or lower:find("bound")
+		or lower:find("ray")
+		or lower:find("aim")
+		or lower:find("muzzle")
+		or lower:find("hand")
+		or lower:find("arm")
+		or lower:find("glove")
+		or lower:find("body")
+		or lower:find("attach")
+		or lower:find("point")
+		or lower:find("node")
+		or lower:find("origin")
+		or lower:find("flash")
+		or lower:find("light")
+		or lower:find("laser")
+		or lower:find("effect")
+		or lower:find("emitter")
+		or lower:find("pos")
+		or lower:find("weld")
+end
 
-	local fustCrafting = playerGui:FindFirstChild("FustCrafting")
-	if fustCrafting then
-		local recipes = fustCrafting:FindFirstChild("Recipes", true)
-		if recipes then return recipes end
-	end
-
-	for _, gui in ipairs(playerGui:GetChildren()) do
-		if gui:IsA("ScreenGui") then
-			local recipes = gui:FindFirstChild("Recipes", true)
-			if recipes then return recipes end
+local function buildWeaponViewport(tool)
+	local hasAnyMesh = false
+	for _, desc in ipairs(tool:GetDescendants()) do
+		if desc:IsA("MeshPart") or (desc:IsA("BasePart") and desc:FindFirstChildOfClass("SpecialMesh")) then
+			hasAnyMesh = true
+			break
 		end
 	end
 
-	return nil
-end
+	local visualParts = {}
+	for _, desc in ipairs(tool:GetDescendants()) do
+		if desc:IsA("BasePart") then
+			local isMesh = desc:IsA("MeshPart") or desc:FindFirstChildOfClass("SpecialMesh")
+			local shouldInclude = true
 
----Cache a single recipe item's ViewportFrame and register its internal meshes.
-local function cacheRecipeItem(item)
-	if not item or not item:IsA("GuiObject") then return end
+			if hasAnyMesh and not isMesh then
+				shouldInclude = false
+			end
 
-	local view = item:FindFirstChildWhichIsA("ViewportFrame", true)
-	if not view then return end
+			if isIgnoredPartName(desc.Name) or desc.Transparency >= 0.7 or desc.Size.Magnitude < 0.05 then
+				shouldInclude = false
+			end
 
-	view.Archivable = true
-	for _, desc in ipairs(view:GetDescendants()) do
-		desc.Archivable = true
-	end
-
-	local clonedView = view:Clone()
-	clonedView.BackgroundTransparency = 1
-	clonedView.BorderSizePixel = 0
-	clonedView.ImageTransparency = 0
-	clonedView.Visible = true
-
-	local cam = clonedView:FindFirstChildOfClass("Camera")
-	if not cam and view.CurrentCamera then
-		pcall(function()
-			cam = view.CurrentCamera:Clone()
-			cam.Parent = clonedView
-		end)
-	end
-	if cam then
-		clonedView.CurrentCamera = cam
-	end
-
-	local raw = item.Name:lower()
-	local clean = normalizeName(raw)
-
-	weaponViewportCache[raw] = clonedView
-	weaponViewportCache[clean] = clonedView
-	weaponViewportCache[raw:gsub("_", " ")] = clonedView
-	weaponViewportCache[raw:gsub(" ", "_")] = clonedView
-
-	for _, part in ipairs(view:GetDescendants()) do
-		if part:IsA("MeshPart") and part.MeshId ~= "" then
-			meshToWeapon[part.MeshId] = item.Name
-			weaponMeshMap[part.MeshId] = item.Name
-		end
-	end
-end
-
----Index all crafting recipes from PlayerGui.
-local function indexCraftingIcons()
-	task.spawn(function()
-		local playerGui = localPlayer:WaitForChild("PlayerGui", 25)
-		if not playerGui then return end
-
-		local function scan()
-			local recipes = findRecipesContainer()
-			if recipes then
-				for _, item in ipairs(recipes:GetChildren()) do
-					cacheRecipeItem(item)
-				end
-				if not recipes:GetAttribute("Indexed") then
-					recipes:SetAttribute("Indexed", true)
-					recipes.ChildAdded:Connect(cacheRecipeItem)
-				end
+			if shouldInclude then
+				table.insert(visualParts, desc)
 			end
 		end
+	end
 
-		scan()
-
-		playerGui.DescendantAdded:Connect(function(desc)
-			if desc.Name == "Recipes" then
-				task.defer(scan)
-			elseif desc.Parent and desc.Parent.Name == "Recipes" then
-				task.defer(function()
-					cacheRecipeItem(desc)
-				end)
+	if #visualParts == 0 then
+		for _, desc in ipairs(tool:GetDescendants()) do
+			if desc:IsA("BasePart") and desc.Transparency < 0.9 and desc.Size.Magnitude >= 0.05 then
+				table.insert(visualParts, desc)
 			end
-		end)
-
-		for _ = 1, 10 do
-			if next(weaponViewportCache) then break end
-			task.wait(1)
-			scan()
 		end
-	end)
-end
-task.spawn(indexCraftingIcons)
+	end
 
----Retrieve cached ViewportFrame by clean weapon name.
-local function getWeaponViewport(weaponName)
+	if #visualParts == 0 and tool:IsA("BasePart") then
+		table.insert(visualParts, tool)
+	end
+
+	if #visualParts == 0 then return nil end
+
+	local vp = Instance.new("ViewportFrame")
+	vp.BackgroundTransparency = 1
+	vp.Size = newUDim2(1, 0, 1, 0)
+	vp.Position = newUDim2(0, 0, 0, 0)
+	vp.Ambient = Color3.fromRGB(180, 180, 180)
+	vp.LightColor = Color3.fromRGB(255, 255, 255)
+	vp.LightDirection = newVector3(-1, -1.4, -1).Unit
+
+	local model = Instance.new("Model")
+	local clonedParts = {}
+	for _, p in ipairs(visualParts) do
+		local cp = p:Clone()
+		cp.CanCollide = false
+		cp.Anchored = true
+		for _, child in ipairs(cp:GetChildren()) do
+			if not child:IsA("SpecialMesh") and not child:IsA("Texture") then
+				child:Destroy()
+			end
+		end
+		cp.Parent = model
+		table.insert(clonedParts, cp)
+	end
+	model.Parent = vp
+
+	local centerCf, size = model:GetBoundingBox()
+	for _, cp in ipairs(clonedParts) do
+		cp.CFrame = centerCf:Inverse() * cp.CFrame
+	end
+	centerCf, size = model:GetBoundingBox()
+
+	local sx, sy, sz = size.X, size.Y, size.Z
+	local maxDim = math.max(sx, sy, sz)
+
+	local camDir
+	if sz == maxDim then
+		camDir = newVector3(1.15, 0.35, 0.45).Unit
+	elseif sx == maxDim then
+		camDir = newVector3(0.45, 0.35, 1.15).Unit
+	else
+		camDir = newVector3(1.0, 0.3, 0.8).Unit
+	end
+
+	local fov = 30
+	local camRot = CFrame.lookAt(camDir, zeroVector3).Rotation
+	local aspect = 50 / 26
+	local tanV = mathTan(mathRad(fov / 2))
+	local tanH = tanV * aspect
+
+	local hx, hy, hz = sx / 2, sy / 2, sz / 2
+	local corners = {
+		newVector3(hx, hy, hz),
+		newVector3(-hx, hy, hz),
+		newVector3(hx, -hy, hz),
+		newVector3(-hx, -hy, hz),
+		newVector3(hx, hy, -hz),
+		newVector3(-hx, hy, -hz),
+		newVector3(hx, -hy, -hz),
+		newVector3(-hx, -hy, -hz)
+	}
+
+	local maxDist = 0.5
+	for _, pt in ipairs(corners) do
+		local pCam = camRot:PointToObjectSpace(pt)
+		local dX = pCam.Z + (mathAbs(pCam.X) / (tanH * 0.90))
+		local dY = pCam.Z + (mathAbs(pCam.Y) / (tanV * 0.90))
+		if dX > maxDist then maxDist = dX end
+		if dY > maxDist then maxDist = dY end
+	end
+
+	local cam = Instance.new("Camera")
+	cam.FieldOfView = fov
+	cam.CFrame = CFrame.lookAt(camDir * maxDist, zeroVector3)
+	cam.Parent = vp
+	vp.CurrentCamera = cam
+
+	return vp
+end
+
+local function getWeaponViewport(weaponName, toolInst)
 	if not weaponName or weaponName == "none" or weaponName == "Worldmodel" then
 		return nil
 	end
 	local raw = weaponName:lower()
 	local clean = normalizeName(raw)
-	return weaponViewportCache[clean]
-		or weaponViewportCache[raw]
-		or weaponViewportCache[raw:gsub(" ", "_")]
-		or weaponViewportCache[raw:gsub("_", " ")]
+
+	if not toolViewportCache[clean] and toolInst then
+		local built = buildWeaponViewport(toolInst)
+		if built then
+			toolViewportCache[clean] = built
+			toolViewportCache[raw] = built
+		end
+	end
+
+	local cached = toolViewportCache[clean] or toolViewportCache[raw] or weaponViewportCache[clean] or weaponViewportCache[raw]
+	if cached then
+		local cloned = cached:Clone()
+		local cam = cloned:FindFirstChildOfClass("Camera")
+		if not cam and cached.CurrentCamera then
+			pcall(function()
+				cam = cached.CurrentCamera:Clone()
+				cam.Parent = cloned
+			end)
+		end
+		if cam then
+			cloned.CurrentCamera = cam
+		end
+		return cloned
+	end
+
+	return nil
 end
 
----Resolve the currently equipped weapon on a character model.
 local function resolveEquippedWeapon(character)
-	if not character or not character.Parent then return "none" end
+	if not character or not character.Parent then return "none", nil end
 
 	local tool = character:FindFirstChildOfClass("Tool")
 	if tool then
-		return tool.Name
+		return tool.Name, tool
+	end
+
+	for _, child in ipairs(character:GetChildren()) do
+		if child:IsA("Model") and child.Name ~= "FustAvatarFace" and not child:IsA("Accessory") then
+			if child:FindFirstChild("Handle") or child:FindFirstChildOfClass("MeshPart") or child:FindFirstChildOfClass("BasePart") then
+				return child.Name, child
+			end
+		end
 	end
 
 	local worldModel = character:FindFirstChild("Worldmodel")
@@ -193,7 +263,7 @@ local function resolveEquippedWeapon(character)
 	if not worldModel then
 		for _, child in ipairs(character:GetChildren()) do
 			if child:IsA("Tool") then
-				return child.Name
+				return child.Name, child
 			elseif child:IsA("Model") and child.Name:lower():find("worldmodel") then
 				worldModel = child
 				break
@@ -202,7 +272,7 @@ local function resolveEquippedWeapon(character)
 	end
 
 	if not worldModel then
-		return "none"
+		return "none", nil
 	end
 
 	local attr = worldModel:GetAttribute("Weapon")
@@ -212,7 +282,7 @@ local function resolveEquippedWeapon(character)
 		or character:GetAttribute("Weapon")
 		or character:GetAttribute("Equipped")
 	if attr and typeof(attr) == "string" and attr ~= "" then
-		return attr
+		return attr, worldModel
 	end
 
 	local children = worldModel:GetChildren()
@@ -220,7 +290,7 @@ local function resolveEquippedWeapon(character)
 		if part:IsA("MeshPart") and part.MeshId ~= "" then
 			local matched = weaponMeshMap[part.MeshId] or meshToWeapon[part.MeshId]
 			if matched then
-				return matched
+				return matched, worldModel
 			end
 		end
 	end
@@ -240,17 +310,16 @@ local function resolveEquippedWeapon(character)
 	end
 
 	if bestTool and bestScore >= 2 then
-		return bestTool
+		return bestTool, worldModel
 	end
 
 	if #children > 0 then
-		return "Worldmodel"
+		return "Worldmodel", worldModel
 	end
 
-	return "none"
+	return "none", nil
 end
 
----Update camera perspective variables for projection.
 local function updateCameraCache()
 	camera = workspaceService.CurrentCamera or camera
 	if not camera then return end
@@ -264,7 +333,6 @@ local function updateCameraCache()
 	end
 end
 
----Retrieve the safest GUI parent container available.
 local function getGuiParent()
 	local success, result = pcall(function()
 		return gethui()
@@ -337,7 +405,7 @@ local Arbuzi = {
 			},
 			WeaponIcon = {
 				Enabled = true,
-				Size = 24
+				Size = 26
 			},
 			State = {
 				Enabled = true,
@@ -824,7 +892,7 @@ function Arbuzi:InitEsp(data)
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		Visible = false,
-		Size = udim2FromOffset(24, 24),
+		Size = udim2FromOffset(50, 26),
 		ZIndex = 5
 	})
 end
@@ -925,7 +993,7 @@ function Arbuzi:AddTarget(target)
 			Health = 100,
 			MaxHealth = 100,
 			Alive = true,
-			CurrentWeapon = resolveEquippedWeapon(target),
+			CurrentWeapon = "none",
 			WalkActive = false,
 			JumpActive = false,
 			LastW = nil,
@@ -953,7 +1021,8 @@ function Arbuzi:AddTarget(target)
 			LastWeaponColor = nil,
 			LastStateColor = nil,
 			LastIconWeapon = nil,
-			LastIconSize = nil
+			LastIconW = nil,
+			LastIconH = nil
 		}
 
 		self:InitEsp(data)
@@ -1228,13 +1297,12 @@ function Arbuzi:Update(target, data)
 		if objects.LeftBarHolder.Visible then objects.LeftBarHolder.Visible = false end
 	end
 
-	local currentWeapon = resolveEquippedWeapon(character)
+	local currentWeapon, toolInst = resolveEquippedWeapon(character)
 	data.CurrentWeapon = currentWeapon
 
-	local cachedViewport = getWeaponViewport(currentWeapon)
 	local iconCfg = textsCfg.WeaponIcon
 	local hasValidWeapon = currentWeapon ~= "none" and currentWeapon ~= "Worldmodel"
-	local showIcon = iconCfg and iconCfg.Enabled and cachedViewport ~= nil and hasValidWeapon
+	local showIcon = iconCfg and iconCfg.Enabled and hasValidWeapon
 
 	local weaponCfg = textsCfg.Weapon
 	if weaponCfg.Enabled and not showIcon then
@@ -1257,43 +1325,42 @@ function Arbuzi:Update(target, data)
 	end
 
 	if showIcon then
-		if not objects.WeaponIcon.Visible then objects.WeaponIcon.Visible = true end
-		local iconSize = iconCfg.Size or 24
-		if data.LastIconSize ~= iconSize then
-			objects.WeaponIcon.Size = udim2FromOffset(iconSize, iconSize)
-			data.LastIconSize = iconSize
+		local iconSize = iconCfg.Size or 26
+		local iconW = typeof(iconSize) == "Vector2" and iconSize.X or mathFloor(iconSize * 1.9)
+		local iconH = typeof(iconSize) == "Vector2" and iconSize.Y or iconSize
+
+		if data.LastIconW ~= iconW or data.LastIconH ~= iconH then
+			objects.WeaponIcon.Size = udim2FromOffset(iconW, iconH)
+			data.LastIconW = iconW
+			data.LastIconH = iconH
 		end
 
-		if data.LastIconWeapon ~= currentWeapon then
+		if data.LastIconWeapon ~= currentWeapon or #objects.WeaponIcon:GetChildren() == 0 then
 			objects.WeaponIcon:ClearAllChildren()
 
-			cachedViewport.Archivable = true
-			for _, d in ipairs(cachedViewport:GetDescendants()) do
-				d.Archivable = true
+			local newViewport = getWeaponViewport(currentWeapon, toolInst)
+			if newViewport then
+				newViewport.Size = newUDim2(1, 0, 1, 0)
+				newViewport.Position = newUDim2(0, 0, 0, 0)
+				newViewport.BackgroundTransparency = 1
+				newViewport.BorderSizePixel = 0
+				newViewport.Visible = true
+				newViewport.ZIndex = 10
+				newViewport.Parent = objects.WeaponIcon
+				data.LastIconWeapon = currentWeapon
+				if not objects.WeaponIcon.Visible then
+					objects.WeaponIcon.Visible = true
+				end
+			else
+				if objects.WeaponIcon.Visible then
+					objects.WeaponIcon.Visible = false
+				end
+				data.LastIconWeapon = nil
 			end
-
-			local newViewport = cachedViewport:Clone()
-			newViewport.Size = newUDim2(1, 0, 1, 0)
-			newViewport.Position = newUDim2(0, 0, 0, 0)
-			newViewport.BackgroundTransparency = 1
-			newViewport.BorderSizePixel = 0
-			newViewport.ImageTransparency = 0
-			newViewport.Visible = true
-			newViewport.ZIndex = 10
-
-			local cam = newViewport:FindFirstChildOfClass("Camera")
-			if not cam and cachedViewport.CurrentCamera then
-				pcall(function()
-					cam = cachedViewport.CurrentCamera:Clone()
-					cam.Parent = newViewport
-				end)
+		else
+			if not objects.WeaponIcon.Visible and #objects.WeaponIcon:GetChildren() > 0 then
+				objects.WeaponIcon.Visible = true
 			end
-			if cam then
-				newViewport.CurrentCamera = cam
-			end
-
-			newViewport.Parent = objects.WeaponIcon
-			data.LastIconWeapon = currentWeapon
 		end
 	else
 		if objects.WeaponIcon.Visible then
@@ -1347,7 +1414,6 @@ function Arbuzi:Load()
 	self.Threads["LocalPlayerRespawn"] = localPlayer.CharacterAdded:Connect(function()
 		task.defer(function()
 			updateCameraCache()
-			task.spawn(indexCraftingIcons)
 			for _, player in ipairs(playersService:GetPlayers()) do
 				if player ~= localPlayer then
 					local char = player.Character or workspaceService:FindFirstChild(player.Name)
