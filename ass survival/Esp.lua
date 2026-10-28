@@ -356,8 +356,9 @@ local Arbuzi = {
 		LimitFPS = 0,
 		Players = true,
 		Bots = {
-			Enabled = false,
-			Name = "bot"
+			Enabled = true,
+			CustomName = false,
+			Name = "Bot"
 		},
 		Boxes = {
 			Enabled = true,
@@ -1231,7 +1232,14 @@ function Arbuzi:Update(target, data)
 	if textsCfg.Name.Enabled then
 		if not objects.TargetName.Visible then objects.TargetName.Visible = true end
 		local playerObj = playersService:GetPlayerFromCharacter(target) or playersService:FindFirstChild(target.Name)
-		local displayName = playerObj and (playerObj.DisplayName or playerObj.Name) or target.Name
+		local displayName = target.Name
+
+		if playerObj then
+			displayName = playerObj.DisplayName or playerObj.Name
+		elseif config.Bots and config.Bots.CustomName and config.Bots.Name ~= "" then
+			displayName = config.Bots.Name
+		end
+
 		if data.LastDisplayName ~= displayName then
 			objects.TargetName.Text = displayName
 			data.LastDisplayName = displayName
@@ -1411,6 +1419,32 @@ function Arbuzi:Load()
 		end
 	end)
 
+	local function bindNpcContainer(folder)
+		if not folder then return end
+		for _, child in ipairs(folder:GetChildren()) do
+			if child:IsA("Model") and not self.Cache[child] then
+				self:AddTarget(child)
+			end
+		end
+		local connKey = "NpcAdded_" .. folder.Name
+		self.Threads[connKey] = folder.ChildAdded:Connect(function(child)
+			if config.Bots and config.Bots.Enabled and child:IsA("Model") then
+				self:AddTarget(child)
+			end
+		end)
+	end
+
+	local npcsFolder = workspaceService:FindFirstChild("Npcs")
+	if npcsFolder then
+		bindNpcContainer(npcsFolder)
+	end
+
+	self.Threads["WorkspaceNpcFolderAdded"] = workspaceService.ChildAdded:Connect(function(child)
+		if child.Name == "Npcs" and child:IsA("Folder") then
+			bindNpcContainer(child)
+		end
+	end)
+
 	self.Threads["LocalPlayerRespawn"] = localPlayer.CharacterAdded:Connect(function()
 		task.defer(function()
 			updateCameraCache()
@@ -1444,21 +1478,32 @@ function Arbuzi:Load()
 				end
 			end
 
-			for _, player in ipairs(playersService:GetPlayers()) do
-				if player == localPlayer then continue end
-				local char = player.Character or workspaceService:FindFirstChild(player.Name)
-				if char and char:IsA("Model") and char.Parent then
-					if not self.Cache[char] then
-						self:AddTarget(char)
+			if config.Players then
+				for _, player in ipairs(playersService:GetPlayers()) do
+					if player == localPlayer then continue end
+					local char = player.Character or workspaceService:FindFirstChild(player.Name)
+					if char and char:IsA("Model") and char.Parent then
+						if not self.Cache[char] then
+							self:AddTarget(char)
+						end
 					end
 				end
 			end
 
 			if config.Bots and config.Bots.Enabled then
+				local currentNpcFolder = workspaceService:FindFirstChild("Npcs")
+				if currentNpcFolder then
+					for _, model in ipairs(currentNpcFolder:GetChildren()) do
+						if model:IsA("Model") and not self.Cache[model] then
+							self:AddTarget(model)
+						end
+					end
+				end
+
 				for _, model in ipairs(workspaceService:GetChildren()) do
 					if model:IsA("Model") and model ~= localPlayer.Character and not self.Cache[model] then
 						local hum = model:FindFirstChildOfClass("Humanoid")
-						if hum then
+						if hum and not playersService:GetPlayerFromCharacter(model) then
 							self:AddTarget(model)
 						end
 					end
