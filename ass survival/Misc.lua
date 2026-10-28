@@ -22,14 +22,7 @@ local MiscConfig = {
 	FlyMode = "CFrame",
 	FlySpeed = 50,
 
-	InfiniteJump = false,
-	NoClip = false,
 	InstantPrompts = false,
-
-	SpinBot = false,
-	SpinMode = "Spin",
-	SpinSpeed = 15,
-	JitterAngle = 90,
 
 	CustomFOV = false,
 	FOVValue = 70,
@@ -76,15 +69,6 @@ function Misc:GetConfig()
 end
 
 function Misc:Load()
-	userInputService.JumpRequest:Connect(function()
-		if MiscConfig.InfiniteJump and localPlayer.Character then
-			local humanoid = localPlayer.Character:FindFirstChildOfClass("Humanoid")
-			if humanoid then
-				humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-			end
-		end
-	end)
-
 	proximityPromptService.PromptButtonHoldBegan:Connect(function(prompt)
 		if MiscConfig.InstantPrompts and fireproximityprompt then
 			fireproximityprompt(prompt)
@@ -164,33 +148,6 @@ function Misc:Load()
 		end
 	end)
 
-	runService.Stepped:Connect(function()
-		local char = localPlayer.Character
-		if not char then return end
-
-		if MiscConfig.NoClip then
-			for _, part in ipairs(char:GetDescendants()) do
-				if part:IsA("BasePart") and part.CanCollide then
-					part.CanCollide = false
-				end
-			end
-
-			local hrp = char:FindFirstChild("HumanoidRootPart")
-			local hum = char:FindFirstChildOfClass("Humanoid")
-			if hrp and hum and hum.MoveDirection.Magnitude > 0 then
-				local rayParams = RaycastParams.new()
-				rayParams.FilterType = Enum.RaycastFilterType.Exclude
-				rayParams.FilterDescendantsInstances = {char, currentCamera}
-				rayParams.IgnoreWater = true
-
-				local checkRay = workspaceService:Raycast(hrp.Position, hum.MoveDirection * 2, rayParams)
-				if checkRay and checkRay.Instance and checkRay.Instance.CanCollide then
-					hrp.CFrame = hrp.CFrame + (hum.MoveDirection * 0.8)
-				end
-			end
-		end
-	end)
-
 	runService.Heartbeat:Connect(function(dt)
 		local char = localPlayer.Character
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -245,27 +202,11 @@ function Misc:Load()
 				flyBodyGyro = nil
 			end
 		end
-
-		if MiscConfig.SpinBot and hrp then
-			if MiscConfig.SpinMode == "Spin" then
-				hrp.CFrame = hrp.CFrame * CFrame.Angles(0, math.rad(MiscConfig.SpinSpeed), 0)
-			elseif MiscConfig.SpinMode == "Yaw Jitter" then
-				local sign = (math.random(0, 1) == 0) and 1 or -1
-				hrp.CFrame = hrp.CFrame * CFrame.Angles(0, sign * math.rad(MiscConfig.JitterAngle), 0)
-			end
-		end
 	end)
 
 	local oldIndex
 	oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
 		if not checkcaller() then
-			if MiscConfig.NoClip and typeof(self) == "Instance" and self:IsA("BasePart") and key == "CanCollide" then
-				local char = localPlayer.Character
-				if char and self:IsDescendantOf(char) then
-					return true
-				end
-			end
-
 			if MiscConfig.Speed and MiscConfig.SpeedMode == "WalkSpeed Spoof" and typeof(self) == "Instance" and self:IsA("Humanoid") and key == "WalkSpeed" then
 				return 16
 			end
