@@ -12,17 +12,15 @@ local localPlayer = playersService.LocalPlayer
 local mouse = localPlayer:GetMouse()
 local currentCamera = workspaceService.CurrentCamera
 
+local isInternalRaycast = false
 local aimKeyActive = false
 local targetPart = nil
 local targetPlayer = nil
-
--- Сохраняем линк на ремут попадания для ручного инжекта
-local bulletHitRemote = nil 
-local processedShots = {}
+local originalPartSizes = {}
 
 local CombatConfig = {
-	Enabled = false,
 	AimMode = "Silent Aim",
+	Enabled = false,
 	Keybind = Enum.UserInputType.MouseButton2,
 	KeybindMode = "Hold",
 	AimActive = false,
@@ -30,15 +28,13 @@ local CombatConfig = {
 	HitChance = 100,
 	Smoothness = 2,
 
-	BulletSpeed = 500,
-	BulletGravity = 8,
-	AutoCompensate = true,
+	Wallbang = false,
+	ProjectionOverride = true,
+	MagicBullet = true,
+	BowPrediction = true, 
 
-	WallCheck = true,
-	
-	-- Экспериментальный обход Time Delta
-	InstaHit = true,
-	InstaMethod = "Velocity Spoof", 
+	InstaHit = false,
+	InstaMethod = "Trust Client",
 
 	TargetPlayers = true,
 	TargetBots = true,
@@ -51,15 +47,46 @@ local CombatConfig = {
 	ShowFOV = false,
 	FOVColor = Color3.fromRGB(255, 255, 255),
 	FOVOutline = false,
+
+	Methods = {
+		Raycast = true,
+		Spherecast = true,
+		FindPartOnRay = true,
+		FindPartOnRayWithWhitelist = true,
+		FindPartOnRayWithIgnoreList = true,
+		ScreenPointToRay = true,
+		ViewportPointToRay = true,
+		Mouse = true,
+		Network = true
+	},
+
+	HitboxEnabled = false,
+	HitboxSize = 6,
+	HitboxTrans = 0.6,
+	HitboxPart = "All Parts",
+	HitboxCustom = true
 }
 
-local function checkVisibility(origin, targetPos, ignoreChar)
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = {localPlayer.Character, ignoreChar, currentCamera}
-	params.IgnoreWater = true
-	return workspaceService:Raycast(origin, (targetPos - origin), params) == nil 
+local scannedPartsList = {"All Parts", "Head", "HumanoidRootPart", "Torso", "UpperTorso", "LowerTorso"}
+local scannedPartsSet = {}
+for _, name in ipairs(scannedPartsList) do
+	scannedPartsSet[name] = true
 end
+
+Combat.PartsList = scannedPartsList
+
+local circleOutline = Drawing.new("Circle")
+circleOutline.Thickness = 3
+circleOutline.Color = Color3.new(0, 0, 0)
+circleOutline.Filled = false
+circleOutline.ZIndex = 1
+circleOutline.Visible = false
+
+local circleInline = Drawing.new("Circle")
+circleInline.Thickness = 1
+circleInline.Filled = false
+circleInline.ZIndex = 2
+circleInline.Visible = false
 
 local function getTargetEntities()
 	local entities = {}
@@ -69,7 +96,7 @@ local function getTargetEntities()
 		if not obj:IsA("Model") or obj == myChar then continue end
 
 		local humanoid = obj:FindFirstChildOfClass("Humanoid")
-		local root = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart or obj:FindFirstChild("Torso")
+		local root = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart or obj:FindFirstChild("Torso") or obj:FindFirstChild("UpperTorso")
 		if not (humanoid and root) then continue end
 		if CombatConfig.DeadCheck and humanoid.Health <= 0 then continue end
 
@@ -88,7 +115,22 @@ local function getTargetEntities()
 			RootPart = root
 		})
 	end
+
 	return entities
+end
+
+local function scanCharacterParts()
+	local updated = false
+	for _, entity in ipairs(getTargetEntities()) do
+		for _, child in ipairs(entity.Model:GetDescendants()) do
+			if child:IsA("BasePart") and not scannedPartsSet[child.Name] then
+				scannedPartsSet[child.Name] = true
+				table.insert(scannedPartsList, child.Name)
+				updated = true
+			end
+		end
+	end
+	return updated
 end
 
 local function rollHitChance()
@@ -99,7 +141,8 @@ end
 
 local function getClosestTarget()
 	local closestPart, closestTarget = nil, nil
-	local maxFovRadius = (currentCamera.ViewportSize.X * (CombatConfig.FOV / currentCamera.FieldOfView)) / 2
+	local viewportSize = currentCamera.ViewportSize
+	local maxFovRadius = (viewportSize.X * (CombatConfig.FOV / currentCamera.FieldOfView)) / 2
 	local mousePos = userInputService:GetMouseLocation()
 	local camPos = currentCamera.CFrame.Position
 
@@ -114,8 +157,6 @@ local function getClosestTarget()
 		local screenPos, onScreen = currentCamera:WorldToViewportPoint(part.Position)
 		if not onScreen then continue end
 
-		if CombatConfig.WallCheck and not checkVisibility(camPos, part.Position, char) then continue end
-
 		local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
 		if dist <= maxFovRadius then
 			maxFovRadius = dist
@@ -123,31 +164,26 @@ local function getClosestTarget()
 			closestTarget = entity.Player or entity.Model
 		end
 	end
+
 	return closestPart, closestTarget
 end
 
-local function calculateTrajectory(origin, targetPos, speed, gravity)
-	local diff = targetPos - origin
-	local dx = Vector2.new(diff.X, diff.Z).Magnitude
-	local dy = diff.Y
-	local v2 = speed * speed
-	local v4 = v2 * v2
-	local root = v4 - gravity * (gravity * dx * dx + 2 * dy * v2)
-
-	if root < 0 then return diff.Unit end
-
-	local angle = math.atan2(v2 - math.sqrt(root), gravity * dx)
-	local dir2d = Vector3.new(diff.X, 0, diff.Z).Unit
-	return (dir2d * math.cos(angle) + Vector3.new(0, 1, 0) * math.sin(angle)).Unit
+function Combat:GetConfig()
+	return CombatConfig
 end
 
-function Combat:GetConfig() return CombatConfig end
+function Combat:RefreshParts()
+	return scanCharacterParts()
+end
+
 function Combat:SetAimActive(state)
 	aimKeyActive = state
 	CombatConfig.AimActive = state
 end
 
 function Combat:Load()
+	scanCharacterParts()
+
 	runService.RenderStepped:Connect(function()
 		currentCamera = workspaceService.CurrentCamera or currentCamera
 
@@ -172,18 +208,11 @@ function Combat:Load()
 
 	runService:BindToRenderStep("CombatAimbot", Enum.RenderPriority.Camera.Value + 1, function()
 		local isAiming = aimKeyActive or CombatConfig.AimActive
-		if CombatConfig.Enabled and CombatConfig.AimMode == "Aimbot" and isAiming and targetPart then
+		if CombatConfig.Enabled and CombatConfig.AimMode == "Aimbot" and isAiming and targetPart and targetPart.Parent then
 			local camPos = currentCamera.CFrame.Position
-			local targetLook
-			
-			if CombatConfig.AutoCompensate then
-				local dir = calculateTrajectory(camPos, targetPart.Position, CombatConfig.BulletSpeed, CombatConfig.BulletGravity)
-				targetLook = CFrame.lookAt(camPos, camPos + dir)
-			else
-				targetLook = CFrame.lookAt(camPos, targetPart.Position)
-			end
-
+			local targetLook = CFrame.lookAt(camPos, targetPart.Position)
 			local smoothFactor = math.clamp(CombatConfig.Smoothness, 1, 30)
+
 			if smoothFactor <= 1 then
 				currentCamera.CFrame = targetLook
 			else
@@ -192,92 +221,290 @@ function Combat:Load()
 		end
 	end)
 
-	local oldNamecall
-	oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-		if checkcaller() or not CombatConfig.Enabled then return oldNamecall(self, ...) end
-
-		local method = getnamecallmethod()
-		local args = {...}
-
-		if method == "FireServer" then
-			local pIndex = (type(args[1]) == "string" and type(args[2]) == "table") and 2 or 1
-			local payload = args[pIndex]
-
-			if type(payload) == "table" then
-				-- КЕШИРУЕМ РЕМУТ ПОПАДАНИЯ ДЛЯ ИНЖЕКТА
-				if payload.shotId and payload.part and payload.pos and not payload.origin then
-					bulletHitRemote = self
-					
-					-- Блокируем двойную отправку, если мы уже отправили инста-хит
-					if CombatConfig.InstaHit and processedShots[payload.shotId] then
-						return nil
-					end
-					
-					-- Если это легитный хит, корректируем парту
-					if CombatConfig.AimMode == "Silent Aim" and targetPart and rollHitChance() then
-						local newPayload = {}
-						for k, v in pairs(payload) do newPayload[k] = v end
-						newPayload.part = targetPart
-						newPayload.pos = targetPart.Position
-						args[pIndex] = newPayload
-						return oldNamecall(self, unpack(args))
+	runService.Heartbeat:Connect(function()
+		if not CombatConfig.HitboxEnabled then
+			if next(originalPartSizes) ~= nil then
+				for part, data in pairs(originalPartSizes) do
+					if part and part.Parent and part:IsA("BasePart") then
+						part.Size = data.Size
+						part.Transparency = data.Transparency
+						part.CanCollide = data.CanCollide
+						part.Massless = data.Massless
 					end
 				end
+				table.clear(originalPartSizes)
+			end
+			return
+		end
 
-				-- ПЕРЕХВАТ ВЫСТРЕЛА
-				if payload.origin and payload.dir and payload.shotId and CombatConfig.AimMode == "Silent Aim" and targetPart and rollHitChance() then
-					local newPayload = {}
-					for k, v in pairs(payload) do newPayload[k] = v end
-					
-					local origin = newPayload.origin
-					local tPos = targetPart.Position
-					
-					if CombatConfig.InstaHit and CombatConfig.InstaMethod == "Velocity Spoof" then
-						-- ТЕОРИЯ: Если сервер не делает .Unit, мы умножаем вектор в 9999 раз. 
-						-- Скорость пули на сервере становится бесконечной. Time Delta = 0.
-						newPayload.dir = (tPos - origin).Unit * 9999 
-						args[pIndex] = newPayload
-						
-						processedShots[newPayload.shotId] = true
-						
-						-- Отправляем пакет выстрела
-						local fireResult = oldNamecall(self, unpack(args))
-						
-						-- Моментально спавним пакет попадания, т.к. сервер думает, что пуля уже долетела
-						task.spawn(function()
-							if bulletHitRemote then
-								bulletHitRemote:FireServer({
-									shotId = newPayload.shotId,
-									pellet = 1,
-									part = targetPart,
-									pos = tPos
-								})
-							end
-						end)
-						
-						return fireResult
-					else
-						-- Легитная баллистика
-						local dist = (tPos - origin).Magnitude
-						local travelTime = dist / CombatConfig.BulletSpeed
-						local predictedPos = tPos + (targetPart.AssemblyLinearVelocity * travelTime)
+		local targetSize = Vector3.new(CombatConfig.HitboxSize, CombatConfig.HitboxSize, CombatConfig.HitboxSize)
 
-						if CombatConfig.AutoCompensate then
-							newPayload.dir = calculateTrajectory(origin, predictedPos, CombatConfig.BulletSpeed, CombatConfig.BulletGravity)
-						else
-							newPayload.dir = (predictedPos - origin).Unit
+		for _, entity in ipairs(getTargetEntities()) do
+			local pChar = entity.Model
+			for _, part in ipairs(pChar:GetDescendants()) do
+				if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+					local isDefaultLimb = (part.Name == "Head" or part.Name:find("Torso") or part.Name:find("Arm") or part.Name:find("Leg"))
+
+					local shouldExpand = false
+					if CombatConfig.HitboxPart == "All Parts" or CombatConfig.HitboxPart == part.Name then
+						shouldExpand = true
+					end
+
+					if not isDefaultLimb and CombatConfig.HitboxCustom then
+						shouldExpand = true
+					end
+
+					if shouldExpand then
+						if not originalPartSizes[part] then
+							originalPartSizes[part] = {
+								Size = part.Size,
+								Transparency = part.Transparency,
+								CanCollide = part.CanCollide,
+								Massless = part.Massless
+							}
 						end
-						
-						args[pIndex] = newPayload
-						return oldNamecall(self, unpack(args))
+
+						part.Size = targetSize
+						part.Transparency = CombatConfig.HitboxTrans
+						part.CanCollide = false
+						part.Massless = true
 					end
 				end
 			end
 		end
+	end)
 
-		return oldNamecall(self, unpack(args))
+	local oldIndex
+	oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
+		if self ~= mouse or checkcaller() or not CombatConfig.Enabled then
+			return oldIndex(self, key)
+		end
+
+		if key ~= "Hit" and key ~= "Target" then
+			return oldIndex(self, key)
+		end
+
+		if CombatConfig.AimMode == "Silent Aim" and targetPart and CombatConfig.Methods.Mouse then
+			if rollHitChance() then
+				if key == "Target" then
+					return targetPart
+				elseif key == "Hit" then
+					return targetPart.CFrame
+				end
+			end
+		end
+
+		return oldIndex(self, key)
+	end))
+
+	local oldNamecall
+	oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+		if isInternalRaycast or checkcaller() or not CombatConfig.Enabled then
+			return oldNamecall(self, ...)
+		end
+
+		local method = getnamecallmethod()
+		local args = {...}
+
+		if method == "FireServer" and CombatConfig.Methods.Network and CombatConfig.AimMode == "Silent Aim" and targetPart and rollHitChance() then
+			local pIndex = (type(args[1]) == "string" and type(args[2]) == "table") and 2 or 1
+			local payload = args[pIndex]
+			
+			if type(payload) == "table" then
+				local newPayload = {}
+				for k, v in pairs(payload) do newPayload[k] = v end
+				
+				local modified = false
+				local tPos = targetPart.Position
+				
+				if newPayload.charge ~= nil then
+					if CombatConfig.InstaHit then
+						newPayload.origin = tPos + Vector3.new(0, 2, 0)
+						newPayload.dir = Vector3.new(0, -1, 0)
+						newPayload.charge = 999999
+						modified = true
+					else
+						local charge = math.clamp(newPayload.charge, 0.15, 1)
+						local speed = 125 * charge + 95
+						local gravity = 50
+						local origin = newPayload.origin or currentCamera.CFrame.Position
+						
+						if CombatConfig.BowPrediction then
+							local dist = (tPos - origin).Magnitude
+							local t = dist / speed
+							
+							for i = 1, 2 do
+								local drop = 0.5 * gravity * (t * t)
+								local predictedPos = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, drop, 0)
+								t = (predictedPos - origin).Magnitude / speed
+							end
+							
+							local finalDrop = 0.5 * gravity * (t * t)
+							local finalTarget = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, finalDrop, 0)
+							newPayload.dir = (finalTarget - origin).Unit
+						else
+							newPayload.dir = (tPos - origin).Unit
+						end
+						modified = true
+					end
+				else
+					if CombatConfig.InstaHit then
+						if CombatConfig.InstaMethod == "Trust Client" then
+							if newPayload.pellet ~= nil or newPayload.part ~= nil then
+								newPayload.part = targetPart
+								newPayload.pos = tPos
+								newPayload.normal = Vector3.new(0, 1, 0)
+								modified = true
+							end
+							if newPayload.dir ~= nil and newPayload.origin ~= nil then
+								newPayload.dir = (tPos - newPayload.origin).Unit
+								modified = true
+							end
+							
+						elseif CombatConfig.InstaMethod == "Origin Spoof" then
+							if newPayload.dir ~= nil and newPayload.origin ~= nil then
+								newPayload.origin = tPos
+								newPayload.dir = Vector3.new(0, -1, 0)
+								modified = true
+							end
+							if newPayload.pellet ~= nil or newPayload.part ~= nil then
+								newPayload.part = targetPart
+								newPayload.pos = tPos
+								newPayload.normal = Vector3.new(0, 1, 0)
+								modified = true
+							end
+							
+						elseif CombatConfig.InstaMethod == "Speed Abuse" then
+							if newPayload.pellet ~= nil or newPayload.part ~= nil then
+								newPayload.part = targetPart
+								newPayload.pos = tPos
+								newPayload.normal = Vector3.new(0, 1, 0)
+								modified = true
+							end
+							if newPayload.dir ~= nil and newPayload.origin ~= nil then
+								newPayload.dir = (tPos - newPayload.origin).Unit
+								modified = true
+							end
+							
+						elseif CombatConfig.InstaMethod == "Skip Raycast" then
+							newPayload.t = 0
+							newPayload.time = 0
+							if newPayload.pellet ~= nil or newPayload.part ~= nil then
+								newPayload.part = targetPart
+								newPayload.pos = tPos
+								newPayload.normal = Vector3.new(0, 1, 0)
+							end
+							if newPayload.dir ~= nil and newPayload.origin ~= nil then
+								newPayload.dir = (tPos - newPayload.origin).Unit
+							end
+							modified = true
+						end
+					else
+						if newPayload.aiming ~= nil and newPayload.dir ~= nil and newPayload.origin ~= nil then
+							newPayload.dir = (tPos - newPayload.origin).Unit
+							modified = true
+						elseif newPayload.pellet ~= nil and newPayload.part ~= nil and newPayload.pos ~= nil then
+							newPayload.part = targetPart
+							newPayload.pos = tPos
+							newPayload.normal = Vector3.new(0, 1, 0)
+							modified = true
+						end
+					end
+				end
+				
+				if modified then
+					args[pIndex] = newPayload
+					return oldNamecall(self, unpack(args))
+				end
+			end
+			
+			return oldNamecall(self, ...)
+		end
+
+		if not (method == "Raycast" or method == "Spherecast" or method == "ScreenPointToRay" or method == "ViewportPointToRay" or method:find("FindPartOnRay")) then
+			return oldNamecall(self, ...)
+		end
+
+		if CombatConfig.AimMode ~= "Silent Aim" or not targetPart or not rollHitChance() then
+			return oldNamecall(self, ...)
+		end
+
+		local hitpart = targetPart
+		local hitpos = hitpart.Position
+
+		if method == "Raycast" and CombatConfig.Methods.Raycast then
+			local origin, direction, params = args[1], args[2], args[3]
+			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
+				if CombatConfig.InstaHit or CombatConfig.MagicBullet or CombatConfig.Wallbang then
+					local fakeParams = RaycastParams.new()
+					fakeParams.FilterType = Enum.RaycastFilterType.Include
+					fakeParams.FilterDescendantsInstances = {hitpart}
+					fakeParams.IgnoreWater = true
+
+					isInternalRaycast = true
+					local forcedResult = workspaceService:Raycast(hitpos + Vector3.new(0, 2, 0), Vector3.new(0, -5, 0), fakeParams)
+					isInternalRaycast = false
+
+					if forcedResult then
+						return forcedResult
+					end
+				end
+
+				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
+				return oldNamecall(self, origin, newDir, params)
+			end
+		end
+
+		if method == "Spherecast" and CombatConfig.Methods.Spherecast then
+			local origin, radius, direction, params = args[1], args[2], args[3], args[4]
+			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
+				if CombatConfig.InstaHit or CombatConfig.MagicBullet or CombatConfig.Wallbang then
+					local fakeParams = RaycastParams.new()
+					fakeParams.FilterType = Enum.RaycastFilterType.Include
+					fakeParams.FilterDescendantsInstances = {hitpart}
+					fakeParams.IgnoreWater = true
+
+					isInternalRaycast = true
+					local forcedResult = workspaceService:Raycast(hitpos + Vector3.new(0, 2, 0), Vector3.new(0, -5, 0), fakeParams)
+					isInternalRaycast = false
+
+					if forcedResult then
+						return forcedResult
+					end
+				end
+
+				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
+				return oldNamecall(self, origin, radius, newDir, params)
+			end
+		end
+
+		if (method == "ScreenPointToRay" and CombatConfig.Methods.ScreenPointToRay) or (method == "ViewportPointToRay" and CombatConfig.Methods.ViewportPointToRay) then
+			local ray = oldNamecall(self, ...)
+			local origin = ray.Origin
+			local direction = ray.Direction
+			local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
+
+			return Ray.new(origin, newDir)
+		end
+
+		if method:find("FindPartOnRay") and (CombatConfig.Methods[method] or CombatConfig.Methods.FindPartOnRay) then
+			local ray, ignoreList, terrainCellsAreCubes, ignoreWater = args[1], args[2], args[3], args[4]
+			if typeof(ray) == "Ray" then
+				local origin = ray.Origin
+				local direction = ray.Direction
+
+				if CombatConfig.InstaHit or CombatConfig.MagicBullet or CombatConfig.Wallbang then
+					return hitpart, hitpos, (origin - hitpos).Unit, hitpart.Material
+				end
+
+				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
+				return oldNamecall(self, Ray.new(origin, newDir), ignoreList, terrainCellsAreCubes, ignoreWater)
+			end
+		end
+
+		return oldNamecall(self, ...)
 	end))
 end
 
-print("hsdhsdhsdhsd")
+print("hello232323232")
 return Combat
