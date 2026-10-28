@@ -28,7 +28,7 @@ local CombatConfig = {
 	HitChance = 100,
 	Smoothness = 2,
 
-	Wallbang = false,
+	WallCheck = true,
 	ProjectionOverride = true,
 	MagicBullet = true,
 	BowPrediction = true, 
@@ -139,6 +139,29 @@ local function rollHitChance()
 	return math.random(1, 100) <= CombatConfig.HitChance
 end
 
+local function isTargetVisible(targetPart, targetModel)
+	if not CombatConfig.WallCheck then return true end
+	
+	local origin = currentCamera.CFrame.Position
+	local direction = targetPart.Position - origin
+	
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = {localPlayer.Character, currentCamera}
+	params.IgnoreWater = true
+	
+	local result = workspaceService:Raycast(origin, direction, params)
+	
+	if result and result.Instance then
+		if result.Instance:IsDescendantOf(targetModel) then
+			return true
+		end
+		return false
+	end
+	
+	return true
+end
+
 local function getClosestTarget()
 	local closestPart, closestTarget = nil, nil
 	local viewportSize = currentCamera.ViewportSize
@@ -159,9 +182,11 @@ local function getClosestTarget()
 
 		local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
 		if dist <= maxFovRadius then
-			maxFovRadius = dist
-			closestPart = part
-			closestTarget = entity.Player or entity.Model
+			if isTargetVisible(part, char) then
+				maxFovRadius = dist
+				closestPart = part
+				closestTarget = entity.Player or entity.Model
+			end
 		end
 	end
 
@@ -435,21 +460,6 @@ function Combat:Load()
 		if method == "Raycast" and CombatConfig.Methods.Raycast then
 			local origin, direction, params = args[1], args[2], args[3]
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-				if CombatConfig.InstaHit or CombatConfig.MagicBullet or CombatConfig.Wallbang then
-					local fakeParams = RaycastParams.new()
-					fakeParams.FilterType = Enum.RaycastFilterType.Include
-					fakeParams.FilterDescendantsInstances = {hitpart}
-					fakeParams.IgnoreWater = true
-
-					isInternalRaycast = true
-					local forcedResult = workspaceService:Raycast(hitpos + Vector3.new(0, 2, 0), Vector3.new(0, -5, 0), fakeParams)
-					isInternalRaycast = false
-
-					if forcedResult then
-						return forcedResult
-					end
-				end
-
 				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
 				return oldNamecall(self, origin, newDir, params)
 			end
@@ -458,21 +468,6 @@ function Combat:Load()
 		if method == "Spherecast" and CombatConfig.Methods.Spherecast then
 			local origin, radius, direction, params = args[1], args[2], args[3], args[4]
 			if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-				if CombatConfig.InstaHit or CombatConfig.MagicBullet or CombatConfig.Wallbang then
-					local fakeParams = RaycastParams.new()
-					fakeParams.FilterType = Enum.RaycastFilterType.Include
-					fakeParams.FilterDescendantsInstances = {hitpart}
-					fakeParams.IgnoreWater = true
-
-					isInternalRaycast = true
-					local forcedResult = workspaceService:Raycast(hitpos + Vector3.new(0, 2, 0), Vector3.new(0, -5, 0), fakeParams)
-					isInternalRaycast = false
-
-					if forcedResult then
-						return forcedResult
-					end
-				end
-
 				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
 				return oldNamecall(self, origin, radius, newDir, params)
 			end
@@ -492,10 +487,6 @@ function Combat:Load()
 			if typeof(ray) == "Ray" then
 				local origin = ray.Origin
 				local direction = ray.Direction
-
-				if CombatConfig.InstaHit or CombatConfig.MagicBullet or CombatConfig.Wallbang then
-					return hitpart, hitpos, (origin - hitpos).Unit, hitpart.Material
-				end
 
 				local newDir = CombatConfig.ProjectionOverride and (hitpos - origin) or (hitpos - origin).Unit * direction.Magnitude
 				return oldNamecall(self, Ray.new(origin, newDir), ignoreList, terrainCellsAreCubes, ignoreWater)
