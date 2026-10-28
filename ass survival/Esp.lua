@@ -357,8 +357,41 @@ local Arbuzi = {
 		Players = true,
 		Bots = {
 			Enabled = true,
-			CustomName = false,
-			Name = "Bot"
+			CustomColors = true,
+			Name = "Bot",
+			Boxes = {
+				Gradients = {
+					Top = Color3.fromRGB(255, 60, 60),
+					Bot = Color3.fromRGB(255, 60, 60)
+				},
+				["Box Glow"] = {
+					Top = Color3.fromRGB(255, 60, 60),
+					Bot = Color3.fromRGB(255, 60, 60)
+				},
+				Filled = {
+					Top = Color3.fromRGB(255, 60, 60),
+					Bot = Color3.fromRGB(255, 60, 60)
+				}
+			},
+			Bars = {
+				["Health Bar"] = {
+					Color = Color3.fromRGB(255, 60, 60)
+				}
+			},
+			Texts = {
+				Name = {
+					Color = Color3.fromRGB(255, 60, 60)
+				},
+				Distance = {
+					Color = Color3.fromRGB(255, 140, 140)
+				},
+				Weapon = {
+					Color = Color3.fromRGB(255, 60, 60)
+				},
+				State = {
+					Color = Color3.fromRGB(255, 60, 60)
+				}
+			}
 		},
 		Boxes = {
 			Enabled = true,
@@ -1082,6 +1115,11 @@ function Arbuzi:Update(target, data)
 		data.RootPart = rootPart
 	end
 
+	local isPlayer = playersService:GetPlayerFromCharacter(target) ~= nil
+	local isBot = not isPlayer
+	local useBotColors = isBot and config.Bots and config.Bots.CustomColors and config.Bots.Colors
+	local botColorConfig = useBotColors and config.Bots.Colors
+
 	if not humanoid or not humanoid.Parent then
 		humanoid = character:FindFirstChildOfClass("Humanoid")
 		data.Humanoid = humanoid
@@ -1170,10 +1208,11 @@ function Arbuzi:Update(target, data)
 	local textsCfg = config.Texts
 
 	if boxesCfg.Enabled then
+		local glowTop = (botColorConfig and botColorConfig.Boxes["Box Glow"].Top) or boxesCfg["Box Glow"].Top
+		local glowBot = (botColorConfig and botColorConfig.Boxes["Box Glow"].Bot) or boxesCfg["Box Glow"].Bot
+
 		if boxesCfg["Box Glow"].Enabled then
 			if objects.BoxGlow.ImageTransparency ~= 0 then objects.BoxGlow.ImageTransparency = 0 end
-			local glowTop = boxesCfg["Box Glow"].Top
-			local glowBot = boxesCfg["Box Glow"].Bot
 			if data.LastGlowTop ~= glowTop or data.LastGlowBot ~= glowBot then
 				objects.BoxGlowGradient.Color = ColorSequence.new(glowTop, glowBot)
 				data.LastGlowTop = glowTop
@@ -1193,8 +1232,8 @@ function Arbuzi:Update(target, data)
 		if not objects.BoxOutlineHolder.Visible then objects.BoxOutlineHolder.Visible = true end
 		if not objects.BoxInlineHolder.Visible then objects.BoxInlineHolder.Visible = true end
 
-		local gradTop = boxesCfg.Gradients.Top
-		local gradBot = boxesCfg.Gradients.Bot
+		local gradTop = (botColorConfig and botColorConfig.Boxes.Gradients.Top) or boxesCfg.Gradients.Top
+		local gradBot = (botColorConfig and botColorConfig.Boxes.Gradients.Bot) or boxesCfg.Gradients.Bot
 		if data.LastGradTop ~= gradTop or data.LastGradBot ~= gradBot then
 			objects.BoxInlineGradient.Color = ColorSequence.new(gradTop, gradBot)
 			data.LastGradTop = gradTop
@@ -1203,8 +1242,8 @@ function Arbuzi:Update(target, data)
 
 		if boxesCfg.Filled.Enabled then
 			if not objects.BoxFill.Visible then objects.BoxFill.Visible = true end
-			local fillTop = boxesCfg.Filled.Top
-			local fillBot = boxesCfg.Filled.Bot
+			local fillTop = (botColorConfig and botColorConfig.Boxes.Filled.Top) or boxesCfg.Filled.Top
+			local fillBot = (botColorConfig and botColorConfig.Boxes.Filled.Bot) or boxesCfg.Filled.Bot
 			local fillT1 = boxesCfg.Filled.Transparency[1]
 			local fillT2 = boxesCfg.Filled.Transparency[2]
 
@@ -1232,11 +1271,9 @@ function Arbuzi:Update(target, data)
 	if textsCfg.Name.Enabled then
 		if not objects.TargetName.Visible then objects.TargetName.Visible = true end
 		local playerObj = playersService:GetPlayerFromCharacter(target) or playersService:FindFirstChild(target.Name)
-		local displayName = target.Name
+		local displayName = playerObj and (playerObj.DisplayName or playerObj.Name) or target.Name
 
-		if playerObj then
-			displayName = playerObj.DisplayName or playerObj.Name
-		elseif config.Bots and config.Bots.CustomName and config.Bots.Name ~= "" then
+		if not playerObj and config.Bots and config.Bots.Name ~= "" then
 			displayName = config.Bots.Name
 		end
 
@@ -1244,7 +1281,8 @@ function Arbuzi:Update(target, data)
 			objects.TargetName.Text = displayName
 			data.LastDisplayName = displayName
 		end
-		local nameColor = textsCfg.Name.Color
+
+		local nameColor = (botColorConfig and botColorConfig.Texts.Name.Color) or textsCfg.Name.Color
 		if data.LastNameColor ~= nameColor then
 			objects.TargetName.TextColor3 = nameColor
 			data.LastNameColor = nameColor
@@ -1260,7 +1298,8 @@ function Arbuzi:Update(target, data)
 			objects.Distance.Text = stringFormat("%d st", dist)
 			data.LastDist = dist
 		end
-		local distColor = textsCfg.Distance.Color
+
+		local distColor = (botColorConfig and botColorConfig.Texts.Distance.Color) or textsCfg.Distance.Color
 		if data.LastDistColor ~= distColor then
 			objects.Distance.TextColor3 = distColor
 			data.LastDistColor = distColor
@@ -1283,7 +1322,7 @@ function Arbuzi:Update(target, data)
 			data.LastRatio = ratio
 		end
 
-		local barColor = healthCfg.Color
+		local barColor = (botColorConfig and botColorConfig.Bars["Health Bar"].Color) or healthCfg.Color
 		if data.LastHealthColor ~= barColor then
 			objects.HealthBarGradient.Color = ColorSequence.new(barColor)
 			data.LastHealthColor = barColor
@@ -1305,6 +1344,14 @@ function Arbuzi:Update(target, data)
 		if objects.LeftBarHolder.Visible then objects.LeftBarHolder.Visible = false end
 	end
 
+	local stateColor = (botColorConfig and botColorConfig.Texts.State.Color) or textsCfg.State.Color
+	if data.LastStateColor ~= stateColor then
+		objects.StateFlag.TextColor3 = stateColor
+		objects.WalkFlag.TextColor3 = stateColor
+		objects.JumpFlag.TextColor3 = stateColor
+		data.LastStateColor = stateColor
+	end
+
 	local currentWeapon, toolInst = resolveEquippedWeapon(character)
 	data.CurrentWeapon = currentWeapon
 
@@ -1320,7 +1367,7 @@ function Arbuzi:Update(target, data)
 				objects.Weapon.Text = currentWeapon
 				data.LastWeapon = currentWeapon
 			end
-			local weaponColor = weaponCfg.Color
+			local weaponColor = (botColorConfig and botColorConfig.Texts.Weapon.Color) or weaponCfg.Color
 			if data.LastWeaponColor ~= weaponColor then
 				objects.Weapon.TextColor3 = weaponColor
 				data.LastWeaponColor = weaponColor
