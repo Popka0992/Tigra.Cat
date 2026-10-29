@@ -1,4 +1,3 @@
--- Services.
 local cloneref = cloneref or function(o) return o end
 
 local playersService = cloneref(game:GetService("Players"))
@@ -6,23 +5,11 @@ local runService = cloneref(game:GetService("RunService"))
 local userInputService = cloneref(game:GetService("UserInputService"))
 local workspaceService = cloneref(game:GetService("Workspace"))
 
--- Constants.
-local TRACER_TEXTURES = {
-	["1"] = "rbxassetid://119094363918228",
-	["2"] = "rbxassetid://18722421816",
-	["3"] = "rbxassetid://18654087326",
-	["4"] = "rbxassetid://6045867277",
-	["5"] = "rbxassetid://135770390535538",
-	["6"] = "rbxassetid://97236022367376",
-	["7"] = "rbxassetid://6091329339"
-}
-
 local FILTER_TYPE = Enum.RaycastFilterType and (Enum.RaycastFilterType.Exclude or Enum.RaycastFilterType.Blacklist)
 
 local Combat = {}
 Combat.__index = Combat
 
--- State.
 local localPlayer = playersService.LocalPlayer
 local mouse = localPlayer:GetMouse()
 local currentCamera = workspaceService.CurrentCamera
@@ -31,7 +18,6 @@ local isInternalRaycast = false
 local aimKeyActive = false
 local targetPart = nil
 local targetPlayer = nil
-local lastPhysicalShotTick = 0
 local originalPartSizes = {}
 
 local CombatConfig = {
@@ -64,18 +50,6 @@ local CombatConfig = {
 	FOVColor = Color3.fromRGB(255, 255, 255),
 	FOVOutline = false,
 
-	Tracers = {
-		Enabled = true,
-		ReplaceProjectile = true,
-		SimulateFallback = true,
-		Texture = "1",
-		Color = Color3.fromRGB(255, 50, 50),
-		Width = 0.5,
-		Lifetime = 0.35,
-		SimSpeed = 350,
-		SimGravity = 25
-	},
-
 	Methods = {
 		Raycast = true,
 		Spherecast = true,
@@ -102,11 +76,6 @@ for _, name in ipairs(scannedPartsList) do
 end
 
 Combat.PartsList = scannedPartsList
-Combat.TracerTextures = TRACER_TEXTURES
-
-local tracerRaycastParams = RaycastParams.new()
-tracerRaycastParams.FilterType = FILTER_TYPE
-tracerRaycastParams.IgnoreWater = true
 
 local circleOutline = Drawing.new("Circle")
 circleOutline.Thickness = 3
@@ -121,188 +90,24 @@ circleInline.Filled = false
 circleInline.ZIndex = 2
 circleInline.Visible = false
 
-local function isWeldedToPlayer(part)
-	if not part then return false end
-	local char = localPlayer.Character
-	if char and part:IsDescendantOf(char) then return true end
-	if part:IsDescendantOf(currentCamera) then return true end
-
-	for _, joint in ipairs(part:GetJoints()) do
-		local connected = (joint.Part0 == part) and joint.Part1 or joint.Part0
-		if connected then
-			if (char and connected:IsDescendantOf(char)) or connected:IsDescendantOf(currentCamera) then
-				return true
-			end
-		end
-	end
-	return false
-end
-
-local function applyTrailToInstance(targetPart)
-	if targetPart:FindFirstChild("CustomTracerTrail") then return end
-
-	local tracerCfg = CombatConfig.Tracers
-	local att0 = Instance.new("Attachment")
-	att0.Name = "TracerAtt0"
-	att0.Position = Vector3.new(0, (tracerCfg.Width or 0.5) * 0.5, 0)
-	att0.Parent = targetPart
-
-	local att1 = Instance.new("Attachment")
-	att1.Name = "TracerAtt1"
-	att1.Position = Vector3.new(0, -(tracerCfg.Width or 0.5) * 0.5, 0)
-	att1.Parent = targetPart
-
-	local trail = Instance.new("Trail")
-	trail.Name = "CustomTracerTrail"
-	trail.Attachment0 = att0
-	trail.Attachment1 = att1
-	trail.Texture = TRACER_TEXTURES[tostring(tracerCfg.Texture)] or TRACER_TEXTURES["1"]
-	trail.Color = ColorSequence.new(tracerCfg.Color or Color3.fromRGB(255, 50, 50))
-	trail.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0),
-		NumberSequenceKeypoint.new(1, 1)
-	})
-	trail.Lifetime = tracerCfg.Lifetime or 0.35
-	trail.FaceCamera = true
-	trail.LightEmission = 1
-	trail.LightInfluence = 0
-	trail.Parent = targetPart
-end
-
-local function createFlyingTracer(startPos, endPos)
-	local tracerCfg = CombatConfig.Tracers
-	if not tracerCfg or not tracerCfg.Enabled then return end
-
-	local char = localPlayer.Character
-	if char then
-		tracerRaycastParams.FilterDescendantsInstances = {char, currentCamera}
-	end
-
-	local direction = (endPos - startPos).Unit
-	local speed = tracerCfg.SimSpeed or 350
-	local currentVelocity = direction * speed
-	local currentPosition = startPos
-	local gravVector = Vector3.new(0, tracerCfg.SimGravity or 25, 0)
-
-	local projectilePart = Instance.new("Part")
-	projectilePart.Size = Vector3.new(0.1, 0.1, 0.1)
-	projectilePart.Transparency = 1
-	projectilePart.CanCollide = false
-	projectilePart.CanQuery = false
-	projectilePart.CanTouch = false
-	projectilePart.Anchored = true
-	projectilePart.CFrame = CFrame.lookAt(startPos, endPos)
-	projectilePart.Parent = workspaceService.Terrain
-
-	applyTrailToInstance(projectilePart)
-
-	local connection
-	local startTime = os.clock()
-
-	connection = runService.RenderStepped:Connect(function(dt)
-		if os.clock() - startTime > 4 then
-			connection:Disconnect()
-			projectilePart:Destroy()
-			return
-		end
-
-		local nextPosition = currentPosition + (currentVelocity * dt)
-		currentVelocity = currentVelocity - (gravVector * dt)
-
-		local travelVector = nextPosition - currentPosition
-		local rayResult = workspaceService:Raycast(currentPosition, travelVector, tracerRaycastParams)
-
-		if rayResult then
-			connection:Disconnect()
-			projectilePart.CFrame = CFrame.lookAt(rayResult.Position, rayResult.Position + currentVelocity)
-			task.delay(tracerCfg.Lifetime or 0.35, function()
-				projectilePart:Destroy()
-			end)
-			return
-		end
-
-		currentPosition = nextPosition
-		projectilePart.CFrame = CFrame.lookAt(currentPosition, currentPosition + currentVelocity)
-	end)
-end
-
-local function hookProjectile(instance)
-	local tracerCfg = CombatConfig.Tracers
-	if not tracerCfg or not tracerCfg.Enabled then return end
-
-	task.defer(function()
-		if not instance or not instance.Parent then return end
-
-		local part = instance:IsA("BasePart") and instance or instance:FindFirstChildWhichIsA("BasePart")
-		if not part then return end
-
-		local char = localPlayer.Character
-		if isWeldedToPlayer(part) then return end
-
-		local camPos = currentCamera.CFrame.Position
-		local headPos = char and char:FindFirstChild("Head") and char.Head.Position or camPos
-		local originDist = math.min((part.Position - camPos).Magnitude, (part.Position - headPos).Magnitude)
-		if originDist > 30 then return end
-
-		local name = instance.Name:lower()
-		local isProjName = name:find("arrow") or name:find("bolt") or name:find("bullet") or name:find("proj") or name:find("ammo")
-
-		local startPos = part.Position
-		task.wait(0.02)
-
-		if not part or not part.Parent or isWeldedToPlayer(part) then return end
-
-		local vel = part.AssemblyLinearVelocity or part.Velocity
-		local speed = vel and vel.Magnitude or 0
-		local distMoved = (part.Position - startPos).Magnitude
-
-		if isProjName then
-			if speed < 40 and distMoved < 1.0 then
-				return
-			end
-		else
-			if speed < 70 or distMoved < 2.0 then
-				return
-			end
-		end
-
-		lastPhysicalShotTick = os.clock()
-
-		if tracerCfg.ReplaceProjectile then
-			if instance:IsA("BasePart") then
-				instance.Transparency = 1
-			end
-			for _, descendant in ipairs(instance:GetDescendants()) do
-				if descendant:IsA("BasePart") or descendant:IsA("Decal") or descendant:IsA("Texture") then
-					descendant.Transparency = 1
-				elseif descendant:IsA("Trail") or descendant:IsA("Beam") or descendant:IsA("ParticleEmitter") then
-					descendant.Enabled = false
-				end
-			end
-		end
-
-		applyTrailToInstance(part)
-	end)
-end
-
 local function getTargetEntities()
 	local entities = {}
 	local myChar = localPlayer.Character
 
-	for _, obj in ipairs(workspaceService:GetChildren()) do
-		if not obj:IsA("Model") or obj == myChar then continue end
+	local function processModel(obj, forceBot)
+		if not obj:IsA("Model") or obj == myChar then return end
 
 		local humanoid = obj:FindFirstChildOfClass("Humanoid")
 		local root = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart or obj:FindFirstChild("Torso") or obj:FindFirstChild("UpperTorso")
-		if not (humanoid and root) then continue end
-		if CombatConfig.DeadCheck and humanoid.Health <= 0 then continue end
+		if not (humanoid and root) then return end
+		if CombatConfig.DeadCheck and humanoid.Health <= 0 then return end
 
 		local player = playersService:GetPlayerFromCharacter(obj)
-		local isBot = (player == nil)
+		local isBot = forceBot or (player == nil)
 
-		if isBot and not CombatConfig.TargetBots then continue end
-		if not isBot and not CombatConfig.TargetPlayers then continue end
-		if not isBot and CombatConfig.TeamCheck and localPlayer.Team and player.Team == localPlayer.Team then continue end
+		if isBot and not CombatConfig.TargetBots then return end
+		if not isBot and not CombatConfig.TargetPlayers then return end
+		if not isBot and CombatConfig.TeamCheck and localPlayer.Team and player.Team == localPlayer.Team then return end
 
 		table.insert(entities, {
 			Model = obj,
@@ -311,6 +116,17 @@ local function getTargetEntities()
 			Humanoid = humanoid,
 			RootPart = root
 		})
+	end
+
+	for _, obj in ipairs(workspaceService:GetChildren()) do
+		local lowerName = obj.Name:lower()
+		if (obj:IsA("Folder") or obj:IsA("Model")) and lowerName == "npcs" then
+			for _, npc in ipairs(obj:GetChildren()) do
+				processModel(npc, true)
+			end
+		else
+			processModel(obj, false)
+		end
 	end
 
 	return entities
@@ -404,8 +220,6 @@ end
 
 function Combat:Load()
 	scanCharacterParts()
-
-	workspaceService.DescendantAdded:Connect(hookProjectile)
 
 	runService.RenderStepped:Connect(function()
 		currentCamera = workspaceService.CurrentCamera or currentCamera
@@ -534,23 +348,19 @@ function Combat:Load()
 			local payload = args[pIndex]
 
 			if type(payload) == "table" and (payload.charge ~= nil or payload.pellet ~= nil or payload.dir ~= nil or payload.aiming ~= nil) then
-				local origin = payload.origin or currentCamera.CFrame.Position
-				local tracerTarget = nil
-
 				if CombatConfig.Enabled and CombatConfig.AimMode == "Silent Aim" and targetPart and rollHitChance() then
 					local newPayload = {}
 					for k, v in pairs(payload) do newPayload[k] = v end
 
 					local modified = false
 					local tPos = targetPart.Position
+					local origin = newPayload.origin or currentCamera.CFrame.Position
 
 					if newPayload.charge ~= nil then
 						if CombatConfig.InstaHit then
 							newPayload.origin = tPos + Vector3.new(0, 2, 0)
 							newPayload.dir = Vector3.new(0, -1, 0)
 							newPayload.charge = 999999
-							origin = newPayload.origin
-							tracerTarget = tPos
 							modified = true
 						else
 							local charge = math.clamp(newPayload.charge, 0.15, 1)
@@ -570,10 +380,8 @@ function Combat:Load()
 								local finalDrop = 0.5 * gravity * (t * t)
 								local finalTarget = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, finalDrop, 0)
 								newPayload.dir = (finalTarget - origin).Unit
-								tracerTarget = finalTarget
 							else
 								newPayload.dir = (tPos - origin).Unit
-								tracerTarget = tPos
 							end
 							modified = true
 						end
@@ -590,7 +398,6 @@ function Combat:Load()
 									newPayload.dir = (tPos - newPayload.origin).Unit
 									modified = true
 								end
-								tracerTarget = tPos
 							elseif CombatConfig.InstaMethod == "Origin Spoof" then
 								if newPayload.dir ~= nil and newPayload.origin ~= nil then
 									newPayload.origin = tPos
@@ -603,8 +410,6 @@ function Combat:Load()
 									newPayload.normal = Vector3.new(0, 1, 0)
 									modified = true
 								end
-								origin = tPos
-								tracerTarget = tPos + Vector3.new(0, -5, 0)
 							elseif CombatConfig.InstaMethod == "Speed Abuse" then
 								if newPayload.pellet ~= nil or newPayload.part ~= nil then
 									newPayload.part = targetPart
@@ -616,7 +421,6 @@ function Combat:Load()
 									newPayload.dir = (tPos - newPayload.origin).Unit
 									modified = true
 								end
-								tracerTarget = tPos
 							elseif CombatConfig.InstaMethod == "Skip Raycast" then
 								newPayload.t = 0
 								newPayload.time = 0
@@ -628,19 +432,16 @@ function Combat:Load()
 								if newPayload.dir ~= nil and newPayload.origin ~= nil then
 									newPayload.dir = (tPos - newPayload.origin).Unit
 								end
-								tracerTarget = tPos
 								modified = true
 							end
 						else
 							if newPayload.aiming ~= nil and newPayload.dir ~= nil and newPayload.origin ~= nil then
 								newPayload.dir = (tPos - newPayload.origin).Unit
-								tracerTarget = tPos
 								modified = true
 							elseif newPayload.pellet ~= nil and newPayload.part ~= nil and newPayload.pos ~= nil then
 								newPayload.part = targetPart
 								newPayload.pos = tPos
 								newPayload.normal = Vector3.new(0, 1, 0)
-								tracerTarget = tPos
 								modified = true
 							end
 						end
@@ -648,22 +449,9 @@ function Combat:Load()
 
 					if modified then
 						args[pIndex] = newPayload
-						task.delay(0.06, function()
-							if os.clock() - lastPhysicalShotTick >= 0.055 and CombatConfig.Tracers.SimulateFallback then
-								createFlyingTracer(origin, tracerTarget or tPos)
-							end
-						end)
 						return oldNamecall(self, unpack(args))
 					end
 				end
-
-				local shotDir = payload.dir or (payload.pos and (payload.pos - origin).Unit) or currentCamera.CFrame.LookVector
-				local targetEnd = payload.pos or (origin + shotDir * 500)
-				task.delay(0.06, function()
-					if os.clock() - lastPhysicalShotTick >= 0.055 and CombatConfig.Tracers.SimulateFallback then
-						createFlyingTracer(origin, targetEnd)
-					end
-				end)
 			end
 
 			return oldNamecall(self, ...)
