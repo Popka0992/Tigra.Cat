@@ -1,7 +1,7 @@
 if not shared then
 	return warn("No shared, no script.")
 end
-.
+
 loadstring("getfenv().LPH_NO_VIRTUALIZE = function(...) return ... end")()
 getfenv().PP_SCRAMBLE_NUM = function(...) return ... end
 getfenv().PP_SCRAMBLE_STR = function(...) return ... end
