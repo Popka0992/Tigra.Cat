@@ -1,7 +1,9 @@
+-- Check for table that is shared between executions.
 if not shared then
 	return warn("No shared, no script.")
 end
 
+-- Initialize Luraph globals if they do not exist.
 loadstring("getfenv().LPH_NO_VIRTUALIZE = function(...) return ... end")()
 getfenv().PP_SCRAMBLE_NUM = function(...) return ... end
 getfenv().PP_SCRAMBLE_STR = function(...) return ... end
@@ -11,11 +13,12 @@ if shared.GunMods and shared.GunMods.Unload then
 	pcall(shared.GunMods.Unload, shared.GunMods)
 end
 
+---@module Features.Combat.GunMods
 local GunMods = {
 	Loaded = false,
 	Table = {
-		RecoilReduction = 0, 
-		SpreadReduction = 0, 
+		RecoilReduction = 0,
+		SpreadReduction = 0,
 		NoBulletDrop = false,
 		InstaADS = false,
 		InstaEquip = false,
@@ -26,6 +29,7 @@ local GunMods = {
 
 GunMods.__index = GunMods
 
+-- Constants.
 local SPREAD_PROPERTY_NAMES = {
 	"spread",
 	"cone",
@@ -39,19 +43,24 @@ local SPREAD_PROPERTY_NAMES = {
 	"hipcone"
 }
 
+-- Services.
 local cloneref = cloneref or function(instance) return instance end
 local replicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 local playersService = cloneref(game:GetService("Players"))
 
+-- State.
 local targetConfig = nil
 local targetKick = nil
 local originalConfig = {}
 local originalKick = {}
 local originalGuns = {}
 local originalSpreadEntries = {}
+local cachedSpreadTables = {}
 local characterConn = nil
 
-
+---Check whether a field name corresponds to spread or accuracy cone.
+---@param fieldName string
+---@return boolean
 local function isSpreadField(fieldName)
 	local lowerName = string.lower(fieldName)
 	for _, prop in ipairs(SPREAD_PROPERTY_NAMES) do
@@ -62,15 +71,18 @@ local function isSpreadField(fieldName)
 	return false
 end
 
-
-local function applySpreadTablePatch(tbl, factor, visited)
+---Cache all spread fields recursively.
+---@param tbl table
+---@param visited table?
+local function indexSpreadTable(tbl, visited)
 	visited = visited or {}
 	if visited[tbl] then return end
 	visited[tbl] = true
 
+	local hasSpread = false
 	for key, value in pairs(tbl) do
 		if typeof(value) == "table" then
-			applySpreadTablePatch(value, factor, visited)
+			indexSpreadTable(value, visited)
 		elseif typeof(value) == "number" and typeof(key) == "string" and isSpreadField(key) then
 			if not originalSpreadEntries[tbl] then
 				originalSpreadEntries[tbl] = {}
@@ -78,14 +90,30 @@ local function applySpreadTablePatch(tbl, factor, visited)
 			if originalSpreadEntries[tbl][key] == nil then
 				originalSpreadEntries[tbl][key] = value
 			end
-
-			rawset(tbl, key, originalSpreadEntries[tbl][key] * factor)
+			hasSpread = true
 		end
+	end
+
+	if hasSpread and not table.find(cachedSpreadTables, tbl) then
+		table.insert(cachedSpreadTables, tbl)
 	end
 end
 
----Locate target weapon configurations across memory.
+---Scan memory once on initialization.
 local function locateAndBackupTables()
+	table.clear(cachedSpreadTables)
+	table.clear(originalSpreadEntries)
+
+	local fustFolder = replicatedStorage:FindFirstChild("Fust")
+	if fustFolder and fustFolder:FindFirstChild("Items") then
+		setthreadidentity(2)
+		local success, itemsData = pcall(require, fustFolder.Items)
+		setthreadidentity(8)
+		if success and typeof(itemsData) == "table" then
+			indexSpreadTable(itemsData)
+		end
+	end
+
 	for _, item in ipairs(getgc(true)) do
 		if typeof(item) == "table" and not isreadonly(item) then
 			if not targetConfig and rawget(item, "RECOIL") and rawget(item, "RECOIL_CLIMB") and rawget(item, "ADS_SPREAD") then
@@ -163,19 +191,21 @@ local function locateAndBackupTables()
 				end
 			end
 
-			if targetConfig and targetKick then
-				break
+			for k, _ in pairs(item) do
+				if typeof(k) == "string" and isSpreadField(k) then
+					indexSpreadTable(item)
+					break
+				end
 			end
 		end
 	end
 end
 
+---Apply modifications without scanning memory.
 function GunMods:Apply()
 	local cfg = self.Table
-	if not targetConfig and not targetKick then
-		locateAndBackupTables()
-	end
 
+	-- 1. No Recoil
 	local recoilMult = 1 - math.clamp((cfg.RecoilReduction or 0) / 100, 0, 1)
 	if targetConfig then
 		rawset(targetConfig, "RECOIL_CLIMB", (originalConfig.RECOIL_CLIMB or 0) * recoilMult)
@@ -194,6 +224,7 @@ function GunMods:Apply()
 		end
 	end
 
+	-- 2. No Spread
 	local spreadMult = 1 - math.clamp((cfg.SpreadReduction or 0) / 100, 0, 1)
 	if targetConfig then
 		rawset(targetConfig, "MOVE_SPREAD", (originalConfig.MOVE_SPREAD or 0) * spreadMult)
@@ -202,27 +233,17 @@ function GunMods:Apply()
 		rawset(targetConfig, "VISUAL_BLOOM", (originalConfig.VISUAL_BLOOM or 0) * spreadMult)
 	end
 
-	local fustFolder = replicatedStorage:FindFirstChild("Fust")
-	if fustFolder and fustFolder:FindFirstChild("Items") then
-		setthreadidentity(2)
-		local success, itemsData = pcall(require, fustFolder.Items)
-		setthreadidentity(8)
-		if success and typeof(itemsData) == "table" then
-			applySpreadTablePatch(itemsData, spreadMult)
-		end
-	end
-
-	for _, item in ipairs(getgc(true)) do
-		if typeof(item) == "table" and not isreadonly(item) then
-			for k, _ in pairs(item) do
-				if typeof(k) == "string" and isSpreadField(k) then
-					applySpreadTablePatch(item, spreadMult)
-					break
-				end
+	for i = 1, #cachedSpreadTables do
+		local tbl = cachedSpreadTables[i]
+		local props = originalSpreadEntries[tbl]
+		if props then
+			for key, origValue in pairs(props) do
+				rawset(tbl, key, origValue * spreadMult)
 			end
 		end
 	end
 
+	-- 3. No Bullet Drop
 	if targetConfig and originalConfig.proj then
 		local projData = rawget(targetConfig, "PROJ")
 		if typeof(projData) == "table" then
@@ -237,6 +258,7 @@ function GunMods:Apply()
 		end
 	end
 
+	-- 4. Instant ADS
 	if targetConfig then
 		rawset(targetConfig, "ADS_TIME", cfg.InstaADS and 0 or originalConfig.ADS_TIME)
 		rawset(targetConfig, "ADS_OUT_TIME", cfg.InstaADS and 0 or originalConfig.ADS_OUT_TIME)
@@ -253,6 +275,7 @@ function GunMods:Apply()
 		end
 	end
 
+	-- 5. Instant Equip
 	if targetConfig then
 		rawset(targetConfig, "DRAW_BLOCK", cfg.InstaEquip and 0 or originalConfig.DRAW_BLOCK)
 		rawset(targetConfig, "HOLSTER_TIME", cfg.InstaEquip and 0 or originalConfig.HOLSTER_TIME)
@@ -261,6 +284,7 @@ function GunMods:Apply()
 		rawset(targetKick, "EQUIP_TIME", cfg.InstaEquip and 0 or originalKick.EQUIP_TIME)
 	end
 
+	-- 6. No Kick
 	if targetKick then
 		rawset(targetKick, "KICK_BACK", cfg.NoKick and 0 or originalKick.KICK_BACK)
 		rawset(targetKick, "KICK_PITCH", cfg.NoKick and 0 or originalKick.KICK_PITCH)
@@ -279,7 +303,7 @@ function GunMods:Apply()
 		end
 	end
 
-	-- 7. No Sway (Toggle)
+	-- 7. No Sway
 	if targetKick then
 		rawset(targetKick, "SWAY", cfg.NoSway and 0 or originalKick.SWAY)
 		rawset(targetKick, "SWAY_MAX", cfg.NoSway and 0 or originalKick.SWAY_MAX)
@@ -289,6 +313,8 @@ function GunMods:Apply()
 	end
 end
 
+---Initialize the GunMods module.
+---@return table
 function GunMods:Load()
 	if self.Loaded then return self end
 
@@ -307,10 +333,13 @@ function GunMods:Load()
 	return self
 end
 
+---Retrieve live configuration table.
+---@return table
 function GunMods:GetConfig()
 	return self.Table
 end
 
+---Restore original gun configurations.
 function GunMods:Unload()
 	self.Loaded = false
 
@@ -329,6 +358,8 @@ function GunMods:Unload()
 
 	self:Apply()
 
+	table.clear(cachedSpreadTables)
+	table.clear(originalSpreadEntries)
 	shared.GunMods = nil
 end
 
