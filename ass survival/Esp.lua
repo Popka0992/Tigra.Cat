@@ -356,11 +356,13 @@ local function matchOreType(modelName)
 	return nil
 end
 
-local function resolveNodePart(model)
+local function resolveEntityPart(model)
 	if model:IsA("BasePart") then
 		return model
 	end
 	return model:FindFirstChild("Rock")
+		or model:FindFirstChild("HumanoidRootPart")
+		or model:FindFirstChild("Torso")
 		or model.PrimaryPart
 		or model:FindFirstChildOfClass("MeshPart")
 		or model:FindFirstChildOfClass("BasePart")
@@ -371,8 +373,10 @@ local Arbuzi = {
 	Directory = "Esp",
 	Cache = {},
 	OreCache = {},
+	PickupCache = {},
+	AnimalCache = {},
 	Holder = nil,
-	OreHolder = nil,
+	WorldHolder = nil,
 	Threads = {},
 	PreRender = nil,
 	LastRenderTime = 0,
@@ -490,6 +494,18 @@ local Arbuzi = {
 				Color = Color3.fromRGB(205, 125, 75),
 				DisplayName = "Metal"
 			}
+		},
+		Pickups = {
+			Enabled = true,
+			MaxDistance = 1500,
+			ShowDistance = true,
+			Color = Color3.fromRGB(140, 240, 140)
+		},
+		Animals = {
+			Enabled = true,
+			MaxDistance = 2500,
+			ShowDistance = true,
+			Color = Color3.fromRGB(240, 180, 100)
 		}
 	}
 }
@@ -1137,26 +1153,23 @@ function Arbuzi:RemoveTarget(target)
 	self.Cache[target] = nil
 end
 
-function Arbuzi:AddOre(node)
-	if not node or self.OreCache[node] then return end
+function Arbuzi:AddWorldText(containerTable, instance, displayName)
+	if not instance or containerTable[instance] then return end
 
-	local oreType = matchOreType(node.Name)
-	if not oreType then return end
-
-	local part = resolveNodePart(node)
+	local part = resolveEntityPart(instance)
 	if not part then
 		local conn
-		conn = node.ChildAdded:Connect(function(child)
+		conn = instance.ChildAdded:Connect(function(child)
 			if child:IsA("BasePart") then
 				conn:Disconnect()
-				self:AddOre(node)
+				self:AddWorldText(containerTable, instance, displayName)
 			end
 		end)
 		return
 	end
 
 	local textLabel = self:CreateObjects("TextLabel", {
-		Parent = self.OreHolder,
+		Parent = self.WorldHolder,
 		FontFace = Arbuzi.SmallestPixel,
 		TextSize = 9,
 		TextColor3 = Color3.fromRGB(255, 255, 255),
@@ -1178,29 +1191,28 @@ function Arbuzi:AddOre(node)
 	})
 
 	local data = {
-		Node = node,
+		Instance = instance,
 		Part = part,
 		Position = part.Position,
-		OreType = oreType,
+		Name = displayName or instance.Name,
 		Label = textLabel,
-		LastText = "",
 		LastDist = -1,
 		LastX = -1,
 		LastY = -1,
 		Ancestry = nil
 	}
 
-	data.Ancestry = node.AncestryChanged:Connect(function(_, parent)
+	data.Ancestry = instance.AncestryChanged:Connect(function(_, parent)
 		if not parent then
-			self:RemoveOre(node)
+			self:RemoveWorldText(containerTable, instance)
 		end
 	end)
 
-	self.OreCache[node] = data
+	containerTable[instance] = data
 end
 
-function Arbuzi:RemoveOre(node)
-	local data = self.OreCache[node]
+function Arbuzi:RemoveWorldText(containerTable, instance)
+	local data = containerTable[instance]
 	if not data then return end
 
 	if data.Ancestry then
@@ -1213,7 +1225,36 @@ function Arbuzi:RemoveOre(node)
 		data.Label = nil
 	end
 
-	self.OreCache[node] = nil
+	containerTable[instance] = nil
+end
+
+function Arbuzi:AddOre(node)
+	local oreType = matchOreType(node.Name)
+	if not oreType then return end
+	self:AddWorldText(self.OreCache, node, oreType)
+	if self.OreCache[node] then
+		self.OreCache[node].OreType = oreType
+	end
+end
+
+function Arbuzi:RemoveOre(node)
+	self:RemoveWorldText(self.OreCache, node)
+end
+
+function Arbuzi:AddPickup(pickup)
+	self:AddWorldText(self.PickupCache, pickup, pickup.Name)
+end
+
+function Arbuzi:RemovePickup(pickup)
+	self:RemoveWorldText(self.PickupCache, pickup)
+end
+
+function Arbuzi:AddAnimal(animal)
+	self:AddWorldText(self.AnimalCache, animal, animal.Name)
+end
+
+function Arbuzi:RemoveAnimal(animal)
+	self:RemoveWorldText(self.AnimalCache, animal)
 end
 
 function Arbuzi:Update(target, data)
@@ -1563,7 +1604,7 @@ function Arbuzi:Load()
 		IgnoreGuiInset = true
 	})
 
-	self.OreHolder = self:CreateObjects("Frame", {
+	self.WorldHolder = self:CreateObjects("Frame", {
 		Parent = self.Holder,
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
@@ -1598,58 +1639,46 @@ function Arbuzi:Load()
 		end
 	end)
 
-	local function bindNpcContainer(folder)
-		if not folder then return end
-		for _, child in ipairs(folder:GetChildren()) do
-			if child:IsA("Model") and not self.Cache[child] then
-				self:AddTarget(child)
+	local function bindFolder(folderName, callback)
+		local folder = workspaceService:FindFirstChild(folderName)
+		if folder then
+			for _, child in ipairs(folder:GetChildren()) do
+				callback(child)
 			end
+			self.Threads[folderName .. "_ChildAdded"] = folder.ChildAdded:Connect(callback)
 		end
-		local connKey = "NpcAdded_" .. folder.Name
-		self.Threads[connKey] = folder.ChildAdded:Connect(function(child)
-			if config.Bots and config.Bots.Enabled and child:IsA("Model") then
-				self:AddTarget(child)
-			end
-		end)
 	end
 
-	local npcsFolder = workspaceService:FindFirstChild("Npcs")
-	if npcsFolder then
-		bindNpcContainer(npcsFolder)
-	end
-
-	self.Threads["WorkspaceNpcFolderAdded"] = workspaceService.ChildAdded:Connect(function(child)
-		if child.Name == "Npcs" and child:IsA("Folder") then
-			bindNpcContainer(child)
+	bindFolder("Npcs", function(child)
+		if config.Bots and config.Bots.Enabled and child:IsA("Model") then
+			self:AddTarget(child)
 		end
 	end)
 
-	local function scanOres(container)
-		if not container then return end
-		for _, child in ipairs(container:GetChildren()) do
-			if matchOreType(child.Name) then
-				self:AddOre(child)
-			end
-		end
-	end
+	bindFolder("Nodes", function(child)
+		self:AddOre(child)
+	end)
 
-	scanOres(workspaceService)
-	local nodesFolder = workspaceService:FindFirstChild("Nodes") or workspaceService:FindFirstChild("nodes")
-	if nodesFolder then
-		scanOres(nodesFolder)
-		self.Threads["NodesFolderChildAdded"] = nodesFolder.ChildAdded:Connect(function(child)
-			self:AddOre(child)
-		end)
-	end
+	bindFolder("Pickups", function(child)
+		self:AddPickup(child)
+	end)
 
-	self.Threads["WorkspaceOreWatcher"] = workspaceService.ChildAdded:Connect(function(child)
-		if matchOreType(child.Name) then
+	bindFolder("Animals", function(child)
+		self:AddAnimal(child)
+	end)
+
+	self.Threads["WorkspaceChildAdded"] = workspaceService.ChildAdded:Connect(function(child)
+		local lowerName = child.Name:lower()
+		if lowerName == "npcs" and child:IsA("Folder") then
+			bindFolder(child.Name, function(npc) self:AddTarget(npc) end)
+		elseif lowerName == "nodes" and child:IsA("Folder") then
+			bindFolder(child.Name, function(node) self:AddOre(node) end)
+		elseif lowerName == "pickups" and child:IsA("Folder") then
+			bindFolder(child.Name, function(pickup) self:AddPickup(pickup) end)
+		elseif lowerName == "animals" and child:IsA("Folder") then
+			bindFolder(child.Name, function(animal) self:AddAnimal(animal) end)
+		elseif matchOreType(child.Name) then
 			self:AddOre(child)
-		elseif child.Name:lower() == "nodes" and child:IsA("Folder") then
-			scanOres(child)
-			self.Threads["DynamicNodesChildAdded"] = child.ChildAdded:Connect(function(nodeChild)
-				self:AddOre(nodeChild)
-			end)
 		end
 	end)
 
@@ -1679,7 +1708,7 @@ function Arbuzi:Load()
 					DisplayOrder = 10,
 					IgnoreGuiInset = true
 				})
-				self.OreHolder = self:CreateObjects("Frame", {
+				self.WorldHolder = self:CreateObjects("Frame", {
 					Parent = self.Holder,
 					BackgroundTransparency = 1,
 					BorderSizePixel = 0,
@@ -1693,7 +1722,17 @@ function Arbuzi:Load()
 				end
 				for _, data in pairs(self.OreCache) do
 					if typeof(data) == "table" and data.Label then
-						data.Label.Parent = self.OreHolder
+						data.Label.Parent = self.WorldHolder
+					end
+				end
+				for _, data in pairs(self.PickupCache) do
+					if typeof(data) == "table" and data.Label then
+						data.Label.Parent = self.WorldHolder
+					end
+				end
+				for _, data in pairs(self.AnimalCache) do
+					if typeof(data) == "table" and data.Label then
+						data.Label.Parent = self.WorldHolder
 					end
 				end
 			end
@@ -1702,24 +1741,13 @@ function Arbuzi:Load()
 				for _, player in ipairs(playersService:GetPlayers()) do
 					if player == localPlayer then continue end
 					local char = player.Character or workspaceService:FindFirstChild(player.Name)
-					if char and char:IsA("Model") and char.Parent then
-						if not self.Cache[char] then
-							self:AddTarget(char)
-						end
+					if char and char:IsA("Model") and char.Parent and not self.Cache[char] then
+						self:AddTarget(char)
 					end
 				end
 			end
 
 			if config.Bots and config.Bots.Enabled then
-				local currentNpcFolder = workspaceService:FindFirstChild("Npcs")
-				if currentNpcFolder then
-					for _, model in ipairs(currentNpcFolder:GetChildren()) do
-						if model:IsA("Model") and not self.Cache[model] then
-							self:AddTarget(model)
-						end
-					end
-				end
-
 				for _, model in ipairs(workspaceService:GetChildren()) do
 					if model:IsA("Model") and model ~= localPlayer.Character and not self.Cache[model] then
 						local hum = model:FindFirstChildOfClass("Humanoid")
@@ -1741,6 +1769,18 @@ function Arbuzi:Load()
 					self:RemoveOre(node)
 				end
 			end
+
+			for pickup in pairs(self.PickupCache) do
+				if typeof(pickup) ~= "Instance" or not pickup.Parent or not pickup:IsDescendantOf(workspaceService) then
+					self:RemovePickup(pickup)
+				end
+			end
+
+			for animal in pairs(self.AnimalCache) do
+				if typeof(animal) ~= "Instance" or not animal.Parent or not animal:IsDescendantOf(workspaceService) then
+					self:RemoveAnimal(animal)
+				end
+			end
 		end
 	end)
 
@@ -1752,6 +1792,16 @@ function Arbuzi:Load()
 				end
 			end
 			for _, data in pairs(self.OreCache) do
+				if typeof(data) == "table" and data.Label and data.Label.Visible then
+					data.Label.Visible = false
+				end
+			end
+			for _, data in pairs(self.PickupCache) do
+				if typeof(data) == "table" and data.Label and data.Label.Visible then
+					data.Label.Visible = false
+				end
+			end
+			for _, data in pairs(self.AnimalCache) do
 				if typeof(data) == "table" and data.Label and data.Label.Visible then
 					data.Label.Visible = false
 				end
@@ -1786,6 +1836,7 @@ function Arbuzi:Load()
 			end
 		end
 
+		-- ORES
 		local oreCfg = config.Ores
 		if oreCfg and oreCfg.Enabled then
 			local maxDist = oreCfg.MaxDistance or 2500
@@ -1794,25 +1845,19 @@ function Arbuzi:Load()
 			for _, data in pairs(self.OreCache) do
 				local typeCfg = oreCfg[data.OreType]
 				if not typeCfg or not typeCfg.Enabled then
-					if data.Label.Visible then
-						data.Label.Visible = false
-					end
+					if data.Label.Visible then data.Label.Visible = false end
 					continue
 				end
 
 				local dist = (cameraPosition - data.Position).Magnitude
 				if dist > maxDist then
-					if data.Label.Visible then
-						data.Label.Visible = false
-					end
+					if data.Label.Visible then data.Label.Visible = false end
 					continue
 				end
 
 				local screenPos, onScreen = camera:WorldToViewportPoint(data.Position)
 				if not onScreen or screenPos.Z <= 0 then
-					if data.Label.Visible then
-						data.Label.Visible = false
-					end
+					if data.Label.Visible then data.Label.Visible = false end
 					continue
 				end
 
@@ -1839,15 +1884,125 @@ function Arbuzi:Load()
 					data.Label.TextColor3 = typeCfg.Color
 				end
 
-				if not data.Label.Visible then
-					data.Label.Visible = true
-				end
+				if not data.Label.Visible then data.Label.Visible = true end
 			end
 		else
 			for _, data in pairs(self.OreCache) do
-				if data.Label and data.Label.Visible then
-					data.Label.Visible = false
+				if data.Label and data.Label.Visible then data.Label.Visible = false end
+			end
+		end
+
+		-- PICKUPS
+		local pickupCfg = config.Pickups
+		if pickupCfg and pickupCfg.Enabled then
+			local maxDist = pickupCfg.MaxDistance or 1500
+			local showDist = pickupCfg.ShowDistance
+			local color = pickupCfg.Color
+
+			for _, data in pairs(self.PickupCache) do
+				local dist = (cameraPosition - data.Position).Magnitude
+				if dist > maxDist then
+					if data.Label.Visible then data.Label.Visible = false end
+					continue
 				end
+
+				local screenPos, onScreen = camera:WorldToViewportPoint(data.Position)
+				if not onScreen or screenPos.Z <= 0 then
+					if data.Label.Visible then data.Label.Visible = false end
+					continue
+				end
+
+				local posX = mathFloor(screenPos.X)
+				local posY = mathFloor(screenPos.Y)
+				local flooredDist = mathFloor(dist)
+
+				if data.LastX ~= posX or data.LastY ~= posY then
+					data.Label.Position = udim2FromOffset(posX, posY)
+					data.LastX = posX
+					data.LastY = posY
+				end
+
+				if data.LastDist ~= flooredDist then
+					if showDist then
+						data.Label.Text = stringFormat("%s [%d st]", data.Name, flooredDist)
+					else
+						data.Label.Text = data.Name
+					end
+					data.LastDist = flooredDist
+				end
+
+				if data.Label.TextColor3 ~= color then
+					data.Label.TextColor3 = color
+				end
+
+				if not data.Label.Visible then data.Label.Visible = true end
+			end
+		else
+			for _, data in pairs(self.PickupCache) do
+				if data.Label and data.Label.Visible then data.Label.Visible = false end
+			end
+		end
+
+		-- ANIMALS
+		local animalCfg = config.Animals
+		if animalCfg and animalCfg.Enabled then
+			local maxDist = animalCfg.MaxDistance or 2500
+			local showDist = animalCfg.ShowDistance
+			local color = animalCfg.Color
+
+			for _, data in pairs(self.AnimalCache) do
+				local part = data.Part
+				if not part or not part.Parent then
+					part = resolveEntityPart(data.Instance)
+					data.Part = part
+				end
+
+				if not part then
+					if data.Label.Visible then data.Label.Visible = false end
+					continue
+				end
+
+				local worldPos = part.Position
+				local dist = (cameraPosition - worldPos).Magnitude
+				if dist > maxDist then
+					if data.Label.Visible then data.Label.Visible = false end
+					continue
+				end
+
+				local screenPos, onScreen = camera:WorldToViewportPoint(worldPos)
+				if not onScreen or screenPos.Z <= 0 then
+					if data.Label.Visible then data.Label.Visible = false end
+					continue
+				end
+
+				local posX = mathFloor(screenPos.X)
+				local posY = mathFloor(screenPos.Y)
+				local flooredDist = mathFloor(dist)
+
+				if data.LastX ~= posX or data.LastY ~= posY then
+					data.Label.Position = udim2FromOffset(posX, posY)
+					data.LastX = posX
+					data.LastY = posY
+				end
+
+				if data.LastDist ~= flooredDist then
+					if showDist then
+						data.Label.Text = stringFormat("%s [%d st]", data.Name, flooredDist)
+					else
+						data.Label.Text = data.Name
+					end
+					data.LastDist = flooredDist
+				end
+
+				if data.Label.TextColor3 ~= color then
+					data.Label.TextColor3 = color
+				end
+
+				if not data.Label.Visible then data.Label.Visible = true end
+			end
+		else
+			for _, data in pairs(self.AnimalCache) do
+				if data.Label and data.Label.Visible then data.Label.Visible = false end
 			end
 		end
 	end)
@@ -1877,6 +2032,14 @@ function Arbuzi:Unload()
 		self:RemoveOre(node)
 	end
 
+	for pickup in pairs(self.PickupCache) do
+		self:RemovePickup(pickup)
+	end
+
+	for animal in pairs(self.AnimalCache) do
+		self:RemoveAnimal(animal)
+	end
+
 	for _, conn in pairs(self.Threads) do
 		if typeof(conn) == "thread" then
 			task.cancel(conn)
@@ -1893,6 +2056,8 @@ function Arbuzi:Unload()
 
 	tableClear(self.Cache)
 	tableClear(self.OreCache)
+	tableClear(self.PickupCache)
+	tableClear(self.AnimalCache)
 	shared.Arbuzi = nil
 end
 
