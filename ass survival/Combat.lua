@@ -1,13 +1,27 @@
+-- Services.
 local cloneref = cloneref or function(o) return o end
 
 local playersService = cloneref(game:GetService("Players"))
 local runService = cloneref(game:GetService("RunService"))
 local userInputService = cloneref(game:GetService("UserInputService"))
 local workspaceService = cloneref(game:GetService("Workspace"))
+local tweenService = cloneref(game:GetService("TweenService"))
+
+-- Constants.
+local TRACER_TEXTURES = {
+	["1"] = "rbxassetid://119094363918228",
+	["2"] = "rbxassetid://18722421816",
+	["3"] = "rbxassetid://18654087326",
+	["4"] = "rbxassetid://6045867277",
+	["5"] = "rbxassetid://135770390535538",
+	["6"] = "rbxassetid://97236022367376",
+	["7"] = "rbxassetid://6091329339"
+}
 
 local Combat = {}
 Combat.__index = Combat
 
+-- State.
 local localPlayer = playersService.LocalPlayer
 local mouse = localPlayer:GetMouse()
 local currentCamera = workspaceService.CurrentCamera
@@ -48,6 +62,14 @@ local CombatConfig = {
 	FOVColor = Color3.fromRGB(255, 255, 255),
 	FOVOutline = false,
 
+	Tracers = {
+		Enabled = true,
+		Texture = "1",
+		Color = Color3.fromRGB(255, 255, 255),
+		Width = 0.5,
+		Duration = 0.6
+	},
+
 	Methods = {
 		Raycast = true,
 		Spherecast = true,
@@ -74,6 +96,7 @@ for _, name in ipairs(scannedPartsList) do
 end
 
 Combat.PartsList = scannedPartsList
+Combat.TracerTextures = TRACER_TEXTURES
 
 local circleOutline = Drawing.new("Circle")
 circleOutline.Thickness = 3
@@ -87,6 +110,58 @@ circleInline.Thickness = 1
 circleInline.Filled = false
 circleInline.ZIndex = 2
 circleInline.Visible = false
+
+---Spawn visual bullet beam tracer between two points in 3D world.
+---@param origin Vector3
+---@param targetPos Vector3
+local function spawnBulletTracer(origin, targetPos)
+	local tracerCfg = CombatConfig.Tracers
+	if not tracerCfg or not tracerCfg.Enabled then return end
+
+	local terrain = workspaceService.Terrain
+	if not terrain then return end
+
+	local textureId = TRACER_TEXTURES[tostring(tracerCfg.Texture)] or TRACER_TEXTURES["1"]
+
+	local attach0 = Instance.new("Attachment")
+	attach0.WorldPosition = origin
+	attach0.Parent = terrain
+
+	local attach1 = Instance.new("Attachment")
+	attach1.WorldPosition = targetPos
+	attach1.Parent = terrain
+
+	local beam = Instance.new("Beam")
+	beam.Texture = textureId
+	beam.TextureSpeed = 0
+	beam.TextureMode = Enum.TextureMode.Wrap
+	beam.TextureLength = 4
+	beam.FaceCamera = true
+	beam.Segments = 1
+	beam.LightEmission = 1
+	beam.LightInfluence = 0
+	beam.Width0 = tracerCfg.Width or 0.5
+	beam.Width1 = tracerCfg.Width or 0.5
+	beam.Color = ColorSequence.new(tracerCfg.Color or Color3.fromRGB(255, 255, 255))
+	beam.Transparency = NumberSequence.new(0)
+	beam.Attachment0 = attach0
+	beam.Attachment1 = attach1
+	beam.Parent = terrain
+
+	task.spawn(function()
+		local duration = tracerCfg.Duration or 0.6
+		local elapsed = 0
+		while elapsed < duration do
+			local dt = task.wait()
+			elapsed = elapsed + dt
+			local alpha = math.clamp(elapsed / duration, 0, 1)
+			beam.Transparency = NumberSequence.new(alpha)
+		end
+		beam:Destroy()
+		attach0:Destroy()
+		attach1:Destroy()
+	end)
+end
 
 local function getTargetEntities()
 	local entities = {}
@@ -139,11 +214,11 @@ local function rollHitChance()
 	return math.random(1, 100) <= CombatConfig.HitChance
 end
 
-local function isTargetVisible(targetPart, targetModel)
+local function isTargetVisible(target, targetModel)
 	if not CombatConfig.WallCheck then return true end
 	
 	local origin = currentCamera.CFrame.Position
-	local direction = targetPart.Position - origin
+	local direction = target.Position - origin
 	
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
@@ -162,10 +237,10 @@ local function isTargetVisible(targetPart, targetModel)
 	return true
 end
 
+---Find the closest eligible target inside the FOV pixel radius.
 local function getClosestTarget()
 	local closestPart, closestTarget = nil, nil
-	local viewportSize = currentCamera.ViewportSize
-	local maxFovRadius = (viewportSize.X * (CombatConfig.FOV / currentCamera.FieldOfView)) / 2
+	local maxFovRadius = CombatConfig.FOV
 	local mousePos = userInputService:GetMouseLocation()
 	local camPos = currentCamera.CFrame.Position
 
@@ -213,15 +288,15 @@ function Combat:Load()
 		currentCamera = workspaceService.CurrentCamera or currentCamera
 
 		local mpos = userInputService:GetMouseLocation()
-		local radius = (currentCamera.ViewportSize.X * (CombatConfig.FOV / currentCamera.FieldOfView)) / 2
+		local fovRadius = CombatConfig.FOV
 
 		circleInline.Position = mpos
-		circleInline.Radius = radius
+		circleInline.Radius = fovRadius
 		circleInline.Color = CombatConfig.FOVColor
 		circleInline.Visible = CombatConfig.Enabled and CombatConfig.ShowFOV
 
 		circleOutline.Position = mpos
-		circleOutline.Radius = radius
+		circleOutline.Radius = fovRadius
 		circleOutline.Visible = CombatConfig.Enabled and CombatConfig.ShowFOV and CombatConfig.FOVOutline
 
 		if CombatConfig.Enabled then
@@ -324,125 +399,147 @@ function Combat:Load()
 
 	local oldNamecall
 	oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-		if isInternalRaycast or checkcaller() or not CombatConfig.Enabled then
+		if isInternalRaycast or checkcaller() then
 			return oldNamecall(self, ...)
 		end
 
 		local method = getnamecallmethod()
 		local args = {...}
 
-		if method == "FireServer" and CombatConfig.Methods.Network and CombatConfig.AimMode == "Silent Aim" and targetPart and rollHitChance() then
+		if method == "FireServer" and CombatConfig.Methods.Network then
 			local pIndex = (type(args[1]) == "string" and type(args[2]) == "table") and 2 or 1
 			local payload = args[pIndex]
-			
-			if type(payload) == "table" then
-				local newPayload = {}
-				for k, v in pairs(payload) do newPayload[k] = v end
-				
-				local modified = false
-				local tPos = targetPart.Position
-				
-				if newPayload.charge ~= nil then
-					if CombatConfig.InstaHit then
-						newPayload.origin = tPos + Vector3.new(0, 2, 0)
-						newPayload.dir = Vector3.new(0, -1, 0)
-						newPayload.charge = 999999
-						modified = true
-					else
-						local charge = math.clamp(newPayload.charge, 0.15, 1)
-						local speed = 125 * charge + 95
-						local gravity = 50
-						local origin = newPayload.origin or currentCamera.CFrame.Position
-						
-						if CombatConfig.BowPrediction then
-							local dist = (tPos - origin).Magnitude
-							local t = dist / speed
-							
-							for i = 1, 2 do
-								local drop = 0.5 * gravity * (t * t)
-								local predictedPos = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, drop, 0)
-								t = (predictedPos - origin).Magnitude / speed
-							end
-							
-							local finalDrop = 0.5 * gravity * (t * t)
-							local finalTarget = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, finalDrop, 0)
-							newPayload.dir = (finalTarget - origin).Unit
+
+			if type(payload) == "table" and (payload.charge ~= nil or payload.pellet ~= nil or payload.dir ~= nil or payload.aiming ~= nil) then
+				local origin = payload.origin or currentCamera.CFrame.Position
+				local tracerTarget = nil
+
+				if CombatConfig.Enabled and CombatConfig.AimMode == "Silent Aim" and targetPart and rollHitChance() then
+					local newPayload = {}
+					for k, v in pairs(payload) do newPayload[k] = v end
+
+					local modified = false
+					local tPos = targetPart.Position
+
+					if newPayload.charge ~= nil then
+						if CombatConfig.InstaHit then
+							newPayload.origin = tPos + Vector3.new(0, 2, 0)
+							newPayload.dir = Vector3.new(0, -1, 0)
+							newPayload.charge = 999999
+							origin = newPayload.origin
+							tracerTarget = tPos
+							modified = true
 						else
-							newPayload.dir = (tPos - origin).Unit
-						end
-						modified = true
-					end
-				else
-					if CombatConfig.InstaHit then
-						if CombatConfig.InstaMethod == "Trust Client" then
-							if newPayload.pellet ~= nil or newPayload.part ~= nil then
-								newPayload.part = targetPart
-								newPayload.pos = tPos
-								newPayload.normal = Vector3.new(0, 1, 0)
-								modified = true
-							end
-							if newPayload.dir ~= nil and newPayload.origin ~= nil then
-								newPayload.dir = (tPos - newPayload.origin).Unit
-								modified = true
-							end
-							
-						elseif CombatConfig.InstaMethod == "Origin Spoof" then
-							if newPayload.dir ~= nil and newPayload.origin ~= nil then
-								newPayload.origin = tPos
-								newPayload.dir = Vector3.new(0, -1, 0)
-								modified = true
-							end
-							if newPayload.pellet ~= nil or newPayload.part ~= nil then
-								newPayload.part = targetPart
-								newPayload.pos = tPos
-								newPayload.normal = Vector3.new(0, 1, 0)
-								modified = true
-							end
-							
-						elseif CombatConfig.InstaMethod == "Speed Abuse" then
-							if newPayload.pellet ~= nil or newPayload.part ~= nil then
-								newPayload.part = targetPart
-								newPayload.pos = tPos
-								newPayload.normal = Vector3.new(0, 1, 0)
-								modified = true
-							end
-							if newPayload.dir ~= nil and newPayload.origin ~= nil then
-								newPayload.dir = (tPos - newPayload.origin).Unit
-								modified = true
-							end
-							
-						elseif CombatConfig.InstaMethod == "Skip Raycast" then
-							newPayload.t = 0
-							newPayload.time = 0
-							if newPayload.pellet ~= nil or newPayload.part ~= nil then
-								newPayload.part = targetPart
-								newPayload.pos = tPos
-								newPayload.normal = Vector3.new(0, 1, 0)
-							end
-							if newPayload.dir ~= nil and newPayload.origin ~= nil then
-								newPayload.dir = (tPos - newPayload.origin).Unit
+							local charge = math.clamp(newPayload.charge, 0.15, 1)
+							local speed = 125 * charge + 95
+							local gravity = 50
+
+							if CombatConfig.BowPrediction then
+								local dist = (tPos - origin).Magnitude
+								local t = dist / speed
+
+								for i = 1, 2 do
+									local drop = 0.5 * gravity * (t * t)
+									local predictedPos = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, drop, 0)
+									t = (predictedPos - origin).Magnitude / speed
+								end
+
+								local finalDrop = 0.5 * gravity * (t * t)
+								local finalTarget = tPos + (targetPart.AssemblyLinearVelocity * t) + Vector3.new(0, finalDrop, 0)
+								newPayload.dir = (finalTarget - origin).Unit
+								tracerTarget = finalTarget
+							else
+								newPayload.dir = (tPos - origin).Unit
+								tracerTarget = tPos
 							end
 							modified = true
 						end
 					else
-						if newPayload.aiming ~= nil and newPayload.dir ~= nil and newPayload.origin ~= nil then
-							newPayload.dir = (tPos - newPayload.origin).Unit
-							modified = true
-						elseif newPayload.pellet ~= nil and newPayload.part ~= nil and newPayload.pos ~= nil then
-							newPayload.part = targetPart
-							newPayload.pos = tPos
-							newPayload.normal = Vector3.new(0, 1, 0)
-							modified = true
+						if CombatConfig.InstaHit then
+							if CombatConfig.InstaMethod == "Trust Client" then
+								if newPayload.pellet ~= nil or newPayload.part ~= nil then
+									newPayload.part = targetPart
+									newPayload.pos = tPos
+									newPayload.normal = Vector3.new(0, 1, 0)
+									modified = true
+								end
+								if newPayload.dir ~= nil and newPayload.origin ~= nil then
+									newPayload.dir = (tPos - newPayload.origin).Unit
+									modified = true
+								end
+								tracerTarget = tPos
+							elseif CombatConfig.InstaMethod == "Origin Spoof" then
+								if newPayload.dir ~= nil and newPayload.origin ~= nil then
+									newPayload.origin = tPos
+									newPayload.dir = Vector3.new(0, -1, 0)
+									modified = true
+								end
+								if newPayload.pellet ~= nil or newPayload.part ~= nil then
+									newPayload.part = targetPart
+									newPayload.pos = tPos
+									newPayload.normal = Vector3.new(0, 1, 0)
+									modified = true
+								end
+								origin = tPos
+								tracerTarget = tPos + Vector3.new(0, -5, 0)
+							elseif CombatConfig.InstaMethod == "Speed Abuse" then
+								if newPayload.pellet ~= nil or newPayload.part ~= nil then
+									newPayload.part = targetPart
+									newPayload.pos = tPos
+									newPayload.normal = Vector3.new(0, 1, 0)
+									modified = true
+								end
+								if newPayload.dir ~= nil and newPayload.origin ~= nil then
+									newPayload.dir = (tPos - newPayload.origin).Unit
+									modified = true
+								end
+								tracerTarget = tPos
+							elseif CombatConfig.InstaMethod == "Skip Raycast" then
+								newPayload.t = 0
+								newPayload.time = 0
+								if newPayload.pellet ~= nil or newPayload.part ~= nil then
+									newPayload.part = targetPart
+									newPayload.pos = tPos
+									newPayload.normal = Vector3.new(0, 1, 0)
+								end
+								if newPayload.dir ~= nil and newPayload.origin ~= nil then
+									newPayload.dir = (tPos - newPayload.origin).Unit
+								end
+								tracerTarget = tPos
+								modified = true
+							end
+						else
+							if newPayload.aiming ~= nil and newPayload.dir ~= nil and newPayload.origin ~= nil then
+								newPayload.dir = (tPos - newPayload.origin).Unit
+								tracerTarget = tPos
+								modified = true
+							elseif newPayload.pellet ~= nil and newPayload.part ~= nil and newPayload.pos ~= nil then
+								newPayload.part = targetPart
+								newPayload.pos = tPos
+								newPayload.normal = Vector3.new(0, 1, 0)
+								tracerTarget = tPos
+								modified = true
+							end
 						end
 					end
+
+					if modified then
+						args[pIndex] = newPayload
+						spawnBulletTracer(origin, tracerTarget or tPos)
+						return oldNamecall(self, unpack(args))
+					end
 				end
-				
-				if modified then
-					args[pIndex] = newPayload
-					return oldNamecall(self, unpack(args))
-				end
+
+				-- Fallback tracer for non-silent shots.
+				local shotDir = payload.dir or (payload.pos and (payload.pos - origin).Unit) or currentCamera.CFrame.LookVector
+				local targetEnd = payload.pos or (origin + shotDir * 500)
+				spawnBulletTracer(origin, targetEnd)
 			end
-			
+
+			return oldNamecall(self, ...)
+		end
+
+		if not CombatConfig.Enabled then
 			return oldNamecall(self, ...)
 		end
 
@@ -497,5 +594,4 @@ function Combat:Load()
 	end))
 end
 
-print("hello232323232")
 return Combat
