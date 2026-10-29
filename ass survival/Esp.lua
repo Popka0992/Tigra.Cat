@@ -1,9 +1,7 @@
--- Check for table that is shared between executions.
 if not shared then
 	return warn("No shared, no script.")
 end
 
--- Initialize Luraph globals if they do not exist.
 loadstring("getfenv().LPH_NO_VIRTUALIZE = function(...) return ... end")()
 getfenv().PP_SCRAMBLE_NUM = function(...) return ... end
 getfenv().PP_SCRAMBLE_STR = function(...) return ... end
@@ -13,7 +11,6 @@ if shared.Arbuzi and shared.Arbuzi.Unload then
 	pcall(shared.Arbuzi.Unload, shared.Arbuzi)
 end
 
--- Services.
 local cloneref = cloneref or function(instance) return instance end
 local workspaceService = cloneref(game:GetService("Workspace"))
 local playersService = cloneref(game:GetService("Players"))
@@ -22,7 +19,7 @@ local replicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 local httpService = cloneref(game:GetService("HttpService"))
 local coreGui = cloneref(game:GetService("CoreGui"))
 
-local httpRequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+local httpRequest = request or (syn and syn.request) or (http and http.request) or http_request
 local localPlayer = playersService.LocalPlayer
 local camera = workspaceService.CurrentCamera
 
@@ -368,6 +365,19 @@ local function resolveEntityPart(model)
 		or model:FindFirstChildOfClass("BasePart")
 end
 
+local function isItemAllowed(filter, itemName)
+	if not filter then return true end
+	if filter[itemName] ~= nil then
+		return filter[itemName] == true
+	end
+	for k, v in pairs(filter) do
+		if v == itemName or k == itemName then
+			return true
+		end
+	end
+	return false
+end
+
 local Arbuzi = {
 	Loaded = false,
 	Directory = "Esp",
@@ -499,7 +509,21 @@ local Arbuzi = {
 			Enabled = true,
 			MaxDistance = 1500,
 			ShowDistance = true,
-			Color = Color3.fromRGB(140, 240, 140)
+			Color = Color3.fromRGB(140, 240, 140),
+			Filter = {
+				["WoodPile"] = true,
+				["SulfurOrePile"] = true,
+				["StoneOrePile"] = true,
+				["MetalOrePile"] = true,
+				["Pumpkin"] = true,
+				["PotatoPlant"] = true,
+				["Mushroom"] = true,
+				["Hemp"] = true,
+				["Corn"] = true,
+				["CarrotPlant"] = true,
+				["BerryBush"] = true,
+				["ApplyPile"] = true
+			}
 		},
 		Animals = {
 			Enabled = true,
@@ -1898,8 +1922,14 @@ function Arbuzi:Load()
 			local maxDist = pickupCfg.MaxDistance or 1500
 			local showDist = pickupCfg.ShowDistance
 			local color = pickupCfg.Color
+			local filter = pickupCfg.Filter
 
 			for _, data in pairs(self.PickupCache) do
+				if filter and not isItemAllowed(filter, data.Name) then
+					if data.Label.Visible then data.Label.Visible = false end
+					continue
+				end
+
 				local dist = (cameraPosition - data.Position).Magnitude
 				if dist > maxDist then
 					if data.Label.Visible then data.Label.Visible = false end
