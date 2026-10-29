@@ -1,7 +1,9 @@
+-- Check for table that is shared between executions.
 if not shared then
 	return warn("No shared, no script.")
 end
 
+-- Initialize Luraph globals if they do not exist.
 loadstring("getfenv().LPH_NO_VIRTUALIZE = function(...) return ... end")()
 getfenv().PP_SCRAMBLE_NUM = function(...) return ... end
 getfenv().PP_SCRAMBLE_STR = function(...) return ... end
@@ -11,18 +13,19 @@ if shared.Arbuzi and shared.Arbuzi.Unload then
 	pcall(shared.Arbuzi.Unload, shared.Arbuzi)
 end
 
+-- Services.
 local cloneref = cloneref or function(instance) return instance end
 local workspaceService = cloneref(game:GetService("Workspace"))
 local playersService = cloneref(game:GetService("Players"))
 local runService = cloneref(game:GetService("RunService"))
-local replicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 local httpService = cloneref(game:GetService("HttpService"))
 local coreGui = cloneref(game:GetService("CoreGui"))
 
-local httpRequest = request or (syn and syn.request) or (http and http.request) or http_request
-local localPlayer = playersService.LocalPlayer
-local camera = workspaceService.CurrentCamera
+-- Constants.
+local LOCAL_PLAYER = playersService.LocalPlayer
+local HTTP_REQUEST = request or (syn and syn.request) or (http and http.request) or http_request
 
+-- Fast library references.
 local newVector3 = Vector3.new
 local newVector2 = Vector2.new
 local newUDim = UDim.new
@@ -30,7 +33,6 @@ local newUDim2 = UDim2.new
 local udim2FromOffset = UDim2.fromOffset
 local numSeq = NumberSequence.new
 local numKey = NumberSequenceKeypoint.new
-
 local stringFormat = string.format
 local tableClear = table.clear
 local mathFloor = math.floor
@@ -38,7 +40,10 @@ local mathClamp = math.clamp
 local mathAbs = math.abs
 local mathTan = math.tan
 local mathRad = math.rad
+local osClock = os.clock
 
+-- Shared calculation state.
+local camera = workspaceService.CurrentCamera
 local zeroVector3 = newVector3(0, 0, 0)
 local cameraPosition = newVector3(0, 0, 0)
 local cachedFocalLength = 0
@@ -46,8 +51,8 @@ local viewPortY = 0
 
 local weaponMeshMap = {}
 local toolSignatures = {}
-local weaponViewportCache = {}
 local toolViewportCache = {}
+local weaponViewportCache = {}
 local meshToWeapon = {}
 
 local function normalizeName(name)
@@ -180,7 +185,7 @@ local function buildWeaponViewport(tool)
 		newVector3(hx, -hy, hz),
 		newVector3(-hx, -hy, hz),
 		newVector3(hx, hy, -hz),
-		newVector3(-hx, hy, -hz),
+		newVector3(-hx, -hy, -hz),
 		newVector3(hx, -hy, -hz),
 		newVector3(-hx, -hy, -hz)
 	}
@@ -331,9 +336,7 @@ local function updateCameraCache()
 end
 
 local function getGuiParent()
-	local success, result = pcall(function()
-		return gethui()
-	end)
+	local success, result = pcall(gethui)
 	if success and result then
 		return result
 	end
@@ -540,7 +543,7 @@ local config = Arbuzi.Table
 local Fonts = {}
 do
 	local function fetchSource(url)
-		local response = httpRequest({ Url = url, Method = "GET" })
+		local response = HTTP_REQUEST({ Url = url, Method = "GET" })
 		return response and response.Body or ""
 	end
 
@@ -1091,7 +1094,7 @@ end
 
 function Arbuzi:AddTarget(target)
 	if not target or not target:IsA("Model") then return end
-	if target == localPlayer.Character or (localPlayer and target.Name == localPlayer.Name) then return end
+	if target == LOCAL_PLAYER.Character or (LOCAL_PLAYER and target.Name == LOCAL_PLAYER.Name) then return end
 	if self.Cache[target] then return end
 
 	self.Cache[target] = "pending"
@@ -1113,6 +1116,8 @@ function Arbuzi:AddTarget(target)
 			MaxHealth = 100,
 			Alive = true,
 			CurrentWeapon = "none",
+			ToolInstance = nil,
+			WeaponDirty = true,
 			WalkActive = false,
 			JumpActive = false,
 			LastW = nil,
@@ -1146,6 +1151,15 @@ function Arbuzi:AddTarget(target)
 
 		self:InitEsp(data)
 		self.Cache[target] = data
+
+		-- Cache equipped weapon via listeners rather than polling every frame.
+		data.Conns.ChildAdded = target.ChildAdded:Connect(function()
+			data.WeaponDirty = true
+		end)
+
+		data.Conns.ChildRemoved = target.ChildRemoved:Connect(function()
+			data.WeaponDirty = true
+		end)
 
 		data.Conns.Ancestry = target.AncestryChanged:Connect(function(_, parent)
 			if not parent then
@@ -1541,8 +1555,15 @@ function Arbuzi:Update(target, data)
 		data.LastStateColor = stateColor
 	end
 
-	local currentWeapon, toolInst = resolveEquippedWeapon(character)
-	data.CurrentWeapon = currentWeapon
+	if data.WeaponDirty then
+		local currentWeapon, toolInst = resolveEquippedWeapon(character)
+		data.CurrentWeapon = currentWeapon
+		data.ToolInstance = toolInst
+		data.WeaponDirty = false
+	end
+
+	local currentWeapon = data.CurrentWeapon
+	local toolInst = data.ToolInstance
 
 	local iconCfg = textsCfg.WeaponIcon
 	local hasValidWeapon = currentWeapon ~= "none" and currentWeapon ~= "Worldmodel"
@@ -1637,7 +1658,7 @@ function Arbuzi:Load()
 	})
 
 	local function bindPlayer(player)
-		if player == localPlayer then return end
+		if player == LOCAL_PLAYER then return end
 
 		if player.Character then
 			self:AddTarget(player.Character)
@@ -1706,11 +1727,11 @@ function Arbuzi:Load()
 		end
 	end)
 
-	self.Threads["LocalPlayerRespawn"] = localPlayer.CharacterAdded:Connect(function()
+	self.Threads["LocalPlayerRespawn"] = LOCAL_PLAYER.CharacterAdded:Connect(function()
 		task.defer(function()
 			updateCameraCache()
 			for _, player in ipairs(playersService:GetPlayers()) do
-				if player ~= localPlayer then
+				if player ~= LOCAL_PLAYER then
 					local char = player.Character or workspaceService:FindFirstChild(player.Name)
 					if char and char:IsA("Model") and not self.Cache[char] then
 						self:AddTarget(char)
@@ -1722,7 +1743,7 @@ function Arbuzi:Load()
 
 	self.Threads["WatchdogScanner"] = task.spawn(function()
 		while self.Loaded do
-			task.wait(1.5)
+			task.wait(2.5)
 
 			if not self.Holder or not self.Holder.Parent then
 				self.Holder = self:CreateObjects("ScreenGui", {
@@ -1763,21 +1784,10 @@ function Arbuzi:Load()
 
 			if config.Players then
 				for _, player in ipairs(playersService:GetPlayers()) do
-					if player == localPlayer then continue end
+					if player == LOCAL_PLAYER then continue end
 					local char = player.Character or workspaceService:FindFirstChild(player.Name)
 					if char and char:IsA("Model") and char.Parent and not self.Cache[char] then
 						self:AddTarget(char)
-					end
-				end
-			end
-
-			if config.Bots and config.Bots.Enabled then
-				for _, model in ipairs(workspaceService:GetChildren()) do
-					if model:IsA("Model") and model ~= localPlayer.Character and not self.Cache[model] then
-						local hum = model:FindFirstChildOfClass("Humanoid")
-						if hum and not playersService:GetPlayerFromCharacter(model) then
-							self:AddTarget(model)
-						end
 					end
 				end
 			end
@@ -1834,7 +1844,7 @@ function Arbuzi:Load()
 		end
 
 		if config.LimitFPS and config.LimitFPS > 0 then
-			local now = tick()
+			local now = osClock()
 			if now - self.LastRenderTime < (1 / config.LimitFPS) then
 				return
 			end
@@ -1864,6 +1874,7 @@ function Arbuzi:Load()
 		local oreCfg = config.Ores
 		if oreCfg and oreCfg.Enabled then
 			local maxDist = oreCfg.MaxDistance or 2500
+			local maxDistSq = maxDist * maxDist
 			local showDist = oreCfg.ShowDistance
 
 			for _, data in pairs(self.OreCache) do
@@ -1873,8 +1884,9 @@ function Arbuzi:Load()
 					continue
 				end
 
-				local dist = (cameraPosition - data.Position).Magnitude
-				if dist > maxDist then
+				local offset = cameraPosition - data.Position
+				local distSq = offset.X * offset.X + offset.Y * offset.Y + offset.Z * offset.Z
+				if distSq > maxDistSq then
 					if data.Label.Visible then data.Label.Visible = false end
 					continue
 				end
@@ -1887,7 +1899,7 @@ function Arbuzi:Load()
 
 				local posX = mathFloor(screenPos.X)
 				local posY = mathFloor(screenPos.Y)
-				local flooredDist = mathFloor(dist)
+				local flooredDist = mathFloor(distSq ^ 0.5)
 
 				if data.LastX ~= posX or data.LastY ~= posY then
 					data.Label.Position = udim2FromOffset(posX, posY)
@@ -1896,11 +1908,7 @@ function Arbuzi:Load()
 				end
 
 				if data.LastDist ~= flooredDist then
-					if showDist then
-						data.Label.Text = stringFormat("%s [%d st]", typeCfg.DisplayName or data.OreType, flooredDist)
-					else
-						data.Label.Text = typeCfg.DisplayName or data.OreType
-					end
+					data.Label.Text = showDist and stringFormat("%s [%d st]", typeCfg.DisplayName or data.OreType, flooredDist) or (typeCfg.DisplayName or data.OreType)
 					data.LastDist = flooredDist
 				end
 
@@ -1920,6 +1928,7 @@ function Arbuzi:Load()
 		local pickupCfg = config.Pickups
 		if pickupCfg and pickupCfg.Enabled then
 			local maxDist = pickupCfg.MaxDistance or 1500
+			local maxDistSq = maxDist * maxDist
 			local showDist = pickupCfg.ShowDistance
 			local color = pickupCfg.Color
 			local filter = pickupCfg.Filter
@@ -1930,8 +1939,9 @@ function Arbuzi:Load()
 					continue
 				end
 
-				local dist = (cameraPosition - data.Position).Magnitude
-				if dist > maxDist then
+				local offset = cameraPosition - data.Position
+				local distSq = offset.X * offset.X + offset.Y * offset.Y + offset.Z * offset.Z
+				if distSq > maxDistSq then
 					if data.Label.Visible then data.Label.Visible = false end
 					continue
 				end
@@ -1944,7 +1954,7 @@ function Arbuzi:Load()
 
 				local posX = mathFloor(screenPos.X)
 				local posY = mathFloor(screenPos.Y)
-				local flooredDist = mathFloor(dist)
+				local flooredDist = mathFloor(distSq ^ 0.5)
 
 				if data.LastX ~= posX or data.LastY ~= posY then
 					data.Label.Position = udim2FromOffset(posX, posY)
@@ -1953,11 +1963,7 @@ function Arbuzi:Load()
 				end
 
 				if data.LastDist ~= flooredDist then
-					if showDist then
-						data.Label.Text = stringFormat("%s [%d st]", data.Name, flooredDist)
-					else
-						data.Label.Text = data.Name
-					end
+					data.Label.Text = showDist and stringFormat("%s [%d st]", data.Name, flooredDist) or data.Name
 					data.LastDist = flooredDist
 				end
 
@@ -1977,6 +1983,7 @@ function Arbuzi:Load()
 		local animalCfg = config.Animals
 		if animalCfg and animalCfg.Enabled then
 			local maxDist = animalCfg.MaxDistance or 2500
+			local maxDistSq = maxDist * maxDist
 			local showDist = animalCfg.ShowDistance
 			local color = animalCfg.Color
 
@@ -1993,8 +2000,9 @@ function Arbuzi:Load()
 				end
 
 				local worldPos = part.Position
-				local dist = (cameraPosition - worldPos).Magnitude
-				if dist > maxDist then
+				local offset = cameraPosition - worldPos
+				local distSq = offset.X * offset.X + offset.Y * offset.Y + offset.Z * offset.Z
+				if distSq > maxDistSq then
 					if data.Label.Visible then data.Label.Visible = false end
 					continue
 				end
@@ -2007,7 +2015,7 @@ function Arbuzi:Load()
 
 				local posX = mathFloor(screenPos.X)
 				local posY = mathFloor(screenPos.Y)
-				local flooredDist = mathFloor(dist)
+				local flooredDist = mathFloor(distSq ^ 0.5)
 
 				if data.LastX ~= posX or data.LastY ~= posY then
 					data.Label.Position = udim2FromOffset(posX, posY)
@@ -2016,11 +2024,7 @@ function Arbuzi:Load()
 				end
 
 				if data.LastDist ~= flooredDist then
-					if showDist then
-						data.Label.Text = stringFormat("%s [%d st]", data.Name, flooredDist)
-					else
-						data.Label.Text = data.Name
-					end
+					data.Label.Text = showDist and stringFormat("%s [%d st]", data.Name, flooredDist) or data.Name
 					data.LastDist = flooredDist
 				end
 
