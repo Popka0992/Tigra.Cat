@@ -343,11 +343,36 @@ local function getGuiParent()
 	return coreGui
 end
 
+local function matchOreType(modelName)
+	if not modelName or typeof(modelName) ~= "string" then return nil end
+	local lower = modelName:lower()
+	if lower:find("stone") then
+		return "Stone"
+	elseif lower:find("sulfur") then
+		return "Sulfur"
+	elseif lower:find("metal") or lower:find("iron") then
+		return "Metal"
+	end
+	return nil
+end
+
+local function resolveNodePart(model)
+	if model:IsA("BasePart") then
+		return model
+	end
+	return model:FindFirstChild("Rock")
+		or model.PrimaryPart
+		or model:FindFirstChildOfClass("MeshPart")
+		or model:FindFirstChildOfClass("BasePart")
+end
+
 local Arbuzi = {
 	Loaded = false,
 	Directory = "Esp",
 	Cache = {},
+	OreCache = {},
 	Holder = nil,
+	OreHolder = nil,
 	Threads = {},
 	PreRender = nil,
 	LastRenderTime = 0,
@@ -444,6 +469,26 @@ local Arbuzi = {
 			State = {
 				Enabled = true,
 				Color = Color3.fromRGB(255, 255, 255)
+			}
+		},
+		Ores = {
+			Enabled = true,
+			MaxDistance = 2500,
+			ShowDistance = true,
+			Stone = {
+				Enabled = true,
+				Color = Color3.fromRGB(190, 190, 190),
+				DisplayName = "Stone"
+			},
+			Sulfur = {
+				Enabled = true,
+				Color = Color3.fromRGB(245, 220, 60),
+				DisplayName = "Sulfur"
+			},
+			Metal = {
+				Enabled = true,
+				Color = Color3.fromRGB(205, 125, 75),
+				DisplayName = "Metal"
 			}
 		}
 	}
@@ -1092,6 +1137,85 @@ function Arbuzi:RemoveTarget(target)
 	self.Cache[target] = nil
 end
 
+function Arbuzi:AddOre(node)
+	if not node or self.OreCache[node] then return end
+
+	local oreType = matchOreType(node.Name)
+	if not oreType then return end
+
+	local part = resolveNodePart(node)
+	if not part then
+		local conn
+		conn = node.ChildAdded:Connect(function(child)
+			if child:IsA("BasePart") then
+				conn:Disconnect()
+				self:AddOre(node)
+			end
+		end)
+		return
+	end
+
+	local textLabel = self:CreateObjects("TextLabel", {
+		Parent = self.OreHolder,
+		FontFace = Arbuzi.SmallestPixel,
+		TextSize = 9,
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		Text = "",
+		TextXAlignment = Enum.TextXAlignment.Center,
+		AnchorPoint = newVector2(0.5, 0.5),
+		Position = newUDim2(0, 0, 0, 0),
+		BorderSizePixel = 0,
+		Visible = false,
+		BackgroundTransparency = 1,
+		AutomaticSize = Enum.AutomaticSize.XY,
+		ZIndex = 4
+	})
+
+	self:CreateObjects("UIStroke", {
+		Parent = textLabel,
+		Color = Color3.fromRGB(0, 0, 0),
+		LineJoinMode = Enum.LineJoinMode.Miter
+	})
+
+	local data = {
+		Node = node,
+		Part = part,
+		Position = part.Position,
+		OreType = oreType,
+		Label = textLabel,
+		LastText = "",
+		LastDist = -1,
+		LastX = -1,
+		LastY = -1,
+		Ancestry = nil
+	}
+
+	data.Ancestry = node.AncestryChanged:Connect(function(_, parent)
+		if not parent then
+			self:RemoveOre(node)
+		end
+	end)
+
+	self.OreCache[node] = data
+end
+
+function Arbuzi:RemoveOre(node)
+	local data = self.OreCache[node]
+	if not data then return end
+
+	if data.Ancestry then
+		data.Ancestry:Disconnect()
+		data.Ancestry = nil
+	end
+
+	if data.Label then
+		data.Label:Destroy()
+		data.Label = nil
+	end
+
+	self.OreCache[node] = nil
+end
+
 function Arbuzi:Update(target, data)
 	local objects = data.Objects
 	local character = data.Character
@@ -1439,6 +1563,14 @@ function Arbuzi:Load()
 		IgnoreGuiInset = true
 	})
 
+	self.OreHolder = self:CreateObjects("Frame", {
+		Parent = self.Holder,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = newUDim2(1, 0, 1, 0),
+		Position = newUDim2(0, 0, 0, 0)
+	})
+
 	local function bindPlayer(player)
 		if player == localPlayer then return end
 
@@ -1492,6 +1624,35 @@ function Arbuzi:Load()
 		end
 	end)
 
+	local function scanOres(container)
+		if not container then return end
+		for _, child in ipairs(container:GetChildren()) do
+			if matchOreType(child.Name) then
+				self:AddOre(child)
+			end
+		end
+	end
+
+	scanOres(workspaceService)
+	local nodesFolder = workspaceService:FindFirstChild("Nodes") or workspaceService:FindFirstChild("nodes")
+	if nodesFolder then
+		scanOres(nodesFolder)
+		self.Threads["NodesFolderChildAdded"] = nodesFolder.ChildAdded:Connect(function(child)
+			self:AddOre(child)
+		end)
+	end
+
+	self.Threads["WorkspaceOreWatcher"] = workspaceService.ChildAdded:Connect(function(child)
+		if matchOreType(child.Name) then
+			self:AddOre(child)
+		elseif child.Name:lower() == "nodes" and child:IsA("Folder") then
+			scanOres(child)
+			self.Threads["DynamicNodesChildAdded"] = child.ChildAdded:Connect(function(nodeChild)
+				self:AddOre(nodeChild)
+			end)
+		end
+	end)
+
 	self.Threads["LocalPlayerRespawn"] = localPlayer.CharacterAdded:Connect(function()
 		task.defer(function()
 			updateCameraCache()
@@ -1508,7 +1669,7 @@ function Arbuzi:Load()
 
 	self.Threads["WatchdogScanner"] = task.spawn(function()
 		while self.Loaded do
-			task.wait(1.2)
+			task.wait(1.5)
 
 			if not self.Holder or not self.Holder.Parent then
 				self.Holder = self:CreateObjects("ScreenGui", {
@@ -1518,9 +1679,21 @@ function Arbuzi:Load()
 					DisplayOrder = 10,
 					IgnoreGuiInset = true
 				})
+				self.OreHolder = self:CreateObjects("Frame", {
+					Parent = self.Holder,
+					BackgroundTransparency = 1,
+					BorderSizePixel = 0,
+					Size = newUDim2(1, 0, 1, 0),
+					Position = newUDim2(0, 0, 0, 0)
+				})
 				for _, data in pairs(self.Cache) do
 					if typeof(data) == "table" and data.Objects and data.Objects.TargetHolder then
 						data.Objects.TargetHolder.Parent = self.Holder
+					end
+				end
+				for _, data in pairs(self.OreCache) do
+					if typeof(data) == "table" and data.Label then
+						data.Label.Parent = self.OreHolder
 					end
 				end
 			end
@@ -1562,6 +1735,12 @@ function Arbuzi:Load()
 					self:RemoveTarget(target)
 				end
 			end
+
+			for node in pairs(self.OreCache) do
+				if typeof(node) ~= "Instance" or not node.Parent or not node:IsDescendantOf(workspaceService) then
+					self:RemoveOre(node)
+				end
+			end
 		end
 	end)
 
@@ -1570,6 +1749,11 @@ function Arbuzi:Load()
 			for _, data in pairs(self.Cache) do
 				if typeof(data) == "table" and data.Objects and data.Objects.TargetHolder and data.Objects.TargetHolder.Visible then
 					data.Objects.TargetHolder.Visible = false
+				end
+			end
+			for _, data in pairs(self.OreCache) do
+				if typeof(data) == "table" and data.Label and data.Label.Visible then
+					data.Label.Visible = false
 				end
 			end
 			return
@@ -1601,6 +1785,71 @@ function Arbuzi:Load()
 				self:Update(target, data)
 			end
 		end
+
+		local oreCfg = config.Ores
+		if oreCfg and oreCfg.Enabled then
+			local maxDist = oreCfg.MaxDistance or 2500
+			local showDist = oreCfg.ShowDistance
+
+			for _, data in pairs(self.OreCache) do
+				local typeCfg = oreCfg[data.OreType]
+				if not typeCfg or not typeCfg.Enabled then
+					if data.Label.Visible then
+						data.Label.Visible = false
+					end
+					continue
+				end
+
+				local dist = (cameraPosition - data.Position).Magnitude
+				if dist > maxDist then
+					if data.Label.Visible then
+						data.Label.Visible = false
+					end
+					continue
+				end
+
+				local screenPos, onScreen = camera:WorldToViewportPoint(data.Position)
+				if not onScreen or screenPos.Z <= 0 then
+					if data.Label.Visible then
+						data.Label.Visible = false
+					end
+					continue
+				end
+
+				local posX = mathFloor(screenPos.X)
+				local posY = mathFloor(screenPos.Y)
+				local flooredDist = mathFloor(dist)
+
+				if data.LastX ~= posX or data.LastY ~= posY then
+					data.Label.Position = udim2FromOffset(posX, posY)
+					data.LastX = posX
+					data.LastY = posY
+				end
+
+				if data.LastDist ~= flooredDist then
+					if showDist then
+						data.Label.Text = stringFormat("%s [%d st]", typeCfg.DisplayName or data.OreType, flooredDist)
+					else
+						data.Label.Text = typeCfg.DisplayName or data.OreType
+					end
+					data.LastDist = flooredDist
+				end
+
+				if data.Label.TextColor3 ~= typeCfg.Color then
+					data.Label.TextColor3 = typeCfg.Color
+				end
+
+				if not data.Label.Visible then
+					data.Label.Visible = true
+				end
+			end
+		else
+			for _, data in pairs(self.OreCache) do
+				if data.Label and data.Label.Visible then
+					data.Label.Visible = false
+				end
+			end
+		end
 	end)
 
 	self.Loaded = true
@@ -1624,6 +1873,10 @@ function Arbuzi:Unload()
 		self:RemoveTarget(target)
 	end
 
+	for node in pairs(self.OreCache) do
+		self:RemoveOre(node)
+	end
+
 	for _, conn in pairs(self.Threads) do
 		if typeof(conn) == "thread" then
 			task.cancel(conn)
@@ -1639,6 +1892,7 @@ function Arbuzi:Unload()
 	end
 
 	tableClear(self.Cache)
+	tableClear(self.OreCache)
 	shared.Arbuzi = nil
 end
 
