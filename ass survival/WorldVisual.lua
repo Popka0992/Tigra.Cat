@@ -1,6 +1,7 @@
 -- Services.
 local lightingService = cloneref(game:GetService("Lighting"))
 local runService = cloneref(game:GetService("RunService"))
+local workspaceService = cloneref(game:GetService("Workspace"))
 
 ---@module Features.Visuals.WorldVisuals
 local WorldVisuals = {}
@@ -266,7 +267,6 @@ local customAtmosphere = initialAtmosphere
 if not customAtmosphere then
 	customAtmosphere = Instance.new("Atmosphere")
 	customAtmosphere.Name = "CustomAtmosphere"
-	customAtmosphere.Parent = lightingService
 end
 
 local customColorCorrection = lightingService:FindFirstChild("CustomColorCorrection")
@@ -276,6 +276,8 @@ if not customColorCorrection then
 	customColorCorrection.Enabled = false
 	customColorCorrection.Parent = lightingService
 end
+
+local suppressedAtmospheres = {}
 
 WorldVisuals.Config = {
 	Enabled = false,
@@ -290,6 +292,8 @@ WorldVisuals.Config = {
 	FogColor = originalFogColor,
 	FogStart = originalFogStart,
 	FogEnd = originalFogEnd,
+
+	NoClouds = false,
 
 	TimeChanger = false,
 	ClockTime = originalClockTime,
@@ -313,7 +317,6 @@ WorldVisuals.Config = {
 	AtmosphereDecay = originalAtmosphere.Decay
 }
 
--- Helpers to keep instance references valid.
 local function getActiveSky()
 	if not customSky or not customSky.Parent then
 		customSky = lightingService:FindFirstChildOfClass("Sky") or Instance.new("Sky", lightingService)
@@ -322,8 +325,9 @@ local function getActiveSky()
 end
 
 local function getActiveAtmosphere()
-	if not customAtmosphere or not customAtmosphere.Parent then
-		customAtmosphere = lightingService:FindFirstChildOfClass("Atmosphere") or Instance.new("Atmosphere", lightingService)
+	if not customAtmosphere then
+		customAtmosphere = Instance.new("Atmosphere")
+		customAtmosphere.Name = "CustomAtmosphere"
 	end
 	return customAtmosphere
 end
@@ -334,6 +338,50 @@ local function getActiveColorCorrection()
 		customColorCorrection.Name = "CustomColorCorrection"
 	end
 	return customColorCorrection
+end
+
+local function applyCloudsState(disabled)
+	for _, desc in ipairs(workspaceService:GetDescendants()) do
+		if desc:IsA("Clouds") then
+			desc.Enabled = not disabled
+		end
+	end
+end
+
+-- Atmosphere instances override and suppress legacy Fog properties.
+local function syncAtmosphereState()
+	local config = WorldVisuals.Config
+
+	if config.Enabled and config.Fog and not config.Atmosphere then
+		for _, child in ipairs(lightingService:GetChildren()) do
+			if child:IsA("Atmosphere") then
+				table.insert(suppressedAtmospheres, child)
+				child.Parent = nil
+			end
+		end
+	else
+		for i = #suppressedAtmospheres, 1, -1 do
+			local atmo = suppressedAtmospheres[i]
+			if atmo then
+				atmo.Parent = lightingService
+			end
+			table.remove(suppressedAtmospheres, i)
+		end
+
+		local atmo = getActiveAtmosphere()
+		if config.Enabled and config.Atmosphere then
+			if atmo.Parent ~= lightingService then
+				atmo.Parent = lightingService
+			end
+		else
+			if customAtmosphere and customAtmosphere ~= initialAtmosphere and customAtmosphere.Parent == lightingService then
+				customAtmosphere.Parent = nil
+			end
+			if initialAtmosphere and initialAtmosphere.Parent ~= lightingService then
+				initialAtmosphere.Parent = lightingService
+			end
+		end
+	end
 end
 
 ---Apply selected Skybox assets to all Sky instances.
@@ -368,8 +416,9 @@ end
 ---Synchronize current state.
 function WorldVisuals:Update()
 	local config = self.Config
-	local atmo = getActiveAtmosphere()
 	local cc = getActiveColorCorrection()
+
+	syncAtmosphereState()
 
 	if config.Enabled then
 		lightingService.Ambient = config.Ambient and config.AmbientColor or originalAmbient
@@ -397,21 +446,23 @@ function WorldVisuals:Update()
 		end
 
 		if config.Atmosphere then
+			local atmo = getActiveAtmosphere()
 			atmo.Density = config.AtmosphereDensity
 			atmo.Offset = config.AtmosphereOffset
 			atmo.Haze = config.AtmosphereHaze
 			atmo.Glare = config.AtmosphereGlare
 			atmo.Color = config.AtmosphereColor
 			atmo.Decay = config.AtmosphereDecay
-		else
-			atmo.Density = originalAtmosphere.Density
-			atmo.Offset = originalAtmosphere.Offset
-			atmo.Haze = originalAtmosphere.Haze
-			atmo.Glare = originalAtmosphere.Glare
-			atmo.Color = originalAtmosphere.Color
-			atmo.Decay = originalAtmosphere.Decay
+		elseif initialAtmosphere and initialAtmosphere.Parent == lightingService then
+			initialAtmosphere.Density = originalAtmosphere.Density
+			initialAtmosphere.Offset = originalAtmosphere.Offset
+			initialAtmosphere.Haze = originalAtmosphere.Haze
+			initialAtmosphere.Glare = originalAtmosphere.Glare
+			initialAtmosphere.Color = originalAtmosphere.Color
+			initialAtmosphere.Decay = originalAtmosphere.Decay
 		end
 
+		applyCloudsState(config.NoClouds)
 		self:ApplySkybox(config.SkyChanger and config.SelectedSky or nil)
 	else
 		lightingService.Ambient = originalAmbient
@@ -425,13 +476,16 @@ function WorldVisuals:Update()
 
 		cc.Enabled = false
 
-		atmo.Density = originalAtmosphere.Density
-		atmo.Offset = originalAtmosphere.Offset
-		atmo.Haze = originalAtmosphere.Haze
-		atmo.Glare = originalAtmosphere.Glare
-		atmo.Color = originalAtmosphere.Color
-		atmo.Decay = originalAtmosphere.Decay
+		if initialAtmosphere and initialAtmosphere.Parent == lightingService then
+			initialAtmosphere.Density = originalAtmosphere.Density
+			initialAtmosphere.Offset = originalAtmosphere.Offset
+			initialAtmosphere.Haze = originalAtmosphere.Haze
+			initialAtmosphere.Glare = originalAtmosphere.Glare
+			initialAtmosphere.Color = originalAtmosphere.Color
+			initialAtmosphere.Decay = originalAtmosphere.Decay
+		end
 
+		applyCloudsState(false)
 		self:ApplySkybox(nil)
 	end
 end
@@ -446,7 +500,7 @@ end
 
 ---Initialize anti-rollback metatable hook and render loop.
 function WorldVisuals:Load()
-	-- Intercept game scripts modifying lighting properties.
+	-- Intercept game scripts modifying lighting and clouds properties.
 	local oldNewindex
 	oldNewindex = hookmetamethod(game, "__newindex", newcclosure(function(self, property, value)
 		if not checkcaller() and typeof(self) == "Instance" then
@@ -463,6 +517,8 @@ function WorldVisuals:Load()
 					if property == "Density" or property == "Offset" or property == "Haze" or property == "Glare" or property == "Color" or property == "Decay" then
 						return
 					end
+				elseif self:IsA("Clouds") and config.NoClouds and property == "Enabled" then
+					return
 				elseif self:IsA("Sky") and config.SkyChanger then
 					if string.sub(property, 1, 6) == "Skybox" then
 						return
@@ -476,6 +532,13 @@ function WorldVisuals:Load()
 		end
 		return oldNewindex(self, property, value)
 	end))
+
+	-- Enforce cloud state on newly created instances.
+	workspaceService.DescendantAdded:Connect(function(child)
+		if child:IsA("Clouds") and self.Config.Enabled and self.Config.NoClouds then
+			child.Enabled = false
+		end
+	end)
 
 	-- Enforce active visuals every render step to prevent engine rollbacks.
 	runService.RenderStepped:Connect(function()
@@ -492,6 +555,13 @@ function WorldVisuals:Load()
 			lightingService.FogColor = config.FogColor
 			lightingService.FogStart = config.FogStart
 			lightingService.FogEnd = config.FogEnd
+
+			for _, child in ipairs(lightingService:GetChildren()) do
+				if child:IsA("Atmosphere") and not config.Atmosphere then
+					table.insert(suppressedAtmospheres, child)
+					child.Parent = nil
+				end
+			end
 		end
 		if config.TimeChanger then
 			lightingService.ClockTime = config.ClockTime
@@ -505,6 +575,9 @@ function WorldVisuals:Load()
 
 		if config.Atmosphere then
 			local atmo = getActiveAtmosphere()
+			if atmo.Parent ~= lightingService then
+				atmo.Parent = lightingService
+			end
 			atmo.Density = config.AtmosphereDensity
 			atmo.Offset = config.AtmosphereOffset
 			atmo.Haze = config.AtmosphereHaze
@@ -519,6 +592,10 @@ function WorldVisuals:Load()
 			cc.Saturation = config.Saturation
 			cc.Contrast = config.Contrast
 			cc.TintColor = config.Tint
+		end
+
+		if config.NoClouds then
+			applyCloudsState(true)
 		end
 	end)
 
