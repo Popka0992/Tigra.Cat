@@ -18,7 +18,9 @@ local isInternalRaycast = false
 local aimKeyActive = false
 local targetPart = nil
 local targetPlayer = nil
-local originalPartSizes = {}
+
+local hooksInstalled = false
+local aimBound = false
 
 local CombatConfig = {
 	AimMode = "Silent Aim",
@@ -60,13 +62,7 @@ local CombatConfig = {
 		ViewportPointToRay = true,
 		Mouse = true,
 		Network = true
-	},
-
-	HitboxEnabled = false,
-	HitboxSize = 6,
-	HitboxTrans = 0.6,
-	HitboxPart = "All Parts",
-	HitboxCustom = true
+	}
 }
 
 local scannedPartsList = {"All Parts", "Head", "HumanoidRootPart", "Torso", "UpperTorso", "LowerTorso"}
@@ -205,111 +201,9 @@ local function getClosestTarget()
 	return closestPart, closestTarget
 end
 
-function Combat:GetConfig()
-	return CombatConfig
-end
-
-function Combat:RefreshParts()
-	return scanCharacterParts()
-end
-
-function Combat:SetAimActive(state)
-	aimKeyActive = state
-	CombatConfig.AimActive = state
-end
-
-function Combat:Load()
-	scanCharacterParts()
-
-	runService.RenderStepped:Connect(function()
-		currentCamera = workspaceService.CurrentCamera or currentCamera
-
-		local mpos = userInputService:GetMouseLocation()
-		local fovRadius = CombatConfig.FOV
-
-		circleInline.Position = mpos
-		circleInline.Radius = fovRadius
-		circleInline.Color = CombatConfig.FOVColor
-		circleInline.Visible = CombatConfig.Enabled and CombatConfig.ShowFOV
-
-		circleOutline.Position = mpos
-		circleOutline.Radius = fovRadius
-		circleOutline.Visible = CombatConfig.Enabled and CombatConfig.ShowFOV and CombatConfig.FOVOutline
-
-		if CombatConfig.Enabled then
-			targetPart, targetPlayer = getClosestTarget()
-		else
-			targetPart, targetPlayer = nil, nil
-		end
-	end)
-
-	runService:BindToRenderStep("CombatAimbot", Enum.RenderPriority.Camera.Value + 1, function()
-		local isAiming = aimKeyActive or CombatConfig.AimActive
-		if CombatConfig.Enabled and CombatConfig.AimMode == "Aimbot" and isAiming and targetPart and targetPart.Parent then
-			local camPos = currentCamera.CFrame.Position
-			local targetLook = CFrame.lookAt(camPos, targetPart.Position)
-			local smoothFactor = math.clamp(CombatConfig.Smoothness, 1, 30)
-
-			if smoothFactor <= 1 then
-				currentCamera.CFrame = targetLook
-			else
-				currentCamera.CFrame = currentCamera.CFrame:Lerp(targetLook, 1 / smoothFactor)
-			end
-		end
-	end)
-
-	runService.Heartbeat:Connect(function()
-		if not CombatConfig.HitboxEnabled then
-			if next(originalPartSizes) ~= nil then
-				for part, data in pairs(originalPartSizes) do
-					if part and part.Parent and part:IsA("BasePart") then
-						part.Size = data.Size
-						part.Transparency = data.Transparency
-						part.CanCollide = data.CanCollide
-						part.Massless = data.Massless
-					end
-				end
-				table.clear(originalPartSizes)
-			end
-			return
-		end
-
-		local targetSize = Vector3.new(CombatConfig.HitboxSize, CombatConfig.HitboxSize, CombatConfig.HitboxSize)
-
-		for _, entity in ipairs(getTargetEntities()) do
-			local pChar = entity.Model
-			for _, part in ipairs(pChar:GetDescendants()) do
-				if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-					local isDefaultLimb = (part.Name == "Head" or part.Name:find("Torso") or part.Name:find("Arm") or part.Name:find("Leg"))
-
-					local shouldExpand = false
-					if CombatConfig.HitboxPart == "All Parts" or CombatConfig.HitboxPart == part.Name then
-						shouldExpand = true
-					end
-
-					if not isDefaultLimb and CombatConfig.HitboxCustom then
-						shouldExpand = true
-					end
-
-					if shouldExpand then
-						if not originalPartSizes[part] then
-							originalPartSizes[part] = {
-								Size = part.Size,
-								Transparency = part.Transparency,
-								CanCollide = part.CanCollide,
-								Massless = part.Massless
-							}
-						end
-
-						part.Size = targetSize
-						part.Transparency = CombatConfig.HitboxTrans
-						part.CanCollide = false
-						part.Massless = true
-					end
-				end
-			end
-		end
-	end)
+local function installHooks()
+	if hooksInstalled then return end
+	hooksInstalled = true
 
 	local oldIndex
 	oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
@@ -510,6 +404,74 @@ function Combat:Load()
 
 		return oldNamecall(self, ...)
 	end))
+end
+
+local function setAimBind(state)
+	if state and not aimBound then
+		aimBound = true
+		runService:BindToRenderStep("CombatAimbot", Enum.RenderPriority.Camera.Value + 1, function()
+			local isAiming = aimKeyActive or CombatConfig.AimActive
+			if CombatConfig.Enabled and CombatConfig.AimMode == "Aimbot" and isAiming and targetPart and targetPart.Parent then
+				local camPos = currentCamera.CFrame.Position
+				local targetLook = CFrame.lookAt(camPos, targetPart.Position)
+				local smoothFactor = math.clamp(CombatConfig.Smoothness, 1, 30)
+
+				if smoothFactor <= 1 then
+					currentCamera.CFrame = targetLook
+				else
+					currentCamera.CFrame = currentCamera.CFrame:Lerp(targetLook, 1 / smoothFactor)
+				end
+			end
+		end)
+	elseif not state and aimBound then
+		aimBound = false
+		runService:UnbindFromRenderStep("CombatAimbot")
+	end
+end
+
+function Combat:GetConfig()
+	return CombatConfig
+end
+
+function Combat:RefreshParts()
+	return scanCharacterParts()
+end
+
+function Combat:SetAimActive(state)
+	aimKeyActive = state
+	CombatConfig.AimActive = state
+	if state then
+		installHooks()
+		setAimBind(true)
+	else
+		setAimBind(false)
+	end
+end
+
+function Combat:Load()
+	scanCharacterParts()
+
+	runService.RenderStepped:Connect(function()
+		currentCamera = workspaceService.CurrentCamera or currentCamera
+
+		local mpos = userInputService:GetMouseLocation()
+		local fovRadius = CombatConfig.FOV
+
+		circleInline.Position = mpos
+		circleInline.Radius = fovRadius
+		circleInline.Color = CombatConfig.FOVColor
+		circleInline.Visible = CombatConfig.Enabled and CombatConfig.ShowFOV
+
+		circleOutline.Position = mpos
+		circleOutline.Radius = fovRadius
+		circleOutline.Visible = CombatConfig.Enabled and CombatConfig.ShowFOV and CombatConfig.FOVOutline
+
+		if CombatConfig.Enabled then
+			targetPart, targetPlayer = getClosestTarget()
+		else
+			targetPart, targetPlayer = nil, nil
+		end
+	end)
 end
 
 return Combat
