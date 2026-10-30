@@ -1,4 +1,4 @@
-сделай так как на скриншоте вот вкладка visual из ui которая на гитхабе
+
 
 return function(ctx)
 	local VisualsPage = ctx.VisualsPage
