@@ -8,14 +8,15 @@ return function(ctx)
 	local isPickupAllowed = ctx.isPickupAllowed
 	local Library = ctx.Library
 
+	local vmConfig = getgenv().CrezVM and getgenv().CrezVM.Config or {}
+
 	local SubPages = {
-		["ESP"] = VisualsPage:SubPage({Name = "Player ESP"}),
-		["BotESP"] = VisualsPage:SubPage({Name = "Bot ESP"}),
-		["WorldESP"] = VisualsPage:SubPage({Name = "World ESP"}),
+		["ESP"] = VisualsPage:SubPage({Name = "ESP"}),
+		["Viewmodel"] = VisualsPage:SubPage({Name = "Viewmodel"}),
 		["WorldVisuals"] = VisualsPage:SubPage({Name = "World"})
 	}
 
-	-- PLAYER ESP
+	-- ESP (PLAYER, BOT, WORLD COMBINED)
 	do
 		local SectionLeft = SubPages["ESP"]:Section({Name = "General & Bounds"})
 		local SectionRight = SubPages["ESP"]:Section({Name = "Overlays & Colors"})
@@ -328,27 +329,6 @@ return function(ctx)
 			end
 		})
 
-		SectionRight:Button({
-			Name = "Unload ESP",
-			Callback = function()
-				EspInstance:Unload()
-				Library:Notification("Visuals safely unloaded.", 3, Library.Theme.Accent)
-			end
-		})
-	end
-
-	-- BOT ESP
-	do
-		local botBoxes = espConfig.Bots.Boxes
-		local botBoundingBox = botBoxes["Bounding Box"]
-		local botGlow = botBoxes["Box Glow"]
-		local botFill = botBoxes.Filled
-		local botBars = espConfig.Bots.Bars
-		local botTexts = espConfig.Bots.Texts
-
-		local SectionLeft = SubPages["BotESP"]:Section({Name = "General & Bounds"})
-		local SectionRight = SubPages["BotESP"]:Section({Name = "Overlays & Colors"})
-
 		SectionLeft:Toggle({
 			Name = "Enabled Bots",
 			Flag = "Esp_Bot_Enabled",
@@ -367,291 +347,9 @@ return function(ctx)
 			end
 		})
 
-		local botBoxToggle = SectionLeft:Toggle({
-			Name = "Bounding Box",
-			Flag = "Esp_Bot_Boxes_Enabled",
-			Default = botBoxes.Enabled,
-			Callback = function(value)
-				botBoxes.Enabled = value
-			end
-		})
-
-		botBoxToggle:Colorpicker({
-			Flag = "Esp_Bot_Box_GradTop",
-			Default = botBoxes.Gradients.Top,
-			Alpha = 0,
-			Callback = function(value)
-				botBoxes.Gradients.Top = value
-			end
-		})
-
-		botBoxToggle:Colorpicker({
-			Flag = "Esp_Bot_Box_GradBot",
-			Default = botBoxes.Gradients.Bot,
-			Alpha = 0,
-			Callback = function(value)
-				botBoxes.Gradients.Bot = value
-			end
-		})
-
-		SectionLeft:Toggle({
-			Name = "Dynamic Bounds",
-			Flag = "Esp_Bot_Bounding_Enabled",
-			Default = botBoundingBox.Enabled,
-			Callback = function(value)
-				botBoundingBox.Enabled = value
-			end
-		})
-
-		SectionLeft:Toggle({
-			Name = "Include Accessories",
-			Flag = "Esp_Bot_Bounding_Accessories",
-			Default = botBoundingBox.IncludeAccessories,
-			Callback = function(value)
-				botBoundingBox.IncludeAccessories = value
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Padding X",
-			Flag = "Esp_Bot_Bounding_BoxX",
-			Default = botBoundingBox.BoxX,
-			Compact = true,
-			Min = 0,
-			Max = 30,
-			Decimals = 1,
-			Suffix = "px",
-			Callback = function(value)
-				botBoundingBox.BoxX = value
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Padding Y",
-			Flag = "Esp_Bot_Bounding_BoxY",
-			Default = botBoundingBox.BoxY,
-			Compact = true,
-			Min = 0,
-			Max = 30,
-			Decimals = 1,
-			Suffix = "px",
-			Callback = function(value)
-				botBoundingBox.BoxY = value
-			end
-		})
-
-		local botGlowToggle = SectionLeft:Toggle({
-			Name = "Box Glow",
-			Flag = "Esp_Bot_Glow_Enabled",
-			Default = botGlow.Enabled,
-			Callback = function(value)
-				botGlow.Enabled = value
-			end
-		})
-
-		botGlowToggle:Colorpicker({
-			Flag = "Esp_Bot_Glow_Top",
-			Default = botGlow.Top,
-			Alpha = 0,
-			Callback = function(value)
-				botGlow.Top = value
-			end
-		})
-
-		botGlowToggle:Colorpicker({
-			Flag = "Esp_Bot_Glow_Bot",
-			Default = botGlow.Bot,
-			Alpha = 0,
-			Callback = function(value)
-				botGlow.Bot = value
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Glow Alpha",
-			Flag = "Esp_Bot_Glow_Trans",
-			Default = math.floor(((botGlow.Transparency and botGlow.Transparency[1]) or 0.85) * 100),
-			Compact = true,
-			Min = 0,
-			Max = 100,
-			Decimals = 1,
-			Suffix = "%",
-			Callback = function(value)
-				if not botGlow.Transparency then
-					botGlow.Transparency = { 0.85, 0.85 }
-				end
-				botGlow.Transparency[1] = value / 100
-				botGlow.Transparency[2] = value / 100
-			end
-		})
-
-		local botFillToggle = SectionLeft:Toggle({
-			Name = "Box Fill",
-			Flag = "Esp_Bot_Fill_Enabled",
-			Default = botFill.Enabled,
-			Callback = function(value)
-				botFill.Enabled = value
-			end
-		})
-
-		botFillToggle:Colorpicker({
-			Flag = "Esp_Bot_Fill_Top",
-			Default = botFill.Top,
-			Alpha = 0,
-			Callback = function(value)
-				botFill.Top = value
-			end
-		})
-
-		botFillToggle:Colorpicker({
-			Flag = "Esp_Bot_Fill_Bot",
-			Default = botFill.Bot,
-			Alpha = 0,
-			Callback = function(value)
-				botFill.Bot = value
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Fill Alpha",
-			Flag = "Esp_Bot_Fill_Trans",
-			Default = math.floor(((botFill.Transparency and botFill.Transparency[1]) or 0.85) * 100),
-			Compact = true,
-			Min = 0,
-			Max = 100,
-			Decimals = 1,
-			Suffix = "%",
-			Callback = function(value)
-				if not botFill.Transparency then
-					botFill.Transparency = { 0.85, 0.85 }
-				end
-				botFill.Transparency[1] = value / 100
-				botFill.Transparency[2] = value / 100
-			end
-		})
-
-		local botHealthBarToggle = SectionRight:Toggle({
-			Name = "Health Bar",
-			Flag = "Esp_Bot_HealthBar_Enabled",
-			Default = botBars["Health Bar"].Enabled,
-			Callback = function(value)
-				botBars["Health Bar"].Enabled = value
-			end
-		})
-
-		botHealthBarToggle:Colorpicker({
-			Flag = "Esp_Bot_HealthBar_Color",
-			Default = botBars["Health Bar"].Color,
-			Alpha = 0,
-			Callback = function(value)
-				botBars["Health Bar"].Color = value
-			end
-		})
-
-		local botNameToggle = SectionRight:Toggle({
-			Name = "Name",
-			Flag = "Esp_Bot_Name_Enabled",
-			Default = botTexts.Name.Enabled,
-			Callback = function(value)
-				botTexts.Name.Enabled = value
-			end
-		})
-
-		botNameToggle:Colorpicker({
-			Flag = "Esp_Bot_Name_Color",
-			Default = botTexts.Name.Color,
-			Alpha = 0,
-			Callback = function(value)
-				botTexts.Name.Color = value
-			end
-		})
-
-		local botDistToggle = SectionRight:Toggle({
-			Name = "Distance",
-			Flag = "Esp_Bot_Dist_Enabled",
-			Default = botTexts.Distance.Enabled,
-			Callback = function(value)
-				botTexts.Distance.Enabled = value
-			end
-		})
-
-		botDistToggle:Colorpicker({
-			Flag = "Esp_Bot_Dist_Color",
-			Default = botTexts.Distance.Color,
-			Alpha = 0,
-			Callback = function(value)
-				botTexts.Distance.Color = value
-			end
-		})
-
-		local botWeaponToggle = SectionRight:Toggle({
-			Name = "Weapon",
-			Flag = "Esp_Bot_Weapon_Enabled",
-			Default = botTexts.Weapon.Enabled,
-			Callback = function(value)
-				botTexts.Weapon.Enabled = value
-			end
-		})
-
-		botWeaponToggle:Colorpicker({
-			Flag = "Esp_Bot_Weapon_Color",
-			Default = botTexts.Weapon.Color,
-			Alpha = 0,
-			Callback = function(value)
-				botTexts.Weapon.Color = value
-			end
-		})
-
-		SectionRight:Toggle({
-			Name = "Weapon Icon",
-			Flag = "Esp_Bot_WeaponIcon_Enabled",
-			Default = botTexts.WeaponIcon.Enabled,
-			Callback = function(value)
-				botTexts.WeaponIcon.Enabled = value
-			end
-		})
-
-		SectionRight:Slider({
-			Name = "Icon Scale",
-			Flag = "Esp_Bot_WeaponIcon_Size",
-			Default = botTexts.WeaponIcon.Size,
-			Compact = true,
-			Min = 12,
-			Max = 48,
-			Decimals = 1,
-			Suffix = "px",
-			Callback = function(value)
-				botTexts.WeaponIcon.Size = value
-			end
-		})
-
-		local botStateToggle = SectionRight:Toggle({
-			Name = "Flags",
-			Flag = "Esp_Bot_State_Enabled",
-			Default = botTexts.State.Enabled,
-			Callback = function(value)
-				botTexts.State.Enabled = value
-			end
-		})
-
-		botStateToggle:Colorpicker({
-			Flag = "Esp_Bot_State_Color",
-			Default = botTexts.State.Color,
-			Alpha = 0,
-			Callback = function(value)
-				botTexts.State.Color = value
-			end
-		})
-	end
-
-	-- WORLD ESP
-	do
 		local oreConfig = espConfig.Ores
 		local pickupConfig = espConfig.Pickups
 		local animalConfig = espConfig.Animals
-
-		local SectionLeft = SubPages["WorldESP"]:Section({Name = "Ore ESP", Side = "Left"})
-		local SectionRight = SubPages["WorldESP"]:Section({Name = "Pickups & Animals", Side = "Right"})
 
 		SectionLeft:Toggle({
 			Name = "Enabled Ores ESP",
@@ -663,7 +361,7 @@ return function(ctx)
 		})
 
 		SectionLeft:Toggle({
-			Name = "Show Distance",
+			Name = "Show Ore Distance",
 			Flag = "Esp_Ore_ShowDistance",
 			Default = oreConfig.ShowDistance,
 			Callback = function(value)
@@ -672,7 +370,7 @@ return function(ctx)
 		})
 
 		SectionLeft:Slider({
-			Name = "Max Distance",
+			Name = "Ore Max Distance",
 			Flag = "Esp_Ore_MaxDistance",
 			Default = oreConfig.MaxDistance,
 			Compact = true,
@@ -846,6 +544,173 @@ return function(ctx)
 			Suffix = " st",
 			Callback = function(value)
 				animalConfig.MaxDistance = value
+			end
+		})
+
+		SectionRight:Button({
+			Name = "Unload ESP",
+			Callback = function()
+				EspInstance:Unload()
+				Library:Notification("Visuals safely unloaded.", 3, Library.Theme.Accent)
+			end
+		})
+	end
+
+	-- VIEWMODEL SUBPAGE
+	do
+		local SectionVMOffset = SubPages["Viewmodel"]:Section({Name = "Offset - Position"})
+		local SectionVMRotation = SubPages["Viewmodel"]:Section({Name = "Rotation"})
+		local SectionVMChams = SubPages["Viewmodel"]:Section({Name = "Chams & Visuals"})
+
+		SectionVMOffset:Slider({
+			Name = "Offset X",
+			Flag = "VM_X",
+			Default = vmConfig.X or 0,
+			Compact = true,
+			Min = -5,
+			Max = 5,
+			Decimals = 2,
+			Suffix = "",
+			Callback = function(value)
+				vmConfig.X = value
+			end
+		})
+
+		SectionVMOffset:Slider({
+			Name = "Offset Y",
+			Flag = "VM_Y",
+			Default = vmConfig.Y or 0,
+			Compact = true,
+			Min = -5,
+			Max = 5,
+			Decimals = 2,
+			Suffix = "",
+			Callback = function(value)
+				vmConfig.Y = value
+			end
+		})
+
+		SectionVMOffset:Slider({
+			Name = "Offset Z",
+			Flag = "VM_Z",
+			Default = vmConfig.Z or 0,
+			Compact = true,
+			Min = -5,
+			Max = 5,
+			Decimals = 2,
+			Suffix = "",
+			Callback = function(value)
+				vmConfig.Z = value
+			end
+		})
+
+		SectionVMRotation:Slider({
+			Name = "Rotation X",
+			Flag = "VM_RX",
+			Default = vmConfig.RX or 0,
+			Compact = true,
+			Min = -180,
+			Max = 180,
+			Decimals = 1,
+			Suffix = "°",
+			Callback = function(value)
+				vmConfig.RX = value
+			end
+		})
+
+		SectionVMRotation:Slider({
+			Name = "Rotation Y",
+			Flag = "VM_RY",
+			Default = vmConfig.RY or 0,
+			Compact = true,
+			Min = -180,
+			Max = 180,
+			Decimals = 1,
+			Suffix = "°",
+			Callback = function(value)
+				vmConfig.RY = value
+			end
+		})
+
+		SectionVMRotation:Slider({
+			Name = "Rotation Z",
+			Flag = "VM_RZ",
+			Default = vmConfig.RZ or 0,
+			Compact = true,
+			Min = -180,
+			Max = 180,
+			Decimals = 1,
+			Suffix = "°",
+			Callback = function(value)
+				vmConfig.RZ = value
+			end
+		})
+
+		SectionVMChams:Dropdown({
+			Name = "Gun Chams Mode",
+			Flag = "VM_GunMode",
+			Multi = false,
+			Items = {"off", "outline", "fill", "highlight", "rainbow", "forcefield", "neon"},
+			Default = vmConfig.GunMode or "highlight",
+			Callback = function(value)
+				vmConfig.GunMode = value
+			end
+		})
+
+		local gunColorToggle = SectionVMChams:Toggle({
+			Name = "Gun Chams Color",
+			Flag = "VM_GunColorToggle",
+			Default = true,
+			Callback = function() end
+		})
+
+		gunColorToggle:Colorpicker({
+			Flag = "VM_GunColor",
+			Default = vmConfig.GunColor or Color3.fromRGB(255, 60, 60),
+			Alpha = 0,
+			Callback = function(value)
+				vmConfig.GunColor = value
+			end
+		})
+
+		SectionVMChams:Dropdown({
+			Name = "Hand Chams Mode",
+			Flag = "VM_HandMode",
+			Multi = false,
+			Items = {"off", "outline", "fill", "highlight", "rainbow", "forcefield", "neon"},
+			Default = vmConfig.HandMode or "highlight",
+			Callback = function(value)
+				vmConfig.HandMode = value
+			end
+		})
+
+		local handColorToggle = SectionVMChams:Toggle({
+			Name = "Hand Chams Color",
+			Flag = "VM_HandColorToggle",
+			Default = true,
+			Callback = function() end
+		})
+
+		handColorToggle:Colorpicker({
+			Flag = "VM_HandColor",
+			Default = vmConfig.HandColor or Color3.fromRGB(60, 200, 255),
+			Alpha = 0,
+			Callback = function(value)
+				vmConfig.HandColor = value
+			end
+		})
+
+		SectionVMChams:Slider({
+			Name = "Fill Transparency",
+			Flag = "VM_FillT",
+			Default = (vmConfig.FillT or 0.4) * 100,
+			Compact = true,
+			Min = 0,
+			Max = 100,
+			Decimals = 1,
+			Suffix = "%",
+			Callback = function(value)
+				vmConfig.FillT = value / 100
 			end
 		})
 	end
