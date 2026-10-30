@@ -13,7 +13,7 @@ return function(ctx)
 		["WorldVisuals"] = VisualsPage:SubPage({Name = "World"})
 	}
 
-	-- PLAYER ESP (Bot ESP + World Object ESP merged in as sub-sections)
+	-- PLAYER ESP (4 columns: General, Overlays, Bot ESP, World ESP)
 	do
 		local botBoxes = espConfig.Bots.Boxes
 		local botBoundingBox = botBoxes["Bounding Box"]
@@ -26,12 +26,12 @@ return function(ctx)
 		local pickupConfig = espConfig.Pickups
 		local animalConfig = espConfig.Animals
 
-		local SectionGeneral = SubPages["ESP"]:Section({Name = "General & Bounds", Side = "Left"})
-		local SectionOverlays = SubPages["ESP"]:Section({Name = "Overlays & Colors", Side = "Right"})
-		local SectionBots = SubPages["ESP"]:Section({Name = "Bot ESP", Side = "Left"})
-		local SectionWorld = SubPages["ESP"]:Section({Name = "World ESP", Side = "Right"})
+		local SectionGeneral = SubPages["ESP"]:Section({Name = "General - Bounds"})
+		local SectionOverlays = SubPages["ESP"]:Section({Name = "Overlays - Colors"})
+		local SectionBots = SubPages["ESP"]:Section({Name = "Bot ESP"})
+		local SectionWorld = SubPages["ESP"]:Section({Name = "World ESP"})
 
-		-- Player: General & Bounds
+		-- Column 1: General - Bounds
 		SectionGeneral:Toggle({
 			Name = "Enabled ESP",
 			Flag = "Esp_Enabled",
@@ -227,7 +227,7 @@ return function(ctx)
 			end
 		})
 
-		-- Player: Overlays & Colors
+		-- Column 2: Overlays - Colors
 		local healthBarToggle = SectionOverlays:Toggle({
 			Name = "Health Bar",
 			Flag = "Esp_HealthBar_Enabled",
@@ -349,7 +349,7 @@ return function(ctx)
 			end
 		})
 
-		-- Bots (merged section)
+		-- Column 3: Bot ESP
 		SectionBots:Toggle({
 			Name = "Enabled Bots",
 			Flag = "Esp_Bot_Enabled",
@@ -644,7 +644,7 @@ return function(ctx)
 			end
 		})
 
-		-- World ESP (ores, pickups, animals - merged section)
+		-- Column 4: World ESP (ores, pickups, animals)
 		SectionWorld:Toggle({
 			Name = "Enabled Ores ESP",
 			Flag = "Esp_Ore_Enabled",
