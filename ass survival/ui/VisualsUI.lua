@@ -1,1114 +1,192 @@
-return function(ctx)
-	local VisualsPage = ctx.VisualsPage
-	local espConfig = ctx.espConfig
-	local EspInstance = ctx.EspInstance
-	local worldConfig = ctx.worldConfig
-	local WorldVisuals = ctx.WorldVisuals
-	local validPickups = ctx.validPickups
-	local isPickupAllowed = ctx.isPickupAllowed
-	local Library = ctx.Library
-
-	local vmConfig = getgenv().CrezVM and getgenv().CrezVM.Config or {}
-
-	local SubPages = {
-		["PlayerESP"] = VisualsPage:SubPage({Name = "Player ESP"}),
-		["WorldESP"] = VisualsPage:SubPage({Name = "World ESP"}),
-		["Viewmodel"] = VisualsPage:SubPage({Name = "Viewmodel"}),
-		["WorldVisuals"] = VisualsPage:SubPage({Name = "World"})
-	}
-
-	-- =========================================================================
-	-- 1. PLAYER ESP
-	-- =========================================================================
-	do
-		local SectionLeft = SubPages["PlayerESP"]:Section({Name = "General & Bounds"})
-		local SectionRight = SubPages["PlayerESP"]:Section({Name = "Overlays & Colors"})
-
-		SectionLeft:Toggle({
-			Name = "Enabled ESP",
-			Flag = "Esp_Enabled",
-			Default = espConfig.Enabled,
-			Callback = function(value)
-				espConfig.Enabled = value
-			end
-		})
-
-		SectionLeft:Toggle({
-			Name = "Players",
-			Flag = "Esp_Players",
-			Default = espConfig.Players,
-			Callback = function(value)
-				espConfig.Players = value
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Framerate Limit",
-			Flag = "Esp_LimitFPS",
-			Default = espConfig.LimitFPS,
-			Compact = true,
-			Min = 0,
-			Max = 144,
-			Decimals = 1,
-			Suffix = " FPS",
-			Callback = function(value)
-				espConfig.LimitFPS = value
-			end
-		})
-
-		local boxToggle = SectionLeft:Toggle({
-			Name = "Bounding Box",
-			Flag = "Esp_Boxes_Enabled",
-			Default = espConfig.Boxes.Enabled,
-			Callback = function(value)
-				espConfig.Boxes.Enabled = value
-			end
-		})
-
-		boxToggle:Colorpicker({
-			Flag = "Esp_Box_GradTop",
-			Default = espConfig.Boxes.Gradients.Top,
-			Alpha = 0,
-			Callback = function(value)
-				espConfig.Boxes.Gradients.Top = value
-			end
-		})
-
-		boxToggle:Colorpicker({
-			Flag = "Esp_Box_GradBot",
-			Default = espConfig.Boxes.Gradients.Bot,
-			Alpha = 0,
-			Callback = function(value)
-				espConfig.Boxes.Gradients.Bot = value
-			end
-		})
-
-		SectionLeft:Toggle({
-			Name = "Dynamic Bounds",
-			Flag = "Esp_Bounding_Enabled",
-			Default = espConfig.Boxes["Bounding Box"].Enabled,
-			Callback = function(value)
-				espConfig.Boxes["Bounding Box"].Enabled = value
-			end
-		})
-
-		SectionLeft:Toggle({
-			Name = "Include Accessories",
-			Flag = "Esp_Bounding_Accessories",
-			Default = espConfig.Boxes["Bounding Box"].IncludeAccessories,
-			Callback = function(value)
-				espConfig.Boxes["Bounding Box"].IncludeAccessories = value
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Padding X",
-			Flag = "Esp_Bounding_BoxX",
-			Default = espConfig.Boxes["Bounding Box"].BoxX,
-			Compact = true,
-			Min = 0,
-			Max = 30,
-			Decimals = 1,
-			Suffix = "px",
-			Callback = function(value)
-				espConfig.Boxes["Bounding Box"].BoxX = value
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Padding Y",
-			Flag = "Esp_Bounding_BoxY",
-			Default = espConfig.Boxes["Bounding Box"].BoxY,
-			Compact = true,
-			Min = 0,
-			Max = 30,
-			Decimals = 1,
-			Suffix = "px",
-			Callback = function(value)
-				espConfig.Boxes["Bounding Box"].BoxY = value
-			end
-		})
-
-		local glowToggle = SectionLeft:Toggle({
-			Name = "Box Glow",
-			Flag = "Esp_Glow_Enabled",
-			Default = espConfig.Boxes["Box Glow"].Enabled,
-			Callback = function(value)
-				espConfig.Boxes["Box Glow"].Enabled = value
-			end
-		})
-
-		glowToggle:Colorpicker({
-			Flag = "Esp_Glow_Top",
-			Default = espConfig.Boxes["Box Glow"].Top,
-			Alpha = 0,
-			Callback = function(value)
-				espConfig.Boxes["Box Glow"].Top = value
-			end
-		})
-
-		glowToggle:Colorpicker({
-			Flag = "Esp_Glow_Bot",
-			Default = espConfig.Boxes["Box Glow"].Bot,
-			Alpha = 0,
-			Callback = function(value)
-				espConfig.Boxes["Box Glow"].Bot = value
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Glow Alpha",
-			Flag = "Esp_Glow_Trans",
-			Default = math.floor(((espConfig.Boxes["Box Glow"].Transparency and espConfig.Boxes["Box Glow"].Transparency[1]) or 0.85) * 100),
-			Compact = true,
-			Min = 0,
-			Max = 100,
-			Decimals = 1,
-			Suffix = "%",
-			Callback = function(value)
-				if not espConfig.Boxes["Box Glow"].Transparency then
-					espConfig.Boxes["Box Glow"].Transparency = { 0.85, 0.85 }
-				end
-				espConfig.Boxes["Box Glow"].Transparency[1] = value / 100
-				espConfig.Boxes["Box Glow"].Transparency[2] = value / 100
-			end
-		})
-
-		local fillToggle = SectionLeft:Toggle({
-			Name = "Box Fill",
-			Flag = "Esp_Fill_Enabled",
-			Default = espConfig.Boxes.Filled.Enabled,
-			Callback = function(value)
-				espConfig.Boxes.Filled.Enabled = value
-			end
-		})
-
-		fillToggle:Colorpicker({
-			Flag = "Esp_Fill_Top",
-			Default = espConfig.Boxes.Filled.Top,
-			Alpha = 0,
-			Callback = function(value)
-				espConfig.Boxes.Filled.Top = value
-			end
-		})
-
-		fillToggle:Colorpicker({
-			Flag = "Esp_Fill_Bot",
-			Default = espConfig.Boxes.Filled.Bot,
-			Alpha = 0,
-			Callback = function(value)
-				espConfig.Boxes.Filled.Bot = value
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Fill Alpha",
-			Flag = "Esp_Fill_Trans",
-			Default = math.floor(((espConfig.Boxes.Filled.Transparency and espConfig.Boxes.Filled.Transparency[1]) or 0.85) * 100),
-			Compact = true,
-			Min = 0,
-			Max = 100,
-			Decimals = 1,
-			Suffix = "%",
-			Callback = function(value)
-				if not espConfig.Boxes.Filled.Transparency then
-					espConfig.Boxes.Filled.Transparency = { 0.85, 0.85 }
-				end
-				espConfig.Boxes.Filled.Transparency[1] = value / 100
-				espConfig.Boxes.Filled.Transparency[2] = value / 100
-			end
-		})
-
-		local healthBarToggle = SectionRight:Toggle({
-			Name = "Health Bar",
-			Flag = "Esp_HealthBar_Enabled",
-			Default = espConfig.Bars["Health Bar"].Enabled,
-			Callback = function(value)
-				espConfig.Bars["Health Bar"].Enabled = value
-			end
-		})
-
-		healthBarToggle:Colorpicker({
-			Flag = "Esp_HealthBar_Color",
-			Default = espConfig.Bars["Health Bar"].Color,
-			Alpha = 0,
-			Callback = function(value)
-				espConfig.Bars["Health Bar"].Color = value
-			end
-		})
-
-		local nameToggle = SectionRight:Toggle({
-			Name = "Name",
-			Flag = "Esp_Name_Enabled",
-			Default = espConfig.Texts.Name.Enabled,
-			Callback = function(value)
-				espConfig.Texts.Name.Enabled = value
-			end
-		})
-
-		nameToggle:Colorpicker({
-			Flag = "Esp_Name_Color",
-			Default = espConfig.Texts.Name.Color,
-			Alpha = 0,
-			Callback = function(value)
-				espConfig.Texts.Name.Color = value
-			end
-		})
-
-		local distToggle = SectionRight:Toggle({
-			Name = "Distance",
-			Flag = "Esp_Dist_Enabled",
-			Default = espConfig.Texts.Distance.Enabled,
-			Callback = function(value)
-				espConfig.Texts.Distance.Enabled = value
-			end
-		})
-
-		distToggle:Colorpicker({
-			Flag = "Esp_Dist_Color",
-			Default = espConfig.Texts.Distance.Color,
-			Alpha = 0,
-			Callback = function(value)
-				espConfig.Texts.Distance.Color = value
-			end
-		})
-
-		local weaponToggle = SectionRight:Toggle({
-			Name = "Weapon",
-			Flag = "Esp_Weapon_Enabled",
-			Default = espConfig.Texts.Weapon.Enabled,
-			Callback = function(value)
-				espConfig.Texts.Weapon.Enabled = value
-			end
-		})
-
-		weaponToggle:Colorpicker({
-			Flag = "Esp_Weapon_Color",
-			Default = espConfig.Texts.Weapon.Color,
-			Alpha = 0,
-			Callback = function(value)
-				espConfig.Texts.Weapon.Color = value
-			end
-		})
-
-		SectionRight:Toggle({
-			Name = "Weapon Icon",
-			Flag = "Esp_WeaponIcon_Enabled",
-			Default = espConfig.Texts.WeaponIcon.Enabled,
-			Callback = function(value)
-				espConfig.Texts.WeaponIcon.Enabled = value
-			end
-		})
-
-		SectionRight:Slider({
-			Name = "Icon Scale",
-			Flag = "Esp_WeaponIcon_Size",
-			Default = espConfig.Texts.WeaponIcon.Size,
-			Compact = true,
-			Min = 12,
-			Max = 48,
-			Decimals = 1,
-			Suffix = "px",
-			Callback = function(value)
-				espConfig.Texts.WeaponIcon.Size = value
-			end
-		})
-
-		local stateToggle = SectionRight:Toggle({
-			Name = "Flags",
-			Flag = "Esp_State_Enabled",
-			Default = espConfig.Texts.State.Enabled,
-			Callback = function(value)
-				espConfig.Texts.State.Enabled = value
-			end
-		})
-
-		stateToggle:Colorpicker({
-			Flag = "Esp_State_Color",
-			Default = espConfig.Texts.State.Color,
-			Alpha = 0,
-			Callback = function(value)
-				espConfig.Texts.State.Color = value
-			end
-		})
-
-		SectionRight:Button({
-			Name = "Unload ESP",
-			Callback = function()
-				EspInstance:Unload()
-				Library:Notification("Visuals safely unloaded.", 3, Library.Theme.Accent)
-			end
-		})
-	end
-
-	-- =========================================================================
-	-- 2. WORLD ESP (BOTS, ORES, PICKUPS, ANIMALS)
-	-- =========================================================================
-	do
-		local oreConfig = espConfig.Ores
-		local pickupConfig = espConfig.Pickups
-		local animalConfig = espConfig.Animals
-
-		local SectionLeft = SubPages["WorldESP"]:Section({Name = "Bots & Ores"})
-		local SectionRight = SubPages["WorldESP"]:Section({Name = "Pickups & Animals"})
-
-		-- Bots
-		SectionLeft:Toggle({
-			Name = "Enabled Bots",
-			Flag = "Esp_Bot_Enabled",
-			Default = espConfig.Bots.Enabled,
-			Callback = function(value)
-				espConfig.Bots.Enabled = value
-			end
-		})
-
-		SectionLeft:Toggle({
-			Name = "Custom Bot Colors",
-			Flag = "Esp_Bot_CustomColors",
-			Default = espConfig.Bots.CustomColors,
-			Callback = function(value)
-				espConfig.Bots.CustomColors = value
-			end
-		})
-
-		-- Ores
-		SectionLeft:Toggle({
-			Name = "Enabled Ores ESP",
-			Flag = "Esp_Ore_Enabled",
-			Default = oreConfig.Enabled,
-			Callback = function(value)
-				oreConfig.Enabled = value
-			end
-		})
-
-		SectionLeft:Toggle({
-			Name = "Show Ore Distance",
-			Flag = "Esp_Ore_ShowDistance",
-			Default = oreConfig.ShowDistance,
-			Callback = function(value)
-				oreConfig.ShowDistance = value
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Ore Max Distance",
-			Flag = "Esp_Ore_MaxDistance",
-			Default = oreConfig.MaxDistance,
-			Compact = true,
-			Min = 100,
-			Max = 5000,
-			Decimals = 1,
-			Suffix = " st",
-			Callback = function(value)
-				oreConfig.MaxDistance = value
-			end
-		})
-
-		local stoneToggle = SectionLeft:Toggle({
-			Name = "Stone Nodes",
-			Flag = "Esp_Ore_Stone_Enabled",
-			Default = oreConfig.Stone.Enabled,
-			Callback = function(value)
-				oreConfig.Stone.Enabled = value
-			end
-		})
-
-		stoneToggle:Colorpicker({
-			Flag = "Esp_Ore_Stone_Color",
-			Default = oreConfig.Stone.Color,
-			Alpha = 0,
-			Callback = function(value)
-				if typeof(value) == "Color3" then
-					oreConfig.Stone.Color = value
-				end
-			end
-		})
-
-		local sulfurToggle = SectionLeft:Toggle({
-			Name = "Sulfur Nodes",
-			Flag = "Esp_Ore_Sulfur_Enabled",
-			Default = oreConfig.Sulfur.Enabled,
-			Callback = function(value)
-				oreConfig.Sulfur.Enabled = value
-			end
-		})
-
-		sulfurToggle:Colorpicker({
-			Flag = "Esp_Ore_Sulfur_Color",
-			Default = oreConfig.Sulfur.Color,
-			Alpha = 0,
-			Callback = function(value)
-				if typeof(value) == "Color3" then
-					oreConfig.Sulfur.Color = value
-				end
-			end
-		})
-
-		local metalToggle = SectionLeft:Toggle({
-			Name = "Metal Nodes",
-			Flag = "Esp_Ore_Metal_Enabled",
-			Default = oreConfig.Metal.Enabled,
-			Callback = function(value)
-				oreConfig.Metal.Enabled = value
-			end
-		})
-
-		metalToggle:Colorpicker({
-			Flag = "Esp_Ore_Metal_Color",
-			Default = oreConfig.Metal.Color,
-			Alpha = 0,
-			Callback = function(value)
-				if typeof(value) == "Color3" then
-					oreConfig.Metal.Color = value
-				end
-			end
-		})
-
-		-- Pickups
-		local pickupToggle = SectionRight:Toggle({
-			Name = "Enabled Pickups ESP",
-			Flag = "Esp_Pickup_Enabled",
-			Default = pickupConfig.Enabled,
-			Callback = function(value)
-				pickupConfig.Enabled = value
-			end
-		})
-
-		pickupToggle:Colorpicker({
-			Flag = "Esp_Pickup_Color",
-			Default = pickupConfig.Color,
-			Alpha = 0,
-			Callback = function(value)
-				if typeof(value) == "Color3" then
-					pickupConfig.Color = value
-				end
-			end
-		})
-
-		SectionRight:Toggle({
-			Name = "Show Pickups Distance",
-			Flag = "Esp_Pickup_ShowDistance",
-			Default = pickupConfig.ShowDistance,
-			Callback = function(value)
-				pickupConfig.ShowDistance = value
-			end
-		})
-
-		SectionRight:Slider({
-			Name = "Pickups Max Distance",
-			Flag = "Esp_Pickup_MaxDistance",
-			Default = pickupConfig.MaxDistance,
-			Compact = true,
-			Min = 50,
-			Max = 2000,
-			Decimals = 1,
-			Suffix = " st",
-			Callback = function(value)
-				pickupConfig.MaxDistance = value
-			end
-		})
-
-		SectionRight:Dropdown({
-			Name = "Pickups Whitelist",
-			Flag = "Esp_Pickup_Whitelist",
-			Multi = true,
-			Items = validPickups,
-			Default = {},
-			Callback = function(value)
-				espConfig.Pickups.Whitelist = value
-				for _, data in pairs(EspInstance.PickupCache) do
-					if typeof(data) == "table" and data.Label then
-						if not isPickupAllowed(value, data.Name) then
-							data.Label.Visible = false
-						end
-					end
-				end
-			end
-		})
-
-		-- Animals
-		local animalToggle = SectionRight:Toggle({
-			Name = "Enabled Animals ESP",
-			Flag = "Esp_Animal_Enabled",
-			Default = animalConfig.Enabled,
-			Callback = function(value)
-				animalConfig.Enabled = value
-			end
-		})
-
-		animalToggle:Colorpicker({
-			Flag = "Esp_Animal_Color",
-			Default = animalConfig.Color,
-			Alpha = 0,
-			Callback = function(value)
-				if typeof(value) == "Color3" then
-					animalConfig.Color = value
-				end
-			end
-		})
-
-		SectionRight:Toggle({
-			Name = "Show Animals Distance",
-			Flag = "Esp_Animal_ShowDistance",
-			Default = animalConfig.ShowDistance,
-			Callback = function(value)
-				animalConfig.ShowDistance = value
-			end
-		})
-
-		SectionRight:Slider({
-			Name = "Animals Max Distance",
-			Flag = "Esp_Animal_MaxDistance",
-			Default = animalConfig.MaxDistance,
-			Compact = true,
-			Min = 100,
-			Max = 5000,
-			Decimals = 1,
-			Suffix = " st",
-			Callback = function(value)
-				animalConfig.MaxDistance = value
-			end
-		})
-	end
-
-	-- =========================================================================
-	-- 3. VIEWMODEL
-	-- =========================================================================
-	do
-		local SectionLeft = SubPages["Viewmodel"]:Section({Name = "Position & Rotation"})
-		local SectionRight = SubPages["Viewmodel"]:Section({Name = "Chams & Visuals"})
-
-		SectionLeft:Slider({
-			Name = "Offset X",
-			Flag = "VM_X",
-			Default = vmConfig.X or 0,
-			Compact = true,
-			Min = -5,
-			Max = 5,
-			Decimals = 2,
-			Suffix = "",
-			Callback = function(value)
-				vmConfig.X = value
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Offset Y",
-			Flag = "VM_Y",
-			Default = vmConfig.Y or 0,
-			Compact = true,
-			Min = -5,
-			Max = 5,
-			Decimals = 2,
-			Suffix = "",
-			Callback = function(value)
-				vmConfig.Y = value
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Offset Z",
-			Flag = "VM_Z",
-			Default = vmConfig.Z or 0,
-			Compact = true,
-			Min = -5,
-			Max = 5,
-			Decimals = 2,
-			Suffix = "",
-			Callback = function(value)
-				vmConfig.Z = value
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Rotation X",
-			Flag = "VM_RX",
-			Default = vmConfig.RX or 0,
-			Compact = true,
-			Min = -180,
-			Max = 180,
-			Decimals = 1,
-			Suffix = "°",
-			Callback = function(value)
-				vmConfig.RX = value
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Rotation Y",
-			Flag = "VM_RY",
-			Default = vmConfig.RY or 0,
-			Compact = true,
-			Min = -180,
-			Max = 180,
-			Decimals = 1,
-			Suffix = "°",
-			Callback = function(value)
-				vmConfig.RY = value
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Rotation Z",
-			Flag = "VM_RZ",
-			Default = vmConfig.RZ or 0,
-			Compact = true,
-			Min = -180,
-			Max = 180,
-			Decimals = 1,
-			Suffix = "°",
-			Callback = function(value)
-				vmConfig.RZ = value
-			end
-		})
-
-		SectionRight:Dropdown({
-			Name = "Gun Chams Mode",
-			Flag = "VM_GunMode",
-			Multi = false,
-			Items = {"off", "outline", "fill", "highlight", "rainbow", "forcefield", "neon"},
-			Default = vmConfig.GunMode or "highlight",
-			Callback = function(value)
-				vmConfig.GunMode = value
-			end
-		})
-
-		local gunColorToggle = SectionRight:Toggle({
-			Name = "Gun Chams Color",
-			Flag = "VM_GunColorToggle",
-			Default = true,
-			Callback = function() end
-		})
-
-		gunColorToggle:Colorpicker({
-			Flag = "VM_GunColor",
-			Default = vmConfig.GunColor or Color3.fromRGB(255, 60, 60),
-			Alpha = 0,
-			Callback = function(value)
-				vmConfig.GunColor = value
-			end
-		})
-
-		SectionRight:Dropdown({
-			Name = "Hand Chams Mode",
-			Flag = "VM_HandMode",
-			Multi = false,
-			Items = {"off", "outline", "fill", "highlight", "rainbow", "forcefield", "neon"},
-			Default = vmConfig.HandMode or "highlight",
-			Callback = function(value)
-				vmConfig.HandMode = value
-			end
-		})
-
-		local handColorToggle = SectionRight:Toggle({
-			Name = "Hand Chams Color",
-			Flag = "VM_HandColorToggle",
-			Default = true,
-			Callback = function() end
-		})
-
-		handColorToggle:Colorpicker({
-			Flag = "VM_HandColor",
-			Default = vmConfig.HandColor or Color3.fromRGB(60, 200, 255),
-			Alpha = 0,
-			Callback = function(value)
-				vmConfig.HandColor = value
-			end
-		})
-
-		SectionRight:Slider({
-			Name = "Fill Transparency",
-			Flag = "VM_FillT",
-			Default = (vmConfig.FillT or 0.4) * 100,
-			Compact = true,
-			Min = 0,
-			Max = 100,
-			Decimals = 1,
-			Suffix = "%",
-			Callback = function(value)
-				vmConfig.FillT = value / 100
-			end
-		})
-	end
-
-	-- =========================================================================
-	-- 4. WORLD VISUALS
-	-- =========================================================================
-	do
-		local SectionLeft = SubPages["WorldVisuals"]:Section({Name = "Lighting"})
-		local SectionRight = SubPages["WorldVisuals"]:Section({Name = "Environment"})
-
-		SectionLeft:Toggle({
-			Name = "Enabled World",
-			Flag = "World_Enabled",
-			Default = worldConfig.Enabled,
-			Callback = function(value)
-				worldConfig.Enabled = value
-				WorldVisuals:Update()
-			end
-		})
-
-		local ambientToggle = SectionLeft:Toggle({
-			Name = "Ambient",
-			Flag = "World_Ambient",
-			Default = worldConfig.Ambient,
-			Callback = function(value)
-				worldConfig.Ambient = value
-				WorldVisuals:Update()
-			end
-		})
-
-		ambientToggle:Colorpicker({
-			Flag = "World_AmbientColor",
-			Default = worldConfig.AmbientColor,
-			Alpha = 0,
-			Callback = function(value)
-				worldConfig.AmbientColor = value
-				if worldConfig.Ambient then
-					WorldVisuals:Update()
-				end
-			end
-		})
-
-		local outdoorToggle = SectionLeft:Toggle({
-			Name = "Outdoor Ambient",
-			Flag = "World_OutdoorAmbient",
-			Default = worldConfig.OutdoorAmbient,
-			Callback = function(value)
-				worldConfig.OutdoorAmbient = value
-				WorldVisuals:Update()
-			end
-		})
-
-		outdoorToggle:Colorpicker({
-			Flag = "World_OutdoorAmbientColor",
-			Default = worldConfig.OutdoorAmbientColor,
-			Alpha = 0,
-			Callback = function(value)
-				worldConfig.OutdoorAmbientColor = value
-				if worldConfig.OutdoorAmbient then
-					WorldVisuals:Update()
-				end
-			end
-		})
-
-		local skyToggle = SectionLeft:Toggle({
-			Name = "Custom Skybox",
-			Flag = "World_SkyChanger",
-			Default = worldConfig.SkyChanger,
-			Callback = function(value)
-				worldConfig.SkyChanger = value
-				WorldVisuals:Update()
-			end
-		})
-
-		SectionLeft:Dropdown({
-			Name = "Skybox Preset",
-			Flag = "World_SelectedSky",
-			Multi = false,
-			Items = WorldVisuals:GetSkyboxList(),
-			Default = worldConfig.SelectedSky,
-			Callback = function(value)
-				worldConfig.SelectedSky = value
-				if worldConfig.SkyChanger then
-					WorldVisuals:Update()
-				end
-			end
-		})
-
-		SectionLeft:Toggle({
-			Name = "Time Changer",
-			Flag = "World_TimeChanger",
-			Default = worldConfig.TimeChanger,
-			Callback = function(value)
-				worldConfig.TimeChanger = value
-				WorldVisuals:Update()
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Time",
-			Flag = "World_ClockTime",
-			Default = worldConfig.ClockTime,
-			Compact = true,
-			Min = 0,
-			Max = 24,
-			Decimals = 1,
-			Suffix = " h",
-			Callback = function(value)
-				worldConfig.ClockTime = value
-				if worldConfig.TimeChanger then
-					WorldVisuals:Update()
-				end
-			end
-		})
-
-		SectionLeft:Toggle({
-			Name = "Custom Brightness",
-			Flag = "World_Brightness",
-			Default = worldConfig.Brightness,
-			Callback = function(value)
-				worldConfig.Brightness = value
-				WorldVisuals:Update()
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Brightness",
-			Flag = "World_BrightnessValue",
-			Default = worldConfig.BrightnessValue,
-			Compact = true,
-			Min = 0,
-			Max = 10,
-			Decimals = 1,
-			Suffix = "",
-			Callback = function(value)
-				worldConfig.BrightnessValue = value
-				if worldConfig.Brightness then
-					WorldVisuals:Update()
-				end
-			end
-		})
-
-		SectionLeft:Toggle({
-			Name = "Custom Exposure",
-			Flag = "World_Exposure",
-			Default = worldConfig.Exposure,
-			Callback = function(value)
-				worldConfig.Exposure = value
-				WorldVisuals:Update()
-			end
-		})
-
-		SectionLeft:Slider({
-			Name = "Exposure",
-			Flag = "World_ExposureValue",
-			Default = worldConfig.ExposureValue,
-			Compact = true,
-			Min = -5,
-			Max = 5,
-			Decimals = 1,
-			Suffix = "",
-			Callback = function(value)
-				worldConfig.ExposureValue = value
-				if worldConfig.Exposure then
-					WorldVisuals:Update()
-				end
-			end
-		})
-
-		local fogToggle = SectionRight:Toggle({
-			Name = "Custom Fog",
-			Flag = "World_Fog",
-			Default = worldConfig.Fog,
-			Callback = function(value)
-				worldConfig.Fog = value
-				WorldVisuals:Update()
-			end
-		})
-
-		fogToggle:Colorpicker({
-			Flag = "World_FogColor",
-			Default = worldConfig.FogColor,
-			Alpha = 0,
-			Callback = function(value)
-				worldConfig.FogColor = value
-				if worldConfig.Fog then
-					WorldVisuals:Update()
-				end
-			end
-		})
-
-		SectionRight:Slider({
-			Name = "Fog Start",
-			Flag = "World_FogStart",
-			Default = worldConfig.FogStart,
-			Compact = true,
-			Min = 0,
-			Max = 5000,
-			Decimals = 1,
-			Suffix = " st",
-			Callback = function(value)
-				worldConfig.FogStart = value
-				if worldConfig.Fog then
-					WorldVisuals:Update()
-				end
-			end
-		})
-
-		SectionRight:Slider({
-			Name = "Fog End",
-			Flag = "World_FogEnd",
-			Default = worldConfig.FogEnd,
-			Compact = true,
-			Min = 0,
-			Max = 5000,
-			Decimals = 1,
-			Suffix = " st",
-			Callback = function(value)
-				worldConfig.FogEnd = value
-				if worldConfig.Fog then
-					WorldVisuals:Update()
-				end
-			end
-		})
-
-		local ccToggle = SectionRight:Toggle({
-			Name = "Color Correction",
-			Flag = "World_ColorCorrection",
-			Default = worldConfig.ColorCorrection,
-			Callback = function(value)
-				worldConfig.ColorCorrection = value
-				WorldVisuals:Update()
-			end
-		})
-
-		ccToggle:Colorpicker({
-			Flag = "World_Tint",
-			Default = worldConfig.Tint,
-			Alpha = 0,
-			Callback = function(value)
-				worldConfig.Tint = value
-				if worldConfig.ColorCorrection then
-					WorldVisuals:Update()
-				end
-			end
-		})
-
-		SectionRight:Slider({
-			Name = "Saturation",
-			Flag = "World_Saturation",
-			Default = worldConfig.Saturation,
-			Compact = true,
-			Min = -2,
-			Max = 2,
-			Decimals = 1,
-			Suffix = "",
-			Callback = function(value)
-				worldConfig.Saturation = value
-				if worldConfig.ColorCorrection then
-					WorldVisuals:Update()
-				end
-			end
-		})
-
-		SectionRight:Slider({
-			Name = "Contrast",
-			Flag = "World_Contrast",
-			Default = worldConfig.Contrast,
-			Compact = true,
-			Min = -2,
-			Max = 2,
-			Decimals = 1,
-			Suffix = "",
-			Callback = function(value)
-				worldConfig.Contrast = value
-				if worldConfig.ColorCorrection then
-					WorldVisuals:Update()
-				end
-			end
-		})
-
-		local atmoToggle = SectionRight:Toggle({
-			Name = "Atmosphere",
-			Flag = "World_Atmosphere",
-			Default = worldConfig.Atmosphere,
-			Callback = function(value)
-				worldConfig.Atmosphere = value
-				WorldVisuals:Update()
-			end
-		})
-
-		atmoToggle:Colorpicker({
-			Flag = "World_AtmosphereColor",
-			Default = worldConfig.AtmosphereColor,
-			Alpha = 0,
-			Callback = function(value)
-				worldConfig.AtmosphereColor = value
-				if worldConfig.Atmosphere then
-					WorldVisuals:Update()
-				end
-			end
-		})
-
-		atmoToggle:Colorpicker({
-			Flag = "World_AtmosphereDecay",
-			Default = worldConfig.AtmosphereDecay,
-			Alpha = 0,
-			Callback = function(value)
-				worldConfig.AtmosphereDecay = value
-				if worldConfig.Atmosphere then
-					WorldVisuals:Update()
-				end
-			end
-		})
-
-		SectionRight:Slider({
-			Name = "Density",
-			Flag = "World_AtmosphereDensity",
-			Default = worldConfig.AtmosphereDensity,
-			Compact = true,
-			Min = 0,
-			Max = 1,
-			Decimals = 2,
-			Suffix = "",
-			Callback = function(value)
-				worldConfig.AtmosphereDensity = value
-				if worldConfig.Atmosphere then
-					WorldVisuals:Update()
-				end
-			end
-		})
-
-		SectionRight:Slider({
-			Name = "Offset",
-			Flag = "World_AtmosphereOffset",
-			Default = worldConfig.AtmosphereOffset,
-			Compact = true,
-			Min = 0,
-			Max = 1,
-			Decimals = 2,
-			Suffix = "",
-			Callback = function(value)
-				worldConfig.AtmosphereOffset = value
-				if worldConfig.Atmosphere then
-					WorldVisuals:Update()
-				end
-			end
-		})
-
-		SectionRight:Slider({
-			Name = "Haze",
-			Flag = "World_AtmosphereHaze",
-			Default = worldConfig.AtmosphereHaze,
-			Compact = true,
-			Min = 0,
-			Max = 10,
-			Decimals = 1,
-			Suffix = "",
-			Callback = function(value)
-				worldConfig.AtmosphereHaze = value
-				if worldConfig.Atmosphere then
-					WorldVisuals:Update()
-				end
-			end
-		})
-
-		SectionRight:Slider({
-			Name = "Glare",
-			Flag = "World_AtmosphereGlare",
-			Default = worldConfig.AtmosphereGlare,
-			Compact = true,
-			Min = 0,
-			Max = 10,
-			Decimals = 1,
-			Suffix = "",
-			Callback = function(value)
-				worldConfig.AtmosphereGlare = value
-				if worldConfig.Atmosphere then
-					WorldVisuals:Update()
-				end
-			end
-		})
-	end
+-- [made by `@codethan` on discord]
+return function(Window, Flags)
+    local VisualsTab = Window:Tab({ Name = "Visuals" })
+
+    ---------------------------------------------------------
+    -- 1. Combined ESP SubPage (Player, Bot, World)
+    ---------------------------------------------------------
+    local ESPSubPage = VisualsTab:SubPage({ Name = "ESP" })
+
+    -- LEFT SECTION: Player ESP
+    local PlayerSec = ESPSubPage:Section({ Name = "Player ESP", Side = "Left" })
+
+    PlayerSec:Toggle({
+        Name = "Enable Player ESP",
+        Flag = "ESP_Player_Enabled",
+        Callback = function(val) Flags.ESP_Player_Enabled = val end
+    })
+
+    PlayerSec:Toggle({
+        Name = "Boxes",
+        Flag = "ESP_Player_Boxes",
+        Callback = function(val) Flags.ESP_Player_Boxes = val end
+    }):ColorPicker({
+        Default = Color3.fromRGB(255, 255, 255),
+        Flag = "ESP_Player_BoxColor",
+        Callback = function(col) Flags.ESP_Player_BoxColor = col end
+    })
+
+    PlayerSec:Dropdown({
+        Name = "Box Type",
+        List = { "2D Box", "Corner Box", "3D Box" },
+        Default = "2D Box",
+        Flag = "ESP_Player_BoxType",
+        Callback = function(val) Flags.ESP_Player_BoxType = val end
+    })
+
+    PlayerSec:Toggle({
+        Name = "Tracers",
+        Flag = "ESP_Player_Tracers",
+        Callback = function(val) Flags.ESP_Player_Tracers = val end
+    }):ColorPicker({
+        Default = Color3.fromRGB(255, 0, 0),
+        Flag = "ESP_Player_TracerColor",
+        Callback = function(col) Flags.ESP_Player_TracerColor = col end
+    })
+
+    PlayerSec:Toggle({
+        Name = "Show Name",
+        Flag = "ESP_Player_Name",
+        Callback = function(val) Flags.ESP_Player_Name = val end
+    }):ColorPicker({
+        Default = Color3.fromRGB(255, 255, 255),
+        Flag = "ESP_Player_NameColor",
+        Callback = function(col) Flags.ESP_Player_NameColor = col end
+    })
+
+    PlayerSec:Toggle({
+        Name = "Show Health",
+        Flag = "ESP_Player_Health",
+        Callback = function(val) Flags.ESP_Player_Health = val end
+    })
+
+    PlayerSec:Toggle({
+        Name = "Show Distance",
+        Flag = "ESP_Player_Distance",
+        Callback = function(val) Flags.ESP_Player_Distance = val end
+    })
+
+    PlayerSec:Toggle({
+        Name = "Show Weapon",
+        Flag = "ESP_Player_Weapon",
+        Callback = function(val) Flags.ESP_Player_Weapon = val end
+    })
+
+    PlayerSec:Slider({
+        Name = "Max Distance",
+        Min = 100,
+        Max = 3000,
+        Default = 1000,
+        Unit = "m",
+        Flag = "ESP_Player_MaxDist",
+        Callback = function(val) Flags.ESP_Player_MaxDist = val end
+    })
+
+    -- RIGHT SECTION: Bot & World ESP
+    local WorldBotSec = ESPSubPage:Section({ Name = "Bot & World ESP", Side = "Right" })
+
+    -- Bots
+    WorldBotSec:Toggle({
+        Name = "Enable Bot ESP",
+        Flag = "ESP_Bot_Enabled",
+        Callback = function(val) Flags.ESP_Bot_Enabled = val end
+    }):ColorPicker({
+        Default = Color3.fromRGB(255, 150, 0),
+        Flag = "ESP_Bot_Color",
+        Callback = function(col) Flags.ESP_Bot_Color = col end
+    })
+
+    WorldBotSec:Toggle({
+        Name = "Bot Health & Name",
+        Flag = "ESP_Bot_Info",
+        Callback = function(val) Flags.ESP_Bot_Info = val end
+    })
+
+    -- Ores
+    WorldBotSec:Toggle({
+        Name = "Enable Ore ESP",
+        Flag = "ESP_Ore_Enabled",
+        Callback = function(val) Flags.ESP_Ore_Enabled = val end
+    }):ColorPicker({
+        Default = Color3.fromRGB(0, 200, 255),
+        Flag = "ESP_Ore_Color",
+        Callback = function(col) Flags.ESP_Ore_Color = col end
+    })
+
+    WorldBotSec:Dropdown({
+        Name = "Ore Filter",
+        List = { "All", "Sulfur", "Metal", "Stone" },
+        Default = "All",
+        Flag = "ESP_Ore_Filter",
+        Callback = function(val) Flags.ESP_Ore_Filter = val end
+    })
+
+    -- Pickups & Animals
+    WorldBotSec:Toggle({
+        Name = "Pickups ESP",
+        Flag = "ESP_Pickups_Enabled",
+        Callback = function(val) Flags.ESP_Pickups_Enabled = val end
+    }):ColorPicker({
+        Default = Color3.fromRGB(0, 255, 100),
+        Flag = "ESP_Pickups_Color",
+        Callback = function(col) Flags.ESP_Pickups_Color = col end
+    })
+
+    WorldBotSec:Toggle({
+        Name = "Animals ESP",
+        Flag = "ESP_Animals_Enabled",
+        Callback = function(val) Flags.ESP_Animals_Enabled = val end
+    }):ColorPicker({
+        Default = Color3.fromRGB(200, 200, 0),
+        Flag = "ESP_Animals_Color",
+        Callback = function(col) Flags.ESP_Animals_Color = col end
+    })
+
+    WorldBotSec:Slider({
+        Name = "World Max Distance",
+        Min = 50,
+        Max = 2000,
+        Default = 500,
+        Unit = "m",
+        Flag = "ESP_World_MaxDist",
+        Callback = function(val) Flags.ESP_World_MaxDist = val end
+    })
+
+    ---------------------------------------------------------
+    -- 2. Viewmodel SubPage
+    ---------------------------------------------------------
+    local VMSubPage = VisualsTab:SubPage({ Name = "Viewmodel" })
+    local VMPosSec = VMSubPage:Section({ Name = "Position & Rotation", Side = "Left" })
+    local VMChamsSec = VMSubPage:Section({ Name = "Chams & Visuals", Side = "Right" })
+
+    -- Offset X/Y/Z
+    VMPosSec:Slider({ Name = "Offset X", Min = -5, Max = 5, Default = 0, Decimals = 2, Flag = "VM_OffsetX", Callback = function(v) if getgenv().CrezVM then getgenv().CrezVM.Config.OffsetX = v end end })
+    VMPosSec:Slider({ Name = "Offset Y", Min = -5, Max = 5, Default = 0, Decimals = 2, Flag = "VM_OffsetY", Callback = function(v) if getgenv().CrezVM then getgenv().CrezVM.Config.OffsetY = v end end })
+    VMPosSec:Slider({ Name = "Offset Z", Min = -5, Max = 5, Default = 0, Decimals = 2, Flag = "VM_OffsetZ", Callback = function(v) if getgenv().CrezVM then getgenv().CrezVM.Config.OffsetZ = v end end })
+
+    -- Rotation X/Y/Z
+    VMPosSec:Slider({ Name = "Rotation X", Min = -180, Max = 180, Default = 0, Flag = "VM_RotX", Callback = function(v) if getgenv().CrezVM then getgenv().CrezVM.Config.RotX = v end end })
+    VMPosSec:Slider({ Name = "Rotation Y", Min = -180, Max = 180, Default = 0, Flag = "VM_RotY", Callback = function(v) if getgenv().CrezVM then getgenv().CrezVM.Config.RotY = v end end })
+    VMPosSec:Slider({ Name = "Rotation Z", Min = -180, Max = 180, Default = 0, Flag = "VM_RotZ", Callback = function(v) if getgenv().CrezVM then getgenv().CrezVM.Config.RotZ = v end end })
+
+    -- Chams
+    VMChamsSec:Dropdown({ Name = "Gun Chams Mode", List = { "Off", "ForceField", "Neon", "Glass", "Wireframe" }, Default = "Off", Flag = "VM_GunMode", Callback = function(v) if getgenv().CrezVM then getgenv().CrezVM.Config.GunChamsMode = v end end })
+    VMChamsSec:ColorPicker({ Name = "Gun Color", Default = Color3.fromRGB(255, 0, 0), Flag = "VM_GunColor", Callback = function(c) if getgenv().CrezVM then getgenv().CrezVM.Config.GunChamsColor = c end end })
+
+    VMChamsSec:Dropdown({ Name = "Hand Chams Mode", List = { "Off", "ForceField", "Neon", "Glass", "Wireframe" }, Default = "Off", Flag = "VM_HandMode", Callback = function(v) if getgenv().CrezVM then getgenv().CrezVM.Config.HandChamsMode = v end end })
+    VMChamsSec:ColorPicker({ Name = "Hand Color", Default = Color3.fromRGB(0, 255, 255), Flag = "VM_HandColor", Callback = function(c) if getgenv().CrezVM then getgenv().CrezVM.Config.HandChamsColor = c end end })
+
+    VMChamsSec:Slider({ Name = "Fill Transparency", Min = 0, Max = 1, Default = 0.5, Decimals = 2, Flag = "VM_Trans", Callback = function(v) if getgenv().CrezVM then getgenv().CrezVM.Config.ChamsTransparency = v end end })
+
+    ---------------------------------------------------------
+    -- 3. World Lighting SubPage
+    ---------------------------------------------------------
+    local WorldSubPage = VisualsTab:SubPage({ Name = "World Visuals" })
+    local LightSec = WorldSubPage:Section({ Name = "Lighting", Side = "Left" })
+    local EnvSec = WorldSubPage:Section({ Name = "Environment", Side = "Right" })
+
+    LightSec:Toggle({ Name = "Fullbright", Flag = "World_Fullbright", Callback = function(v) Flags.World_Fullbright = v end })
+    LightSec:Toggle({ Name = "No Shadows", Flag = "World_NoShadows", Callback = function(v) Flags.World_NoShadows = v end })
+
+    EnvSec:Slider({ Name = "Field of View", Min = 60, Max = 120, Default = 90, Flag = "World_FOV", Callback = function(v) workspace.CurrentCamera.FieldOfView = v end })
 end
