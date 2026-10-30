@@ -1,5 +1,3 @@
-
-
 return function(ctx)
 	local VisualsPage = ctx.VisualsPage
 	local espConfig = ctx.espConfig
@@ -12,17 +10,29 @@ return function(ctx)
 
 	local SubPages = {
 		["ESP"] = VisualsPage:SubPage({Name = "Player ESP"}),
-		["BotESP"] = VisualsPage:SubPage({Name = "Bot ESP"}),
-		["WorldESP"] = VisualsPage:SubPage({Name = "World ESP"}),
 		["WorldVisuals"] = VisualsPage:SubPage({Name = "World"})
 	}
 
-	-- PLAYER ESP
+	-- PLAYER ESP (Bot ESP + World Object ESP merged in as sub-sections)
 	do
-		local SectionLeft = SubPages["ESP"]:Section({Name = "General & Bounds"})
-		local SectionRight = SubPages["ESP"]:Section({Name = "Overlays & Colors"})
+		local botBoxes = espConfig.Bots.Boxes
+		local botBoundingBox = botBoxes["Bounding Box"]
+		local botGlow = botBoxes["Box Glow"]
+		local botFill = botBoxes.Filled
+		local botBars = espConfig.Bots.Bars
+		local botTexts = espConfig.Bots.Texts
 
-		SectionLeft:Toggle({
+		local oreConfig = espConfig.Ores
+		local pickupConfig = espConfig.Pickups
+		local animalConfig = espConfig.Animals
+
+		local SectionGeneral = SubPages["ESP"]:Section({Name = "General & Bounds", Side = "Left"})
+		local SectionOverlays = SubPages["ESP"]:Section({Name = "Overlays & Colors", Side = "Right"})
+		local SectionBots = SubPages["ESP"]:Section({Name = "Bot ESP", Side = "Left"})
+		local SectionWorld = SubPages["ESP"]:Section({Name = "World ESP", Side = "Right"})
+
+		-- Player: General & Bounds
+		SectionGeneral:Toggle({
 			Name = "Enabled ESP",
 			Flag = "Esp_Enabled",
 			Default = espConfig.Enabled,
@@ -31,7 +41,7 @@ return function(ctx)
 			end
 		})
 
-		SectionLeft:Toggle({
+		SectionGeneral:Toggle({
 			Name = "Players",
 			Flag = "Esp_Players",
 			Default = espConfig.Players,
@@ -40,7 +50,7 @@ return function(ctx)
 			end
 		})
 
-		SectionLeft:Slider({
+		SectionGeneral:Slider({
 			Name = "Framerate Limit",
 			Flag = "Esp_LimitFPS",
 			Default = espConfig.LimitFPS,
@@ -54,7 +64,7 @@ return function(ctx)
 			end
 		})
 
-		local boxToggle = SectionLeft:Toggle({
+		local boxToggle = SectionGeneral:Toggle({
 			Name = "Bounding Box",
 			Flag = "Esp_Boxes_Enabled",
 			Default = espConfig.Boxes.Enabled,
@@ -81,7 +91,7 @@ return function(ctx)
 			end
 		})
 
-		SectionLeft:Toggle({
+		SectionGeneral:Toggle({
 			Name = "Dynamic Bounds",
 			Flag = "Esp_Bounding_Enabled",
 			Default = espConfig.Boxes["Bounding Box"].Enabled,
@@ -90,7 +100,7 @@ return function(ctx)
 			end
 		})
 
-		SectionLeft:Toggle({
+		SectionGeneral:Toggle({
 			Name = "Include Accessories",
 			Flag = "Esp_Bounding_Accessories",
 			Default = espConfig.Boxes["Bounding Box"].IncludeAccessories,
@@ -99,7 +109,7 @@ return function(ctx)
 			end
 		})
 
-		SectionLeft:Slider({
+		SectionGeneral:Slider({
 			Name = "Padding X",
 			Flag = "Esp_Bounding_BoxX",
 			Default = espConfig.Boxes["Bounding Box"].BoxX,
@@ -113,7 +123,7 @@ return function(ctx)
 			end
 		})
 
-		SectionLeft:Slider({
+		SectionGeneral:Slider({
 			Name = "Padding Y",
 			Flag = "Esp_Bounding_BoxY",
 			Default = espConfig.Boxes["Bounding Box"].BoxY,
@@ -127,7 +137,7 @@ return function(ctx)
 			end
 		})
 
-		local glowToggle = SectionLeft:Toggle({
+		local glowToggle = SectionGeneral:Toggle({
 			Name = "Box Glow",
 			Flag = "Esp_Glow_Enabled",
 			Default = espConfig.Boxes["Box Glow"].Enabled,
@@ -154,7 +164,7 @@ return function(ctx)
 			end
 		})
 
-		SectionLeft:Slider({
+		SectionGeneral:Slider({
 			Name = "Glow Alpha",
 			Flag = "Esp_Glow_Trans",
 			Default = math.floor(((espConfig.Boxes["Box Glow"].Transparency and espConfig.Boxes["Box Glow"].Transparency[1]) or 0.85) * 100),
@@ -172,7 +182,7 @@ return function(ctx)
 			end
 		})
 
-		local fillToggle = SectionLeft:Toggle({
+		local fillToggle = SectionGeneral:Toggle({
 			Name = "Box Fill",
 			Flag = "Esp_Fill_Enabled",
 			Default = espConfig.Boxes.Filled.Enabled,
@@ -199,7 +209,7 @@ return function(ctx)
 			end
 		})
 
-		SectionLeft:Slider({
+		SectionGeneral:Slider({
 			Name = "Fill Alpha",
 			Flag = "Esp_Fill_Trans",
 			Default = math.floor(((espConfig.Boxes.Filled.Transparency and espConfig.Boxes.Filled.Transparency[1]) or 0.85) * 100),
@@ -217,7 +227,8 @@ return function(ctx)
 			end
 		})
 
-		local healthBarToggle = SectionRight:Toggle({
+		-- Player: Overlays & Colors
+		local healthBarToggle = SectionOverlays:Toggle({
 			Name = "Health Bar",
 			Flag = "Esp_HealthBar_Enabled",
 			Default = espConfig.Bars["Health Bar"].Enabled,
@@ -235,7 +246,7 @@ return function(ctx)
 			end
 		})
 
-		local nameToggle = SectionRight:Toggle({
+		local nameToggle = SectionOverlays:Toggle({
 			Name = "Name",
 			Flag = "Esp_Name_Enabled",
 			Default = espConfig.Texts.Name.Enabled,
@@ -253,7 +264,7 @@ return function(ctx)
 			end
 		})
 
-		local distToggle = SectionRight:Toggle({
+		local distToggle = SectionOverlays:Toggle({
 			Name = "Distance",
 			Flag = "Esp_Dist_Enabled",
 			Default = espConfig.Texts.Distance.Enabled,
@@ -271,7 +282,7 @@ return function(ctx)
 			end
 		})
 
-		local weaponToggle = SectionRight:Toggle({
+		local weaponToggle = SectionOverlays:Toggle({
 			Name = "Weapon",
 			Flag = "Esp_Weapon_Enabled",
 			Default = espConfig.Texts.Weapon.Enabled,
@@ -289,7 +300,7 @@ return function(ctx)
 			end
 		})
 
-		SectionRight:Toggle({
+		SectionOverlays:Toggle({
 			Name = "Weapon Icon",
 			Flag = "Esp_WeaponIcon_Enabled",
 			Default = espConfig.Texts.WeaponIcon.Enabled,
@@ -298,7 +309,7 @@ return function(ctx)
 			end
 		})
 
-		SectionRight:Slider({
+		SectionOverlays:Slider({
 			Name = "Icon Scale",
 			Flag = "Esp_WeaponIcon_Size",
 			Default = espConfig.Texts.WeaponIcon.Size,
@@ -312,7 +323,7 @@ return function(ctx)
 			end
 		})
 
-		local stateToggle = SectionRight:Toggle({
+		local stateToggle = SectionOverlays:Toggle({
 			Name = "Flags",
 			Flag = "Esp_State_Enabled",
 			Default = espConfig.Texts.State.Enabled,
@@ -330,28 +341,16 @@ return function(ctx)
 			end
 		})
 
-		SectionRight:Button({
+		SectionOverlays:Button({
 			Name = "Unload ESP",
 			Callback = function()
 				EspInstance:Unload()
 				Library:Notification("Visuals safely unloaded.", 3, Library.Theme.Accent)
 			end
 		})
-	end
 
-	-- BOT ESP
-	do
-		local botBoxes = espConfig.Bots.Boxes
-		local botBoundingBox = botBoxes["Bounding Box"]
-		local botGlow = botBoxes["Box Glow"]
-		local botFill = botBoxes.Filled
-		local botBars = espConfig.Bots.Bars
-		local botTexts = espConfig.Bots.Texts
-
-		local SectionLeft = SubPages["BotESP"]:Section({Name = "General & Bounds"})
-		local SectionRight = SubPages["BotESP"]:Section({Name = "Overlays & Colors"})
-
-		SectionLeft:Toggle({
+		-- Bots (merged section)
+		SectionBots:Toggle({
 			Name = "Enabled Bots",
 			Flag = "Esp_Bot_Enabled",
 			Default = espConfig.Bots.Enabled,
@@ -360,7 +359,7 @@ return function(ctx)
 			end
 		})
 
-		SectionLeft:Toggle({
+		SectionBots:Toggle({
 			Name = "Custom Bot Colors",
 			Flag = "Esp_Bot_CustomColors",
 			Default = espConfig.Bots.CustomColors,
@@ -369,7 +368,7 @@ return function(ctx)
 			end
 		})
 
-		local botBoxToggle = SectionLeft:Toggle({
+		local botBoxToggle = SectionBots:Toggle({
 			Name = "Bounding Box",
 			Flag = "Esp_Bot_Boxes_Enabled",
 			Default = botBoxes.Enabled,
@@ -396,7 +395,7 @@ return function(ctx)
 			end
 		})
 
-		SectionLeft:Toggle({
+		SectionBots:Toggle({
 			Name = "Dynamic Bounds",
 			Flag = "Esp_Bot_Bounding_Enabled",
 			Default = botBoundingBox.Enabled,
@@ -405,7 +404,7 @@ return function(ctx)
 			end
 		})
 
-		SectionLeft:Toggle({
+		SectionBots:Toggle({
 			Name = "Include Accessories",
 			Flag = "Esp_Bot_Bounding_Accessories",
 			Default = botBoundingBox.IncludeAccessories,
@@ -414,7 +413,7 @@ return function(ctx)
 			end
 		})
 
-		SectionLeft:Slider({
+		SectionBots:Slider({
 			Name = "Padding X",
 			Flag = "Esp_Bot_Bounding_BoxX",
 			Default = botBoundingBox.BoxX,
@@ -428,7 +427,7 @@ return function(ctx)
 			end
 		})
 
-		SectionLeft:Slider({
+		SectionBots:Slider({
 			Name = "Padding Y",
 			Flag = "Esp_Bot_Bounding_BoxY",
 			Default = botBoundingBox.BoxY,
@@ -442,7 +441,7 @@ return function(ctx)
 			end
 		})
 
-		local botGlowToggle = SectionLeft:Toggle({
+		local botGlowToggle = SectionBots:Toggle({
 			Name = "Box Glow",
 			Flag = "Esp_Bot_Glow_Enabled",
 			Default = botGlow.Enabled,
@@ -469,7 +468,7 @@ return function(ctx)
 			end
 		})
 
-		SectionLeft:Slider({
+		SectionBots:Slider({
 			Name = "Glow Alpha",
 			Flag = "Esp_Bot_Glow_Trans",
 			Default = math.floor(((botGlow.Transparency and botGlow.Transparency[1]) or 0.85) * 100),
@@ -487,7 +486,7 @@ return function(ctx)
 			end
 		})
 
-		local botFillToggle = SectionLeft:Toggle({
+		local botFillToggle = SectionBots:Toggle({
 			Name = "Box Fill",
 			Flag = "Esp_Bot_Fill_Enabled",
 			Default = botFill.Enabled,
@@ -514,7 +513,7 @@ return function(ctx)
 			end
 		})
 
-		SectionLeft:Slider({
+		SectionBots:Slider({
 			Name = "Fill Alpha",
 			Flag = "Esp_Bot_Fill_Trans",
 			Default = math.floor(((botFill.Transparency and botFill.Transparency[1]) or 0.85) * 100),
@@ -532,7 +531,7 @@ return function(ctx)
 			end
 		})
 
-		local botHealthBarToggle = SectionRight:Toggle({
+		local botHealthBarToggle = SectionBots:Toggle({
 			Name = "Health Bar",
 			Flag = "Esp_Bot_HealthBar_Enabled",
 			Default = botBars["Health Bar"].Enabled,
@@ -550,7 +549,7 @@ return function(ctx)
 			end
 		})
 
-		local botNameToggle = SectionRight:Toggle({
+		local botNameToggle = SectionBots:Toggle({
 			Name = "Name",
 			Flag = "Esp_Bot_Name_Enabled",
 			Default = botTexts.Name.Enabled,
@@ -568,7 +567,7 @@ return function(ctx)
 			end
 		})
 
-		local botDistToggle = SectionRight:Toggle({
+		local botDistToggle = SectionBots:Toggle({
 			Name = "Distance",
 			Flag = "Esp_Bot_Dist_Enabled",
 			Default = botTexts.Distance.Enabled,
@@ -586,7 +585,7 @@ return function(ctx)
 			end
 		})
 
-		local botWeaponToggle = SectionRight:Toggle({
+		local botWeaponToggle = SectionBots:Toggle({
 			Name = "Weapon",
 			Flag = "Esp_Bot_Weapon_Enabled",
 			Default = botTexts.Weapon.Enabled,
@@ -604,7 +603,7 @@ return function(ctx)
 			end
 		})
 
-		SectionRight:Toggle({
+		SectionBots:Toggle({
 			Name = "Weapon Icon",
 			Flag = "Esp_Bot_WeaponIcon_Enabled",
 			Default = botTexts.WeaponIcon.Enabled,
@@ -613,7 +612,7 @@ return function(ctx)
 			end
 		})
 
-		SectionRight:Slider({
+		SectionBots:Slider({
 			Name = "Icon Scale",
 			Flag = "Esp_Bot_WeaponIcon_Size",
 			Default = botTexts.WeaponIcon.Size,
@@ -627,7 +626,7 @@ return function(ctx)
 			end
 		})
 
-		local botStateToggle = SectionRight:Toggle({
+		local botStateToggle = SectionBots:Toggle({
 			Name = "Flags",
 			Flag = "Esp_Bot_State_Enabled",
 			Default = botTexts.State.Enabled,
@@ -644,18 +643,9 @@ return function(ctx)
 				botTexts.State.Color = value
 			end
 		})
-	end
 
-	-- WORLD ESP
-	do
-		local oreConfig = espConfig.Ores
-		local pickupConfig = espConfig.Pickups
-		local animalConfig = espConfig.Animals
-
-		local SectionLeft = SubPages["WorldESP"]:Section({Name = "Ore ESP", Side = "Left"})
-		local SectionRight = SubPages["WorldESP"]:Section({Name = "Pickups & Animals", Side = "Right"})
-
-		SectionLeft:Toggle({
+		-- World ESP (ores, pickups, animals - merged section)
+		SectionWorld:Toggle({
 			Name = "Enabled Ores ESP",
 			Flag = "Esp_Ore_Enabled",
 			Default = oreConfig.Enabled,
@@ -664,8 +654,8 @@ return function(ctx)
 			end
 		})
 
-		SectionLeft:Toggle({
-			Name = "Show Distance",
+		SectionWorld:Toggle({
+			Name = "Show Ore Distance",
 			Flag = "Esp_Ore_ShowDistance",
 			Default = oreConfig.ShowDistance,
 			Callback = function(value)
@@ -673,8 +663,8 @@ return function(ctx)
 			end
 		})
 
-		SectionLeft:Slider({
-			Name = "Max Distance",
+		SectionWorld:Slider({
+			Name = "Ore Max Distance",
 			Flag = "Esp_Ore_MaxDistance",
 			Default = oreConfig.MaxDistance,
 			Compact = true,
@@ -687,7 +677,7 @@ return function(ctx)
 			end
 		})
 
-		local stoneToggle = SectionLeft:Toggle({
+		local stoneToggle = SectionWorld:Toggle({
 			Name = "Stone Nodes",
 			Flag = "Esp_Ore_Stone_Enabled",
 			Default = oreConfig.Stone.Enabled,
@@ -707,7 +697,7 @@ return function(ctx)
 			end
 		})
 
-		local sulfurToggle = SectionLeft:Toggle({
+		local sulfurToggle = SectionWorld:Toggle({
 			Name = "Sulfur Nodes",
 			Flag = "Esp_Ore_Sulfur_Enabled",
 			Default = oreConfig.Sulfur.Enabled,
@@ -727,7 +717,7 @@ return function(ctx)
 			end
 		})
 
-		local metalToggle = SectionLeft:Toggle({
+		local metalToggle = SectionWorld:Toggle({
 			Name = "Metal Nodes",
 			Flag = "Esp_Ore_Metal_Enabled",
 			Default = oreConfig.Metal.Enabled,
@@ -747,7 +737,7 @@ return function(ctx)
 			end
 		})
 
-		local pickupToggle = SectionRight:Toggle({
+		local pickupToggle = SectionWorld:Toggle({
 			Name = "Enabled Pickups ESP",
 			Flag = "Esp_Pickup_Enabled",
 			Default = pickupConfig.Enabled,
@@ -767,7 +757,7 @@ return function(ctx)
 			end
 		})
 
-		SectionRight:Toggle({
+		SectionWorld:Toggle({
 			Name = "Show Pickups Distance",
 			Flag = "Esp_Pickup_ShowDistance",
 			Default = pickupConfig.ShowDistance,
@@ -776,7 +766,7 @@ return function(ctx)
 			end
 		})
 
-		SectionRight:Slider({
+		SectionWorld:Slider({
 			Name = "Pickups Max Distance",
 			Flag = "Esp_Pickup_MaxDistance",
 			Default = pickupConfig.MaxDistance,
@@ -790,7 +780,7 @@ return function(ctx)
 			end
 		})
 
-		SectionRight:Dropdown({
+		SectionWorld:Dropdown({
 			Name = "Pickups Whitelist",
 			Flag = "Esp_Pickup_Whitelist",
 			Multi = true,
@@ -808,7 +798,7 @@ return function(ctx)
 			end
 		})
 
-		local animalToggle = SectionRight:Toggle({
+		local animalToggle = SectionWorld:Toggle({
 			Name = "Enabled Animals ESP",
 			Flag = "Esp_Animal_Enabled",
 			Default = animalConfig.Enabled,
@@ -828,7 +818,7 @@ return function(ctx)
 			end
 		})
 
-		SectionRight:Toggle({
+		SectionWorld:Toggle({
 			Name = "Show Animals Distance",
 			Flag = "Esp_Animal_ShowDistance",
 			Default = animalConfig.ShowDistance,
@@ -837,7 +827,7 @@ return function(ctx)
 			end
 		})
 
-		SectionRight:Slider({
+		SectionWorld:Slider({
 			Name = "Animals Max Distance",
 			Flag = "Esp_Animal_MaxDistance",
 			Default = animalConfig.MaxDistance,
@@ -852,7 +842,7 @@ return function(ctx)
 		})
 	end
 
-	-- WORLD
+	-- WORLD (lighting / environment, untouched)
 	do
 		local SectionLeft = SubPages["WorldVisuals"]:Section({Name = "Lighting"})
 		local SectionRight = SubPages["WorldVisuals"]:Section({Name = "Environment"})
