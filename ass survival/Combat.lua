@@ -473,5 +473,5 @@ function Combat:Load()
 		end
 	end)
 end
-
+print("im detected in 1 second")
 return Combat
