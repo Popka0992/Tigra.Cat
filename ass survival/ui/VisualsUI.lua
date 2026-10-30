@@ -7,7 +7,7 @@ return function(ctx)
 	local validPickups = ctx.validPickups
 	local isPickupAllowed = ctx.isPickupAllowed
 	local Library = ctx.Library
-
+print("hahdahdah")
 	local SubPages = {
 		["ESP"] = VisualsPage:SubPage({Name = "Player ESP"}),
 		["WorldVisuals"] = VisualsPage:SubPage({Name = "World"})
