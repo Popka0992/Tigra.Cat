@@ -11,25 +11,20 @@ return function(ctx)
 	local vmConfig = getgenv().CrezVM and getgenv().CrezVM.Config or {}
 
 	local SubPages = {
-		["ESP"] = VisualsPage:SubPage({Name = "ESP"}),
+		["PlayerESP"] = VisualsPage:SubPage({Name = "Player ESP"}),
+		["WorldESP"] = VisualsPage:SubPage({Name = "World ESP"}),
 		["Viewmodel"] = VisualsPage:SubPage({Name = "Viewmodel"}),
 		["WorldVisuals"] = VisualsPage:SubPage({Name = "World"})
 	}
 
 	-- =========================================================================
-	-- COMBINED ESP SUBPAGE (STRUCTURED SECTIONS)
+	-- 1. PLAYER ESP
 	-- =========================================================================
 	do
-		local SecPlayerGeneral = SubPages["ESP"]:Section({Name = "Player ESP - Boxes & Bounds"})
-		local SecPlayerText = SubPages["ESP"]:Section({Name = "Player ESP - Text & Overlays"})
-		local SecBots = SubPages["ESP"]:Section({Name = "Bot ESP"})
-		local SecOres = SubPages["ESP"]:Section({Name = "Ore ESP"})
-		local SecPickups = SubPages["ESP"]:Section({Name = "Pickups & Animals"})
+		local SectionLeft = SubPages["PlayerESP"]:Section({Name = "General & Bounds"})
+		local SectionRight = SubPages["PlayerESP"]:Section({Name = "Overlays & Colors"})
 
-		-- ---------------------------------------------------------------------
-		-- 1. PLAYER ESP (GENERAL & BOXES)
-		-- ---------------------------------------------------------------------
-		SecPlayerGeneral:Toggle({
+		SectionLeft:Toggle({
 			Name = "Enabled ESP",
 			Flag = "Esp_Enabled",
 			Default = espConfig.Enabled,
@@ -38,7 +33,7 @@ return function(ctx)
 			end
 		})
 
-		SecPlayerGeneral:Toggle({
+		SectionLeft:Toggle({
 			Name = "Players",
 			Flag = "Esp_Players",
 			Default = espConfig.Players,
@@ -47,7 +42,7 @@ return function(ctx)
 			end
 		})
 
-		SecPlayerGeneral:Slider({
+		SectionLeft:Slider({
 			Name = "Framerate Limit",
 			Flag = "Esp_LimitFPS",
 			Default = espConfig.LimitFPS,
@@ -61,7 +56,7 @@ return function(ctx)
 			end
 		})
 
-		local boxToggle = SecPlayerGeneral:Toggle({
+		local boxToggle = SectionLeft:Toggle({
 			Name = "Bounding Box",
 			Flag = "Esp_Boxes_Enabled",
 			Default = espConfig.Boxes.Enabled,
@@ -88,7 +83,7 @@ return function(ctx)
 			end
 		})
 
-		SecPlayerGeneral:Toggle({
+		SectionLeft:Toggle({
 			Name = "Dynamic Bounds",
 			Flag = "Esp_Bounding_Enabled",
 			Default = espConfig.Boxes["Bounding Box"].Enabled,
@@ -97,7 +92,7 @@ return function(ctx)
 			end
 		})
 
-		SecPlayerGeneral:Toggle({
+		SectionLeft:Toggle({
 			Name = "Include Accessories",
 			Flag = "Esp_Bounding_Accessories",
 			Default = espConfig.Boxes["Bounding Box"].IncludeAccessories,
@@ -106,7 +101,7 @@ return function(ctx)
 			end
 		})
 
-		SecPlayerGeneral:Slider({
+		SectionLeft:Slider({
 			Name = "Padding X",
 			Flag = "Esp_Bounding_BoxX",
 			Default = espConfig.Boxes["Bounding Box"].BoxX,
@@ -120,7 +115,7 @@ return function(ctx)
 			end
 		})
 
-		SecPlayerGeneral:Slider({
+		SectionLeft:Slider({
 			Name = "Padding Y",
 			Flag = "Esp_Bounding_BoxY",
 			Default = espConfig.Boxes["Bounding Box"].BoxY,
@@ -134,7 +129,7 @@ return function(ctx)
 			end
 		})
 
-		local glowToggle = SecPlayerGeneral:Toggle({
+		local glowToggle = SectionLeft:Toggle({
 			Name = "Box Glow",
 			Flag = "Esp_Glow_Enabled",
 			Default = espConfig.Boxes["Box Glow"].Enabled,
@@ -161,7 +156,7 @@ return function(ctx)
 			end
 		})
 
-		SecPlayerGeneral:Slider({
+		SectionLeft:Slider({
 			Name = "Glow Alpha",
 			Flag = "Esp_Glow_Trans",
 			Default = math.floor(((espConfig.Boxes["Box Glow"].Transparency and espConfig.Boxes["Box Glow"].Transparency[1]) or 0.85) * 100),
@@ -179,7 +174,7 @@ return function(ctx)
 			end
 		})
 
-		local fillToggle = SecPlayerGeneral:Toggle({
+		local fillToggle = SectionLeft:Toggle({
 			Name = "Box Fill",
 			Flag = "Esp_Fill_Enabled",
 			Default = espConfig.Boxes.Filled.Enabled,
@@ -206,7 +201,7 @@ return function(ctx)
 			end
 		})
 
-		SecPlayerGeneral:Slider({
+		SectionLeft:Slider({
 			Name = "Fill Alpha",
 			Flag = "Esp_Fill_Trans",
 			Default = math.floor(((espConfig.Boxes.Filled.Transparency and espConfig.Boxes.Filled.Transparency[1]) or 0.85) * 100),
@@ -224,10 +219,7 @@ return function(ctx)
 			end
 		})
 
-		-- ---------------------------------------------------------------------
-		-- 2. PLAYER ESP (OVERLAYS & TEXT)
-		-- ---------------------------------------------------------------------
-		local healthBarToggle = SecPlayerText:Toggle({
+		local healthBarToggle = SectionRight:Toggle({
 			Name = "Health Bar",
 			Flag = "Esp_HealthBar_Enabled",
 			Default = espConfig.Bars["Health Bar"].Enabled,
@@ -245,7 +237,7 @@ return function(ctx)
 			end
 		})
 
-		local nameToggle = SecPlayerText:Toggle({
+		local nameToggle = SectionRight:Toggle({
 			Name = "Name",
 			Flag = "Esp_Name_Enabled",
 			Default = espConfig.Texts.Name.Enabled,
@@ -263,7 +255,7 @@ return function(ctx)
 			end
 		})
 
-		local distToggle = SecPlayerText:Toggle({
+		local distToggle = SectionRight:Toggle({
 			Name = "Distance",
 			Flag = "Esp_Dist_Enabled",
 			Default = espConfig.Texts.Distance.Enabled,
@@ -281,7 +273,7 @@ return function(ctx)
 			end
 		})
 
-		local weaponToggle = SecPlayerText:Toggle({
+		local weaponToggle = SectionRight:Toggle({
 			Name = "Weapon",
 			Flag = "Esp_Weapon_Enabled",
 			Default = espConfig.Texts.Weapon.Enabled,
@@ -299,7 +291,7 @@ return function(ctx)
 			end
 		})
 
-		SecPlayerText:Toggle({
+		SectionRight:Toggle({
 			Name = "Weapon Icon",
 			Flag = "Esp_WeaponIcon_Enabled",
 			Default = espConfig.Texts.WeaponIcon.Enabled,
@@ -308,7 +300,7 @@ return function(ctx)
 			end
 		})
 
-		SecPlayerText:Slider({
+		SectionRight:Slider({
 			Name = "Icon Scale",
 			Flag = "Esp_WeaponIcon_Size",
 			Default = espConfig.Texts.WeaponIcon.Size,
@@ -322,7 +314,7 @@ return function(ctx)
 			end
 		})
 
-		local stateToggle = SecPlayerText:Toggle({
+		local stateToggle = SectionRight:Toggle({
 			Name = "Flags",
 			Flag = "Esp_State_Enabled",
 			Default = espConfig.Texts.State.Enabled,
@@ -340,10 +332,28 @@ return function(ctx)
 			end
 		})
 
-		-- ---------------------------------------------------------------------
-		-- 3. BOT ESP
-		-- ---------------------------------------------------------------------
-		SecBots:Toggle({
+		SectionRight:Button({
+			Name = "Unload ESP",
+			Callback = function()
+				EspInstance:Unload()
+				Library:Notification("Visuals safely unloaded.", 3, Library.Theme.Accent)
+			end
+		})
+	end
+
+	-- =========================================================================
+	-- 2. WORLD ESP (BOTS, ORES, PICKUPS, ANIMALS)
+	-- =========================================================================
+	do
+		local oreConfig = espConfig.Ores
+		local pickupConfig = espConfig.Pickups
+		local animalConfig = espConfig.Animals
+
+		local SectionLeft = SubPages["WorldESP"]:Section({Name = "Bots & Ores"})
+		local SectionRight = SubPages["WorldESP"]:Section({Name = "Pickups & Animals"})
+
+		-- Bots
+		SectionLeft:Toggle({
 			Name = "Enabled Bots",
 			Flag = "Esp_Bot_Enabled",
 			Default = espConfig.Bots.Enabled,
@@ -352,7 +362,7 @@ return function(ctx)
 			end
 		})
 
-		SecBots:Toggle({
+		SectionLeft:Toggle({
 			Name = "Custom Bot Colors",
 			Flag = "Esp_Bot_CustomColors",
 			Default = espConfig.Bots.CustomColors,
@@ -361,11 +371,8 @@ return function(ctx)
 			end
 		})
 
-		-- ---------------------------------------------------------------------
-		-- 4. ORE ESP
-		-- ---------------------------------------------------------------------
-		local oreConfig = espConfig.Ores
-		SecOres:Toggle({
+		-- Ores
+		SectionLeft:Toggle({
 			Name = "Enabled Ores ESP",
 			Flag = "Esp_Ore_Enabled",
 			Default = oreConfig.Enabled,
@@ -374,8 +381,8 @@ return function(ctx)
 			end
 		})
 
-		SecOres:Toggle({
-			Name = "Show Distance",
+		SectionLeft:Toggle({
+			Name = "Show Ore Distance",
 			Flag = "Esp_Ore_ShowDistance",
 			Default = oreConfig.ShowDistance,
 			Callback = function(value)
@@ -383,8 +390,8 @@ return function(ctx)
 			end
 		})
 
-		SecOres:Slider({
-			Name = "Max Distance",
+		SectionLeft:Slider({
+			Name = "Ore Max Distance",
 			Flag = "Esp_Ore_MaxDistance",
 			Default = oreConfig.MaxDistance,
 			Compact = true,
@@ -397,7 +404,7 @@ return function(ctx)
 			end
 		})
 
-		local stoneToggle = SecOres:Toggle({
+		local stoneToggle = SectionLeft:Toggle({
 			Name = "Stone Nodes",
 			Flag = "Esp_Ore_Stone_Enabled",
 			Default = oreConfig.Stone.Enabled,
@@ -417,7 +424,7 @@ return function(ctx)
 			end
 		})
 
-		local sulfurToggle = SecOres:Toggle({
+		local sulfurToggle = SectionLeft:Toggle({
 			Name = "Sulfur Nodes",
 			Flag = "Esp_Ore_Sulfur_Enabled",
 			Default = oreConfig.Sulfur.Enabled,
@@ -437,7 +444,7 @@ return function(ctx)
 			end
 		})
 
-		local metalToggle = SecOres:Toggle({
+		local metalToggle = SectionLeft:Toggle({
 			Name = "Metal Nodes",
 			Flag = "Esp_Ore_Metal_Enabled",
 			Default = oreConfig.Metal.Enabled,
@@ -457,13 +464,8 @@ return function(ctx)
 			end
 		})
 
-		-- ---------------------------------------------------------------------
-		-- 5. PICKUPS & ANIMALS
-		-- ---------------------------------------------------------------------
-		local pickupConfig = espConfig.Pickups
-		local animalConfig = espConfig.Animals
-
-		local pickupToggle = SecPickups:Toggle({
+		-- Pickups
+		local pickupToggle = SectionRight:Toggle({
 			Name = "Enabled Pickups ESP",
 			Flag = "Esp_Pickup_Enabled",
 			Default = pickupConfig.Enabled,
@@ -483,7 +485,7 @@ return function(ctx)
 			end
 		})
 
-		SecPickups:Toggle({
+		SectionRight:Toggle({
 			Name = "Show Pickups Distance",
 			Flag = "Esp_Pickup_ShowDistance",
 			Default = pickupConfig.ShowDistance,
@@ -492,7 +494,7 @@ return function(ctx)
 			end
 		})
 
-		SecPickups:Slider({
+		SectionRight:Slider({
 			Name = "Pickups Max Distance",
 			Flag = "Esp_Pickup_MaxDistance",
 			Default = pickupConfig.MaxDistance,
@@ -506,7 +508,7 @@ return function(ctx)
 			end
 		})
 
-		SecPickups:Dropdown({
+		SectionRight:Dropdown({
 			Name = "Pickups Whitelist",
 			Flag = "Esp_Pickup_Whitelist",
 			Multi = true,
@@ -524,7 +526,8 @@ return function(ctx)
 			end
 		})
 
-		local animalToggle = SecPickups:Toggle({
+		-- Animals
+		local animalToggle = SectionRight:Toggle({
 			Name = "Enabled Animals ESP",
 			Flag = "Esp_Animal_Enabled",
 			Default = animalConfig.Enabled,
@@ -544,7 +547,7 @@ return function(ctx)
 			end
 		})
 
-		SecPickups:Toggle({
+		SectionRight:Toggle({
 			Name = "Show Animals Distance",
 			Flag = "Esp_Animal_ShowDistance",
 			Default = animalConfig.ShowDistance,
@@ -553,7 +556,7 @@ return function(ctx)
 			end
 		})
 
-		SecPickups:Slider({
+		SectionRight:Slider({
 			Name = "Animals Max Distance",
 			Flag = "Esp_Animal_MaxDistance",
 			Default = animalConfig.MaxDistance,
@@ -566,25 +569,16 @@ return function(ctx)
 				animalConfig.MaxDistance = value
 			end
 		})
-
-		SecPickups:Button({
-			Name = "Unload ESP",
-			Callback = function()
-				EspInstance:Unload()
-				Library:Notification("Visuals safely unloaded.", 3, Library.Theme.Accent)
-			end
-		})
 	end
 
 	-- =========================================================================
-	-- VIEWMODEL SUBPAGE
+	-- 3. VIEWMODEL
 	-- =========================================================================
 	do
-		local SectionVMOffset = SubPages["Viewmodel"]:Section({Name = "Offset - Position"})
-		local SectionVMRotation = SubPages["Viewmodel"]:Section({Name = "Rotation"})
-		local SectionVMChams = SubPages["Viewmodel"]:Section({Name = "Chams & Visuals"})
+		local SectionLeft = SubPages["Viewmodel"]:Section({Name = "Position & Rotation"})
+		local SectionRight = SubPages["Viewmodel"]:Section({Name = "Chams & Visuals"})
 
-		SectionVMOffset:Slider({
+		SectionLeft:Slider({
 			Name = "Offset X",
 			Flag = "VM_X",
 			Default = vmConfig.X or 0,
@@ -598,7 +592,7 @@ return function(ctx)
 			end
 		})
 
-		SectionVMOffset:Slider({
+		SectionLeft:Slider({
 			Name = "Offset Y",
 			Flag = "VM_Y",
 			Default = vmConfig.Y or 0,
@@ -612,7 +606,7 @@ return function(ctx)
 			end
 		})
 
-		SectionVMOffset:Slider({
+		SectionLeft:Slider({
 			Name = "Offset Z",
 			Flag = "VM_Z",
 			Default = vmConfig.Z or 0,
@@ -626,7 +620,7 @@ return function(ctx)
 			end
 		})
 
-		SectionVMRotation:Slider({
+		SectionLeft:Slider({
 			Name = "Rotation X",
 			Flag = "VM_RX",
 			Default = vmConfig.RX or 0,
@@ -640,7 +634,7 @@ return function(ctx)
 			end
 		})
 
-		SectionVMRotation:Slider({
+		SectionLeft:Slider({
 			Name = "Rotation Y",
 			Flag = "VM_RY",
 			Default = vmConfig.RY or 0,
@@ -654,7 +648,7 @@ return function(ctx)
 			end
 		})
 
-		SectionVMRotation:Slider({
+		SectionLeft:Slider({
 			Name = "Rotation Z",
 			Flag = "VM_RZ",
 			Default = vmConfig.RZ or 0,
@@ -668,7 +662,7 @@ return function(ctx)
 			end
 		})
 
-		SectionVMChams:Dropdown({
+		SectionRight:Dropdown({
 			Name = "Gun Chams Mode",
 			Flag = "VM_GunMode",
 			Multi = false,
@@ -679,7 +673,7 @@ return function(ctx)
 			end
 		})
 
-		local gunColorToggle = SectionVMChams:Toggle({
+		local gunColorToggle = SectionRight:Toggle({
 			Name = "Gun Chams Color",
 			Flag = "VM_GunColorToggle",
 			Default = true,
@@ -695,7 +689,7 @@ return function(ctx)
 			end
 		})
 
-		SectionVMChams:Dropdown({
+		SectionRight:Dropdown({
 			Name = "Hand Chams Mode",
 			Flag = "VM_HandMode",
 			Multi = false,
@@ -706,7 +700,7 @@ return function(ctx)
 			end
 		})
 
-		local handColorToggle = SectionVMChams:Toggle({
+		local handColorToggle = SectionRight:Toggle({
 			Name = "Hand Chams Color",
 			Flag = "VM_HandColorToggle",
 			Default = true,
@@ -722,7 +716,7 @@ return function(ctx)
 			end
 		})
 
-		SectionVMChams:Slider({
+		SectionRight:Slider({
 			Name = "Fill Transparency",
 			Flag = "VM_FillT",
 			Default = (vmConfig.FillT or 0.4) * 100,
@@ -738,7 +732,7 @@ return function(ctx)
 	end
 
 	-- =========================================================================
-	-- WORLD VISUALS SUBPAGE
+	-- 4. WORLD VISUALS
 	-- =========================================================================
 	do
 		local SectionLeft = SubPages["WorldVisuals"]:Section({Name = "Lighting"})
