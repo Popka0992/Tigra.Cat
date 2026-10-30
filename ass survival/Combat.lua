@@ -451,27 +451,30 @@ end
 function Combat:Load()
 	scanCharacterParts()
 
-	runService.RenderStepped:Connect(function()
-		currentCamera = workspaceService.CurrentCamera or currentCamera
+runService.RenderStepped:Connect(function()
+	if CombatConfig.Enabled then
+		installHooks()
+	end
 
-		local mpos = userInputService:GetMouseLocation()
-		local fovRadius = CombatConfig.FOV
+	currentCamera = workspaceService.CurrentCamera or currentCamera
 
-		circleInline.Position = mpos
-		circleInline.Radius = fovRadius
-		circleInline.Color = CombatConfig.FOVColor
-		circleInline.Visible = CombatConfig.Enabled and CombatConfig.ShowFOV
+	local mpos = userInputService:GetMouseLocation()
+	local fovRadius = CombatConfig.FOV
 
-		circleOutline.Position = mpos
-		circleOutline.Radius = fovRadius
-		circleOutline.Visible = CombatConfig.Enabled and CombatConfig.ShowFOV and CombatConfig.FOVOutline
+	circleInline.Position = mpos
+	circleInline.Radius = fovRadius
+	circleInline.Color = CombatConfig.FOVColor
+	circleInline.Visible = CombatConfig.Enabled and CombatConfig.ShowFOV
 
-		if CombatConfig.Enabled then
-			targetPart, targetPlayer = getClosestTarget()
-		else
-			targetPart, targetPlayer = nil, nil
-		end
-	end)
-end
+	circleOutline.Position = mpos
+	circleOutline.Radius = fovRadius
+	circleOutline.Visible = CombatConfig.Enabled and CombatConfig.ShowFOV and CombatConfig.FOVOutline
+
+	if CombatConfig.Enabled then
+		targetPart, targetPlayer = getClosestTarget()
+	else
+		targetPart, targetPlayer = nil, nil
+	end
+end)
 
 return Combat
