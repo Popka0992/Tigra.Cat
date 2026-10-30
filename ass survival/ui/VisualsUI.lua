@@ -23,7 +23,7 @@ return function(ctx)
 		}),
 	}
 
-
+	-- PLAYER ESP
 	do
 		local SectionGeneral = SubPages["ESP"]:Section({
 			Name = "General - Bounds",
@@ -64,7 +64,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Toggle({
+		local boundsToggle = SectionGeneral:Toggle({
 			Name = "Bounds",
 			Default = espConfig.Boxes.Enabled,
 			Flag = "Esp_Boxes_Enabled",
@@ -73,7 +73,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Colorpicker({
+		boundsToggle:Colorpicker({
 			Name = "Top Color",
 			Default = espConfig.Boxes.GradTop,
 			Flag = "Esp_Box_GradTop",
@@ -82,7 +82,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Colorpicker({
+		boundsToggle:Colorpicker({
 			Name = "Bottom Color",
 			Default = espConfig.Boxes.GradBot,
 			Flag = "Esp_Box_GradBot",
@@ -133,7 +133,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Toggle({
+		local glowToggle = SectionGeneral:Toggle({
 			Name = "Glow",
 			Default = espConfig.Glow.Enabled,
 			Flag = "Esp_Glow_Enabled",
@@ -142,7 +142,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Colorpicker({
+		glowToggle:Colorpicker({
 			Name = "Glow Top",
 			Default = espConfig.Glow.Top,
 			Flag = "Esp_Glow_Top",
@@ -151,7 +151,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Colorpicker({
+		glowToggle:Colorpicker({
 			Name = "Glow Bottom",
 			Default = espConfig.Glow.Bot,
 			Flag = "Esp_Glow_Bot",
@@ -172,7 +172,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Toggle({
+		local fillToggle = SectionGeneral:Toggle({
 			Name = "Fill",
 			Default = espConfig.Fill.Enabled,
 			Flag = "Esp_Fill_Enabled",
@@ -181,7 +181,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Colorpicker({
+		fillToggle:Colorpicker({
 			Name = "Fill Top",
 			Default = espConfig.Fill.Top,
 			Flag = "Esp_Fill_Top",
@@ -190,7 +190,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Colorpicker({
+		fillToggle:Colorpicker({
 			Name = "Fill Bottom",
 			Default = espConfig.Fill.Bot,
 			Flag = "Esp_Fill_Bot",
@@ -211,7 +211,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Toggle({
+		local healthToggle = SectionOverlays:Toggle({
 			Name = "Health Bar",
 			Default = espConfig.Bars.Health.Enabled,
 			Flag = "Esp_HealthBar_Enabled",
@@ -220,7 +220,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Colorpicker({
+		healthToggle:Colorpicker({
 			Name = "Health Bar",
 			Default = espConfig.Bars.Health.Color,
 			Flag = "Esp_HealthBar_Color",
@@ -229,7 +229,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Toggle({
+		local nameToggle = SectionOverlays:Toggle({
 			Name = "Name",
 			Default = espConfig.Texts.Name.Enabled,
 			Flag = "Esp_Name_Enabled",
@@ -238,7 +238,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Colorpicker({
+		nameToggle:Colorpicker({
 			Name = "Name",
 			Default = espConfig.Texts.Name.Color,
 			Flag = "Esp_Name_Color",
@@ -247,7 +247,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Toggle({
+		local distToggle = SectionOverlays:Toggle({
 			Name = "Distance",
 			Default = espConfig.Texts.Distance.Enabled,
 			Flag = "Esp_Dist_Enabled",
@@ -256,7 +256,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Colorpicker({
+		distToggle:Colorpicker({
 			Name = "Distance",
 			Default = espConfig.Texts.Distance.Color,
 			Flag = "Esp_Dist_Color",
@@ -265,7 +265,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Toggle({
+		local weaponToggle = SectionOverlays:Toggle({
 			Name = "Weapon",
 			Default = espConfig.Texts.Weapon.Enabled,
 			Flag = "Esp_Weapon_Enabled",
@@ -274,7 +274,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Colorpicker({
+		weaponToggle:Colorpicker({
 			Name = "Weapon",
 			Default = espConfig.Texts.Weapon.Color,
 			Flag = "Esp_Weapon_Color",
@@ -304,7 +304,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Toggle({
+		local flagsToggle = SectionOverlays:Toggle({
 			Name = "Flags",
 			Default = espConfig.Texts.State.Enabled,
 			Flag = "Esp_State_Enabled",
@@ -313,7 +313,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Colorpicker({
+		flagsToggle:Colorpicker({
 			Name = "Flags",
 			Default = espConfig.Texts.State.Color,
 			Flag = "Esp_State_Color",
@@ -331,6 +331,7 @@ return function(ctx)
 		})
 	end
 
+	-- BOT ESP
 	do
 		local botBoxes = espConfig.Bots.Boxes
 		local botBoundingBox = botBoxes["Bounding Box"]
@@ -367,7 +368,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Toggle({
+		local boundsToggle = SectionGeneral:Toggle({
 			Name = "Bounds",
 			Default = botBoundingBox.Enabled,
 			Flag = "Esp_Bot_Boxes_Enabled",
@@ -376,7 +377,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Colorpicker({
+		boundsToggle:Colorpicker({
 			Name = "Top Color",
 			Default = botBoundingBox.GradTop,
 			Flag = "Esp_Bot_Box_GradTop",
@@ -385,7 +386,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Colorpicker({
+		boundsToggle:Colorpicker({
 			Name = "Bottom Color",
 			Default = botBoundingBox.GradBot,
 			Flag = "Esp_Bot_Box_GradBot",
@@ -436,7 +437,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Toggle({
+		local glowToggle = SectionGeneral:Toggle({
 			Name = "Glow",
 			Default = botGlow.Enabled,
 			Flag = "Esp_Bot_Glow_Enabled",
@@ -445,7 +446,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Colorpicker({
+		glowToggle:Colorpicker({
 			Name = "Glow Top",
 			Default = botGlow.Top,
 			Flag = "Esp_Bot_Glow_Top",
@@ -454,7 +455,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Colorpicker({
+		glowToggle:Colorpicker({
 			Name = "Glow Bottom",
 			Default = botGlow.Bot,
 			Flag = "Esp_Bot_Glow_Bot",
@@ -475,7 +476,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Toggle({
+		local fillToggle = SectionGeneral:Toggle({
 			Name = "Fill",
 			Default = botFill.Enabled,
 			Flag = "Esp_Bot_Fill_Enabled",
@@ -484,7 +485,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Colorpicker({
+		fillToggle:Colorpicker({
 			Name = "Fill Top",
 			Default = botFill.Top,
 			Flag = "Esp_Bot_Fill_Top",
@@ -493,7 +494,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionGeneral:Colorpicker({
+		fillToggle:Colorpicker({
 			Name = "Fill Bottom",
 			Default = botFill.Bot,
 			Flag = "Esp_Bot_Fill_Bot",
@@ -514,7 +515,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Toggle({
+		local healthToggle = SectionOverlays:Toggle({
 			Name = "Health Bar",
 			Default = botBars.Health.Enabled,
 			Flag = "Esp_Bot_HealthBar_Enabled",
@@ -523,7 +524,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Colorpicker({
+		healthToggle:Colorpicker({
 			Name = "Health Bar",
 			Default = botBars.Health.Color,
 			Flag = "Esp_Bot_HealthBar_Color",
@@ -532,7 +533,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Toggle({
+		local nameToggle = SectionOverlays:Toggle({
 			Name = "Name",
 			Default = botTexts.Name.Enabled,
 			Flag = "Esp_Bot_Name_Enabled",
@@ -541,7 +542,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Colorpicker({
+		nameToggle:Colorpicker({
 			Name = "Name",
 			Default = botTexts.Name.Color,
 			Flag = "Esp_Bot_Name_Color",
@@ -550,7 +551,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Toggle({
+		local distToggle = SectionOverlays:Toggle({
 			Name = "Distance",
 			Default = botTexts.Distance.Enabled,
 			Flag = "Esp_Bot_Dist_Enabled",
@@ -559,7 +560,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Colorpicker({
+		distToggle:Colorpicker({
 			Name = "Distance",
 			Default = botTexts.Distance.Color,
 			Flag = "Esp_Bot_Dist_Color",
@@ -568,7 +569,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Toggle({
+		local weaponToggle = SectionOverlays:Toggle({
 			Name = "Weapon",
 			Default = botTexts.Weapon.Enabled,
 			Flag = "Esp_Bot_Weapon_Enabled",
@@ -577,7 +578,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Colorpicker({
+		weaponToggle:Colorpicker({
 			Name = "Weapon",
 			Default = botTexts.Weapon.Color,
 			Flag = "Esp_Bot_Weapon_Color",
@@ -607,7 +608,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Toggle({
+		local flagsToggle = SectionOverlays:Toggle({
 			Name = "Flags",
 			Default = botTexts.State.Enabled,
 			Flag = "Esp_Bot_State_Enabled",
@@ -616,7 +617,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOverlays:Colorpicker({
+		flagsToggle:Colorpicker({
 			Name = "Flags",
 			Default = botTexts.State.Color,
 			Flag = "Esp_Bot_State_Color",
@@ -626,6 +627,7 @@ return function(ctx)
 		})
 	end
 
+	-- WORLD ESP (Ores / Pickups / Animals)
 	do
 		local oreConfig = espConfig.Ores
 		local pickupConfig = espConfig.Pickups
@@ -671,7 +673,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOres:Toggle({
+		local stoneToggle = SectionOres:Toggle({
 			Name = "Stone Nodes",
 			Default = oreConfig.Stone.Enabled,
 			Flag = "Esp_Ore_Stone_Enabled",
@@ -680,7 +682,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOres:Colorpicker({
+		stoneToggle:Colorpicker({
 			Name = "Stone Nodes",
 			Default = oreConfig.Stone.Color,
 			Flag = "Esp_Ore_Stone_Color",
@@ -691,7 +693,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOres:Toggle({
+		local sulfurToggle = SectionOres:Toggle({
 			Name = "Sulfur Nodes",
 			Default = oreConfig.Sulfur.Enabled,
 			Flag = "Esp_Ore_Sulfur_Enabled",
@@ -700,7 +702,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOres:Colorpicker({
+		sulfurToggle:Colorpicker({
 			Name = "Sulfur Nodes",
 			Default = oreConfig.Sulfur.Color,
 			Flag = "Esp_Ore_Sulfur_Color",
@@ -711,7 +713,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOres:Toggle({
+		local metalToggle = SectionOres:Toggle({
 			Name = "Metal Nodes",
 			Default = oreConfig.Metal.Enabled,
 			Flag = "Esp_Ore_Metal_Enabled",
@@ -720,7 +722,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionOres:Colorpicker({
+		metalToggle:Colorpicker({
 			Name = "Metal Nodes",
 			Default = oreConfig.Metal.Color,
 			Flag = "Esp_Ore_Metal_Color",
@@ -731,7 +733,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionLife:Toggle({
+		local pickupToggle = SectionLife:Toggle({
 			Name = "Enabled Pickups ESP",
 			Default = pickupConfig.Enabled,
 			Flag = "Esp_Pickup_Enabled",
@@ -740,7 +742,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionLife:Colorpicker({
+		pickupToggle:Colorpicker({
 			Name = "Pickups Color",
 			Default = pickupConfig.Color,
 			Flag = "Esp_Pickup_Color",
@@ -787,7 +789,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionLife:Toggle({
+		local animalToggle = SectionLife:Toggle({
 			Name = "Enabled Animals ESP",
 			Default = animalConfig.Enabled,
 			Flag = "Esp_Animal_Enabled",
@@ -796,7 +798,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionLife:Colorpicker({
+		animalToggle:Colorpicker({
 			Name = "Animals Color",
 			Default = animalConfig.Color,
 			Flag = "Esp_Animal_Color",
@@ -827,7 +829,7 @@ return function(ctx)
 		})
 	end
 
-
+	-- ENVIRONMENT (World)
 	do
 		local SectionLeft = SubPages["WorldVisuals"]:Section({
 			Name = "Lighting",
@@ -849,7 +851,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionLeft:Toggle({
+		local ambientToggle = SectionLeft:Toggle({
 			Name = "Ambient",
 			Default = worldConfig.Ambient,
 			Flag = "World_Ambient",
@@ -859,7 +861,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionLeft:Colorpicker({
+		ambientToggle:Colorpicker({
 			Name = "Ambient Color",
 			Default = worldConfig.AmbientColor,
 			Flag = "World_AmbientColor",
@@ -872,7 +874,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionLeft:Toggle({
+		local outdoorAmbientToggle = SectionLeft:Toggle({
 			Name = "Outdoor Ambient",
 			Default = worldConfig.OutdoorAmbient,
 			Flag = "World_OutdoorAmbient",
@@ -882,7 +884,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionLeft:Colorpicker({
+		outdoorAmbientToggle:Colorpicker({
 			Name = "Outdoor Ambient Color",
 			Default = worldConfig.OutdoorAmbientColor,
 			Flag = "World_OutdoorAmbientColor",
@@ -995,7 +997,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionRight:Toggle({
+		local fogToggle = SectionRight:Toggle({
 			Name = "Fog",
 			Default = worldConfig.Fog,
 			Flag = "World_Fog",
@@ -1005,7 +1007,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionRight:Colorpicker({
+		fogToggle:Colorpicker({
 			Name = "Fog Color",
 			Default = worldConfig.FogColor,
 			Flag = "World_FogColor",
@@ -1050,7 +1052,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionRight:Toggle({
+		local colorCorrectionToggle = SectionRight:Toggle({
 			Name = "Color Correction",
 			Default = worldConfig.ColorCorrection,
 			Flag = "World_ColorCorrection",
@@ -1060,7 +1062,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionRight:Colorpicker({
+		colorCorrectionToggle:Colorpicker({
 			Name = "Tint",
 			Default = worldConfig.Tint,
 			Flag = "World_Tint",
@@ -1103,7 +1105,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionRight:Toggle({
+		local atmosphereToggle = SectionRight:Toggle({
 			Name = "Atmosphere",
 			Default = worldConfig.Atmosphere,
 			Flag = "World_Atmosphere",
@@ -1113,7 +1115,7 @@ return function(ctx)
 			end,
 		})
 
-		SectionRight:Colorpicker({
+		atmosphereToggle:Colorpicker({
 			Name = "Atmosphere Color",
 			Default = worldConfig.AtmosphereColor,
 			Flag = "World_AtmosphereColor",
