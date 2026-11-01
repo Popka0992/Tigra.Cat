@@ -1,20 +1,19 @@
--- Check for table that is shared between executions.
+
 if not shared then
 	return warn("No shared, no script.")
 end
 
--- Initialize Luraph globals if they do not exist.
 loadstring("getfenv().LPH_NO_VIRTUALIZE = function(...) return ... end")()
 getfenv().PP_SCRAMBLE_NUM = function(...) return ... end
 getfenv().PP_SCRAMBLE_STR = function(...) return ... end
 getfenv().PP_SCRAMBLE_RE_NUM = function(...) return ... end
 
--- Unload previous instance.
+
 if shared.Arbuzi and shared.Arbuzi.Unload then
 	pcall(shared.Arbuzi.Unload, shared.Arbuzi)
 end
 
--- Services.
+
 local cloneref = cloneref or function(instance) return instance end
 local workspaceService = cloneref(game:GetService("Workspace"))
 local playersService = cloneref(game:GetService("Players"))
@@ -48,13 +47,12 @@ local cameraPosition = newVector3(0, 0, 0)
 local cachedFocalLength = 0
 local viewPortY = 0
 
--- Weapon Database for fingerprinting & Icons.
+
 local weaponMeshMap = {}
 local toolSignatures = {}
 local weaponIcons = {}
 
----Scan craft menu inside PlayerGui strictly for weapon icons.
----@return boolean
+
 local function scanCraftingIcons()
 	local pGui = localPlayer:FindFirstChildOfClass("PlayerGui")
 	if not pGui then return false end
@@ -96,8 +94,7 @@ task.spawn(function()
 	end
 end)
 
----Find tools container recursively across services.
----@return Instance?
+
 local function getToolsFolder()
 	local prefabs = workspaceService:FindFirstChild("Prefabs", true) or replicatedStorage:FindFirstChild("Prefabs", true)
 	if prefabs then
@@ -107,8 +104,6 @@ local function getToolsFolder()
 	return workspaceService:FindFirstChild("Tools", true) or replicatedStorage:FindFirstChild("Tools", true)
 end
 
----Build weapon database from prefabs.
----@return boolean
 local function indexWeaponPrefabs()
 	local tools = getToolsFolder()
 	if not tools then return false end
@@ -131,16 +126,13 @@ local function indexWeaponPrefabs()
 	return indexed
 end
 
--- Initialize indexing with retries.
 task.spawn(function()
 	while not indexWeaponPrefabs() do
 		task.wait(1)
 	end
 end)
 
----Resolve weapon name from character model.
----@param character Model
----@return string
+
 local function resolveEquippedWeapon(character)
 	local worldModel = character:FindFirstChild("Worldmodel")
 	if not worldModel then
@@ -152,7 +144,7 @@ local function resolveEquippedWeapon(character)
 		return "none"
 	end
 
-	-- Check potential game attributes.
+
 	local attr = worldModel:GetAttribute("Weapon")
 		or worldModel:GetAttribute("Name")
 		or character:GetAttribute("EquippedWeapon")
@@ -166,7 +158,6 @@ local function resolveEquippedWeapon(character)
 		return "Worldmodel"
 	end
 
-	-- Match by MeshId.
 	for _, part in ipairs(children) do
 		if part:IsA("MeshPart") and part.MeshId ~= "" then
 			local matched = weaponMeshMap[part.MeshId]
@@ -174,7 +165,6 @@ local function resolveEquippedWeapon(character)
 		end
 	end
 
-	-- Match by part name signatures.
 	local bestTool, bestScore = nil, 0
 	for toolName, sig in pairs(toolSignatures) do
 		local score = 0
@@ -193,7 +183,6 @@ local function resolveEquippedWeapon(character)
 		return bestTool
 	end
 
-	-- Fallback heuristic for standard models.
 	if worldModel:FindFirstChild("ShotgunShell1") or worldModel:FindFirstChild("pump") then
 		return "Pump Shotgun"
 	end
@@ -201,7 +190,6 @@ local function resolveEquippedWeapon(character)
 	return "Worldmodel"
 end
 
----Refresh cached camera-dependent math (FOV / viewport) and re-anchor the camera reference.
 local function updateCameraCache()
 	camera = workspaceService.CurrentCamera
 	if not camera then return end
@@ -291,7 +279,6 @@ local Arbuzi = {
 Arbuzi.__index = Arbuzi
 local config = Arbuzi.Table
 
--- Font Registration.
 local Fonts = {}
 do
 	local function fetchSource(url)
@@ -844,20 +831,16 @@ function Arbuzi:CalculateBox(data)
 	end
 end
 
----Add a target, retrying indefinitely until its HumanoidRootPart/Humanoid replicate.
----@param target Model
 function Arbuzi:AddTarget(target)
 	if not target:IsA("Model") then return end
 	if target.Name == localPlayer.Name or (localPlayer.Character and target == localPlayer.Character) then return end
 	if self.Cache[target] then return end
 
-	-- Pending marker prevents duplicate retry tasks for the same target.
 	self.Cache[target] = true
 
 	task.spawn(function()
 		local rootPart, humanoid
 
-		-- Retry without a hard timeout so late replication (join/respawn/teleport) still resolves.
 		while target.Parent and self.Cache[target] == true do
 			rootPart = target:FindFirstChild("HumanoidRootPart")
 			humanoid = target:FindFirstChildOfClass("Humanoid")
@@ -978,13 +961,10 @@ function Arbuzi:AddTarget(target)
 	end)
 end
 
----Remove a target, handling both built entries and still-pending markers.
----@param target Model
 function Arbuzi:RemoveTarget(target)
 	local data = self.Cache[target]
 	if not data then return end
 
-	-- Pending (not-yet-built) entries are plain booleans, nothing to clean up.
 	if typeof(data) ~= "table" then
 		self.Cache[target] = nil
 		return
@@ -1181,7 +1161,6 @@ function Arbuzi:Update(target, data)
 		if objects.LeftBarHolder.Visible then objects.LeftBarHolder.Visible = false end
 	end
 
-	-- Continuously retry until resolved if name is still generic.
 	if data.CurrentWeapon == "Worldmodel" or data.CurrentWeapon == "none" or not data.CurrentWeapon then
 		data.CurrentWeapon = resolveEquippedWeapon(character)
 	end
@@ -1230,7 +1209,6 @@ function Arbuzi:Load()
 	self.Threads["CameraFOV"] = camera:GetPropertyChangedSignal("FieldOfView"):Connect(updateCameraCache)
 	self.Threads["CameraVP"] = camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateCameraCache)
 
-	-- Re-anchor camera reference and re-hook its signals whenever CurrentCamera is replaced (teleport/respawn).
 	self.Threads["CameraChanged"] = workspaceService:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
 		if self.Threads["CameraFOV"] then
 			self.Threads["CameraFOV"]:Disconnect()
@@ -1285,7 +1263,6 @@ function Arbuzi:Load()
 		end)
 	end
 
-	-- Safety-net scanner: catches targets missed by ChildAdded (join bursts, teleports, resets).
 	self.Threads["Watchdog"] = task.spawn(function()
 		while self.Loaded do
 			local folder = workspaceService:FindFirstChild("Players")
