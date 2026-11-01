@@ -202,7 +202,6 @@ local function setHit(payload, part)
 	payload.normal = Vector3.new(0, 1, 0)
 end
 
--- returns modified copy of payload, or nil if nothing changed
 local function rewriteFirePayload(payload)
 	local tPos = targetPart.Position
 	local origin = payload.origin or currentCamera.CFrame.Position
@@ -211,7 +210,6 @@ local function rewriteFirePayload(payload)
 		newPayload[k] = v
 	end
 
-	-- charged shots (bow)
 	if newPayload.charge ~= nil then
 		if CombatConfig.InstaHit then
 			newPayload.origin = tPos + Vector3.new(0, 2, 0)
@@ -240,7 +238,6 @@ local function rewriteFirePayload(payload)
 		return newPayload
 	end
 
-	-- regular shots
 	local hasHit = newPayload.pellet ~= nil or newPayload.part ~= nil
 	local hasDir = newPayload.dir ~= nil and newPayload.origin ~= nil
 	local modified = false
