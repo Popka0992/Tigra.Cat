@@ -1,6 +1,6 @@
 local cloneref = cloneref or function(o) return o end
 
--- Services.
+
 local playersService = cloneref(game:GetService("Players"))
 local runService = cloneref(game:GetService("RunService"))
 local userInputService = cloneref(game:GetService("UserInputService"))
@@ -43,11 +43,11 @@ local VALID_NAMES = {
 local flyStartTime = 0
 local isPulsingGround = false
 
--- Zoom State.
+
 local savedCameraFov = nil
 local isZoomActive = false
 
--- X-Ray Cache.
+
 local xrayActive = false
 local cachedParts = {}
 local cachedDecals = {}
@@ -78,7 +78,7 @@ local MiscConfig = {
 local heartbeatConn = nil
 local renderSteppedConn = nil
 
----Setup QuickLoot delay override.
+
 local function setupInstantLoot()
 	task.spawn(function()
 		local modules = replicatedStorage:WaitForChild("Modules", 10)
@@ -109,8 +109,7 @@ local function setupInstantLoot()
 	end)
 end
 
----Get normalized transparency between 0 and 1.
----@return number
+
 local function getNormalizedTransparency()
 	local raw = MiscConfig.XRayTransparency
 	if typeof(raw) ~= "number" then return 1 end
@@ -120,9 +119,7 @@ local function getNormalizedTransparency()
 	return math.clamp(raw, 0, 1)
 end
 
----Check whether the instance is a valid base structure.
----@param inst Instance
----@return boolean
+
 local function isTargetBuilding(inst)
 	if not inst:IsA("BasePart") or inst:IsA("Terrain") then
 		return false
@@ -156,9 +153,7 @@ local function isTargetBuilding(inst)
 	return isMatch
 end
 
----Apply transparency and hide decals/appearances on a single part.
----@param part BasePart
----@param targetTransparency number
+
 local function applyPartXRay(part, targetTransparency)
 	if not isTargetBuilding(part) then return end
 
@@ -180,7 +175,7 @@ local function applyPartXRay(part, targetTransparency)
 	end
 end
 
----Update transparency across all cached instances dynamically.
+
 local function updateXRayTransparency()
 	local targetTransparency = getNormalizedTransparency()
 
@@ -197,7 +192,7 @@ local function updateXRayTransparency()
 	end
 end
 
----Disable X-Ray and restore original transparencies.
+
 local function disableXRay()
 	xrayActive = false
 
@@ -234,7 +229,7 @@ local function disableXRay()
 	table.clear(cachedDecals)
 end
 
----Enable X-Ray and scan Workspace.
+
 local function enableXRay()
 	if xrayActive then
 		updateXRayTransparency()
@@ -290,7 +285,7 @@ end
 function Misc:Load()
 	setupInstantLoot()
 
-	-- Network Remote Hook for Fall Damage.
+
 	local oldNamecall
 	oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
 		if checkcaller() then
@@ -309,7 +304,7 @@ function Misc:Load()
 		return oldNamecall(self, ...)
 	end))
 
-	-- Camera Render Loop (Zoom).
+
 	renderSteppedConn = runService.RenderStepped:Connect(function()
 		currentCamera = workspaceService.CurrentCamera or currentCamera
 
@@ -328,7 +323,7 @@ function Misc:Load()
 		end
 	end)
 
-	-- Movement, Fly & Fall Damage Dampening.
+
 	heartbeatConn = runService.Heartbeat:Connect(function(dt)
 		local character = localPlayer.Character
 		if not character then return end
@@ -340,7 +335,7 @@ function Misc:Load()
 		currentCamera = workspaceService.CurrentCamera or currentCamera
 		local stepDt = math.clamp(dt, 0.001, 0.033)
 
-		-- Physical Fall Damage Dampening.
+
 		if MiscConfig.NoFall then
 			local vel = rootPart.AssemblyLinearVelocity
 			if vel.Y < -20 then
@@ -359,7 +354,7 @@ function Misc:Load()
 			end
 		end
 
-		-- Fly.
+
 		local isFlying = MiscConfig.FlyEnabled
 		if isFlying then
 			if flyStartTime == 0 then
@@ -439,7 +434,7 @@ function Misc:Load()
 			flyStartTime = 0
 		end
 
-		-- Speed.
+
 		local isSpeeding = MiscConfig.SpeedEnabled
 		if isSpeeding then
 			local moveDir = humanoid.MoveDirection
@@ -453,8 +448,6 @@ function Misc:Load()
 	return self
 end
 
----Toggle X-Ray state from outside.
----@param enabled boolean
 function Misc:SetXRay(enabled)
 	MiscConfig.XRayEnabled = enabled
 	if enabled then
@@ -464,8 +457,7 @@ function Misc:SetXRay(enabled)
 	end
 end
 
----Update X-Ray transparency dynamically.
----@param value number
+
 function Misc:SetXRayTransparency(value)
 	MiscConfig.XRayTransparency = value
 	if xrayActive then
