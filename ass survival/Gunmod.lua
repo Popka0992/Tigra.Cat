@@ -1,9 +1,8 @@
--- Check for table that is shared between executions.
 if not shared then
 	return warn("No shared, no script.")
 end
 
--- Initialize Luraph globals if they do not exist.
+
 loadstring("getfenv().LPH_NO_VIRTUALIZE = function(...) return ... end")()
 getfenv().PP_SCRAMBLE_NUM = function(...) return ... end
 getfenv().PP_SCRAMBLE_STR = function(...) return ... end
@@ -13,7 +12,7 @@ if shared.GunMods and shared.GunMods.Unload then
 	pcall(shared.GunMods.Unload, shared.GunMods)
 end
 
----@module Features.Combat.GunMods
+
 local GunMods = {
 	Loaded = false,
 	Table = {
@@ -29,7 +28,6 @@ local GunMods = {
 
 GunMods.__index = GunMods
 
--- Constants.
 local SPREAD_PROPERTY_NAMES = {
 	"spread",
 	"cone",
@@ -43,12 +41,10 @@ local SPREAD_PROPERTY_NAMES = {
 	"hipcone"
 }
 
--- Services.
 local cloneref = cloneref or function(instance) return instance end
 local replicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 local playersService = cloneref(game:GetService("Players"))
 
--- State.
 local targetConfig = nil
 local targetKick = nil
 local originalConfig = {}
@@ -58,9 +54,6 @@ local originalSpreadEntries = {}
 local cachedSpreadTables = {}
 local characterConn = nil
 
----Check whether a field name corresponds to spread or accuracy cone.
----@param fieldName string
----@return boolean
 local function isSpreadField(fieldName)
 	local lowerName = string.lower(fieldName)
 	for _, prop in ipairs(SPREAD_PROPERTY_NAMES) do
@@ -71,9 +64,6 @@ local function isSpreadField(fieldName)
 	return false
 end
 
----Cache all spread fields recursively.
----@param tbl table
----@param visited table?
 local function indexSpreadTable(tbl, visited)
 	visited = visited or {}
 	if visited[tbl] then return end
@@ -99,7 +89,6 @@ local function indexSpreadTable(tbl, visited)
 	end
 end
 
----Scan memory once on initialization.
 local function locateAndBackupTables()
 	table.clear(cachedSpreadTables)
 	table.clear(originalSpreadEntries)
@@ -201,11 +190,9 @@ local function locateAndBackupTables()
 	end
 end
 
----Apply modifications without scanning memory.
 function GunMods:Apply()
 	local cfg = self.Table
 
-	-- 1. No Recoil
 	local recoilMult = 1 - math.clamp((cfg.RecoilReduction or 0) / 100, 0, 1)
 	if targetConfig then
 		rawset(targetConfig, "RECOIL_CLIMB", (originalConfig.RECOIL_CLIMB or 0) * recoilMult)
@@ -224,7 +211,6 @@ function GunMods:Apply()
 		end
 	end
 
-	-- 2. No Spread
 	local spreadMult = 1 - math.clamp((cfg.SpreadReduction or 0) / 100, 0, 1)
 	if targetConfig then
 		rawset(targetConfig, "MOVE_SPREAD", (originalConfig.MOVE_SPREAD or 0) * spreadMult)
@@ -243,7 +229,6 @@ function GunMods:Apply()
 		end
 	end
 
-	-- 3. No Bullet Drop
 	if targetConfig and originalConfig.proj then
 		local projData = rawget(targetConfig, "PROJ")
 		if typeof(projData) == "table" then
@@ -258,7 +243,6 @@ function GunMods:Apply()
 		end
 	end
 
-	-- 4. Instant ADS
 	if targetConfig then
 		rawset(targetConfig, "ADS_TIME", cfg.InstaADS and 0 or originalConfig.ADS_TIME)
 		rawset(targetConfig, "ADS_OUT_TIME", cfg.InstaADS and 0 or originalConfig.ADS_OUT_TIME)
@@ -275,7 +259,6 @@ function GunMods:Apply()
 		end
 	end
 
-	-- 5. Instant Equip
 	if targetConfig then
 		rawset(targetConfig, "DRAW_BLOCK", cfg.InstaEquip and 0 or originalConfig.DRAW_BLOCK)
 		rawset(targetConfig, "HOLSTER_TIME", cfg.InstaEquip and 0 or originalConfig.HOLSTER_TIME)
@@ -284,7 +267,6 @@ function GunMods:Apply()
 		rawset(targetKick, "EQUIP_TIME", cfg.InstaEquip and 0 or originalKick.EQUIP_TIME)
 	end
 
-	-- 6. No Kick
 	if targetKick then
 		rawset(targetKick, "KICK_BACK", cfg.NoKick and 0 or originalKick.KICK_BACK)
 		rawset(targetKick, "KICK_PITCH", cfg.NoKick and 0 or originalKick.KICK_PITCH)
@@ -303,7 +285,6 @@ function GunMods:Apply()
 		end
 	end
 
-	-- 7. No Sway
 	if targetKick then
 		rawset(targetKick, "SWAY", cfg.NoSway and 0 or originalKick.SWAY)
 		rawset(targetKick, "SWAY_MAX", cfg.NoSway and 0 or originalKick.SWAY_MAX)
@@ -313,8 +294,6 @@ function GunMods:Apply()
 	end
 end
 
----Initialize the GunMods module.
----@return table
 function GunMods:Load()
 	if self.Loaded then return self end
 
@@ -333,13 +312,10 @@ function GunMods:Load()
 	return self
 end
 
----Retrieve live configuration table.
----@return table
 function GunMods:GetConfig()
 	return self.Table
 end
 
----Restore original gun configurations.
 function GunMods:Unload()
 	self.Loaded = false
 
