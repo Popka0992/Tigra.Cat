@@ -1,6 +1,5 @@
 local cloneref = cloneref or function(o) return o end
 
--- Services.
 local playersService = cloneref(game:GetService("Players"))
 local runService = cloneref(game:GetService("RunService"))
 local userInputService = cloneref(game:GetService("UserInputService"))
