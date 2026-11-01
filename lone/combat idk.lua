@@ -1,4 +1,4 @@
--- Services.
+
 local playersService = cloneref(game:GetService("Players"))
 local runService = cloneref(game:GetService("RunService"))
 local userInputService = cloneref(game:GetService("UserInputService"))
@@ -12,7 +12,7 @@ local currentCamera = workspaceService.CurrentCamera
 local Combat = {}
 Combat.__index = Combat
 
--- Constants.
+
 local MAX_PEEK_DISTANCE = 5.5
 
 local targetEntity = nil
@@ -109,7 +109,7 @@ manipulatorTracer.Transparency = 1
 manipulatorTracer.ZIndex = 5
 manipulatorTracer.Visible = false
 
----Perform raycast visibility check between two points (Amongus Hook Fn22).
+
 local function checkVisibility(origin, destination, targetChar)
 	local params = RaycastParams.new()
 	params.RespectCanCollide = true
@@ -122,7 +122,7 @@ local function checkVisibility(origin, destination, targetChar)
 	return not hit, hit
 end
 
----Generate Amongus Hook hitscan offsets.
+
 local function getHitscanAngles()
 	local dist = CombatConfig.HitscanDistance
 	local baseAngles = {
@@ -149,7 +149,7 @@ local function getHitscanAngles()
 	return angles
 end
 
----Amongus Hook Hitscan solver (Fn28).
+
 local function findHitscanPosition(camPos, targetBonePos, targetChar)
 	local angles = getHitscanAngles()
 	for idx = 1, #angles do
@@ -167,7 +167,7 @@ local function findHitscanPosition(camPos, targetBonePos, targetChar)
 	return nil
 end
 
----Origin-Side Manipulator solver to find an open peek spot with line of sight.
+
 local function findManipulatorOrigin(targetPos, targetChar)
 	local myChar = localPlayer.Character
 	local head = myChar and myChar:FindFirstChild("Head")
@@ -200,8 +200,6 @@ local function findManipulatorOrigin(targetPos, targetChar)
 		local dist = maxDist * mult
 		for _, dir in ipairs(testDirections) do
 			local samplePos = rootPos + (dir * dist)
-
-			-- Точка выглядывания должна чисто видеть врага.
 			local clearToEnemy = checkVisibility(samplePos + Vector3.new(0, 1.5, 0), targetPos, targetChar)
 			if clearToEnemy then
 				return samplePos
@@ -212,7 +210,6 @@ local function findManipulatorOrigin(targetPos, targetChar)
 	return nil
 end
 
----Scan workspace containers for targets.
 local function getTargetEntities()
 	local entities = {}
 	local myChar = localPlayer.Character
@@ -260,14 +257,14 @@ local function getTargetEntities()
 	return entities
 end
 
----Roll hit chance.
+
 local function rollHitChance()
 	if CombatConfig.HitChance >= 100 then return true end
 	if CombatConfig.HitChance <= 0 then return false end
 	return math.random(1, 100) <= CombatConfig.HitChance
 end
 
----Get nearest target bone to cursor.
+
 local function getClosestTarget()
 	local closestPart, closestDist, bestEntity = nil, math.huge, nil
 	local resolvedHitscan, resolvedManipulator = nil, nil
@@ -299,7 +296,7 @@ local function getClosestTarget()
 			local isVisible = checkVisibility(camPos, part.Position, char)
 			local hitscanPos = nil
 
-			-- В соответствии с amongus hook: сканируем только если цель перекрыта стеной
+
 			if not isVisible and CombatConfig.Hitscan then
 				hitscanPos = findHitscanPosition(camPos, part.Position, char)
 				if hitscanPos then
@@ -307,7 +304,7 @@ local function getClosestTarget()
 				end
 			end
 
-			-- Manipulator расчет
+
 			local manipPos = nil
 			if CombatConfig.Manipulator then
 				local aimTarget = hitscanPos or part.Position
@@ -331,7 +328,7 @@ local function getClosestTarget()
 	return closestPart, bestEntity, resolvedHitscan, resolvedManipulator
 end
 
----Patch weapon mods & hook Projectile modules.
+
 local function applyWeaponMods()
 	task.spawn(function()
 		local modules = replicatedStorage:WaitForChild("Modules", 10)
@@ -420,7 +417,7 @@ local function applyWeaponMods()
 									task.delay(0, data.Reload, rawParams)
 								end
 
-								-- Teleport-Peek Manipulator handler.
+
 								if CombatConfig.Enabled and CombatConfig.Manipulator and manipulatorOriginPos and not isPeeking then
 									local character = localPlayer.Character
 									local rootPart = character and character:FindFirstChild("HumanoidRootPart")
@@ -434,7 +431,7 @@ local function applyWeaponMods()
 										rootPart.CFrame = peekCFrame
 										rootPart.AssemblyLinearVelocity = Vector3.zero
 
-										-- Небольшая пауза для подтверждения физики сервером перед выстрелом.
+
 										task.wait(0.03)
 
 										local result = origFire(proxyParams)
@@ -637,7 +634,7 @@ function Combat:Load()
 		local isManipulating = CombatConfig.Enabled and CombatConfig.Manipulator and manipulatorOriginPos ~= nil
 		local viewportSize = currentCamera.ViewportSize
 
-		-- Hitscan Visuals.
+
 		if isHitscanning and CombatConfig.HitscanIndicator then
 			hitscanIndicator.Position = Vector2.new(viewportSize.X / 2, (viewportSize.Y / 2) + 38)
 			hitscanIndicator.Color = CombatConfig.HitscanVisualColor
@@ -659,7 +656,6 @@ function Combat:Load()
 			hitscanPoint.Visible = false
 		end
 
-		-- Manipulator Visuals.
 		if isManipulating then
 			local yOffset = isHitscanning and 54 or 38
 			manipIndicator.Position = Vector2.new(viewportSize.X / 2, (viewportSize.Y / 2) + yOffset)
