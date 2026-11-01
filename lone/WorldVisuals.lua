@@ -1,25 +1,25 @@
--- Check for table that is shared between executions.
+
 if not shared then
 	return warn("No shared, no script.")
 end
 
--- Initialize Luraph globals if they do not exist.
+
 loadstring("getfenv().LPH_NO_VIRTUALIZE = function(...) return ... end")()
 getfenv().PP_SCRAMBLE_NUM = function(...) return ... end
 getfenv().PP_SCRAMBLE_STR = function(...) return ... end
 getfenv().PP_SCRAMBLE_RE_NUM = function(...) return ... end
 
----@module Features.Visuals.WorldVisuals
+
 local WorldVisuals = {}
 WorldVisuals.__index = WorldVisuals
 
--- Services.
+
 local cloneref = cloneref or function(instance) return instance end
 local lightingService = cloneref(game:GetService("Lighting"))
 local workspaceService = cloneref(game:GetService("Workspace"))
 local runService = cloneref(game:GetService("RunService"))
 
--- Constants.
+
 local BOOST_COLOR = Color3.fromRGB(130, 130, 130)
 local WHITE_COLOR = Color3.fromRGB(255, 255, 255)
 
@@ -77,7 +77,7 @@ local SKYBOXES = {
 	}
 }
 
--- Baseline state.
+
 local originalAmbient = lightingService.Ambient
 local originalOutdoorAmbient = lightingService.OutdoorAmbient
 local originalFogColor = lightingService.FogColor
@@ -186,8 +186,7 @@ WorldVisuals.Config = {
 	AtmosphereDecay = originalAtmosphere.Decay
 }
 
----Apply skybox textures directly.
----@param name string
+
 function WorldVisuals:ApplySkybox(name)
 	if appliedSky == name then return end
 	appliedSky = name
@@ -203,7 +202,7 @@ function WorldVisuals:ApplySkybox(name)
 	customSky.MoonTextureId = data.MoonTextureId or ""
 end
 
----Updates static visual effects and applies values.
+
 function WorldVisuals:Update()
 	local config = self.Config
 
@@ -302,17 +301,14 @@ function WorldVisuals:Update()
 	end
 end
 
----Returns configuration table.
----@return table
 function WorldVisuals:GetConfig()
 	return self.Config
 end
 
----Starts lightweight property enforcement.
+
 function WorldVisuals:Load()
 	self:Update()
 
-	-- Intercept lighting modifications directly without heavy RenderStepped loops.
 	if not isHookInstalled then
 		isHookInstalled = true
 		local oldNewIndex
@@ -344,7 +340,7 @@ function WorldVisuals:Load()
 		end))
 	end
 
-	-- Low frequency check for C++ level changes (e.g. tweens).
+
 	task.spawn(function()
 		while task.wait(0.25) do
 			local config = WorldVisuals.Config
