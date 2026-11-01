@@ -63,7 +63,6 @@ local CombatConfig = {
 	ManipulatorColor = Color3.fromRGB(0, 255, 170)
 }
 
--- Reusable static RaycastParams to prevent GC allocations.
 local sharedRayParams = RaycastParams.new()
 sharedRayParams.FilterType = Enum.RaycastFilterType.Exclude
 sharedRayParams.RespectCanCollide = true
@@ -130,7 +129,6 @@ manipLine.Thickness = 1.5
 manipLine.ZIndex = 5
 manipLine.Visible = false
 
----Perform raycast visibility check using pooled parameters.
 local function checkVisibility(origin, destination, targetChar)
 	local myChar = localPlayer.Character
 	local ignoredFolder = workspaceService:FindFirstChild("Ignored")
@@ -146,7 +144,6 @@ local function checkVisibility(origin, destination, targetChar)
 	return not hit, hit
 end
 
----Solver for Hitscan angles without dynamic allocations.
 local function findHitscanPosition(camPos, targetBonePos, targetChar)
 	local dist = CombatConfig.HitscanDistance
 	for idx = 1, #staticHitscanDirs do
@@ -170,7 +167,6 @@ local function findHitscanPosition(camPos, targetBonePos, targetChar)
 	return nil
 end
 
----Optimized manipulator solver.
 local function findManipulatorPosition(myRoot, targetPos, targetChar)
 	local rootPos = myRoot.Position
 	local dist = CombatConfig.ManipulatorDistance
@@ -215,7 +211,6 @@ local function findManipulatorPosition(myRoot, targetPos, targetChar)
 	return nil
 end
 
----Scan workspace containers for targets.
 local function getTargetEntities()
 	local entities = {}
 	local myChar = localPlayer.Character
@@ -262,14 +257,12 @@ local function getTargetEntities()
 	return entities
 end
 
----Roll hit chance.
 local function rollHitChance()
 	if CombatConfig.HitChance >= 100 then return true end
 	if CombatConfig.HitChance <= 0 then return false end
 	return math.random(1, 100) <= CombatConfig.HitChance
 end
 
----Get nearest target bone to cursor.
 local function getClosestTarget()
 	local closestPart, closestDist, bestEntity, resolvedHitscan, resolvedManip = nil, math.huge, nil, nil, nil
 	local mousePos = userInputService:GetMouseLocation()
@@ -329,7 +322,6 @@ local function getClosestTarget()
 	return closestPart, bestEntity, resolvedHitscan, resolvedManip
 end
 
----Hook weapon modules.
 local function patchWeaponModule(mod, recoilModule)
 	if not mod:IsA("ModuleScript") then return end
 
@@ -509,7 +501,6 @@ local function patchWeaponModule(mod, recoilModule)
 	end)
 end
 
----Patch weapon mods & hook Projectile modules.
 local function applyWeaponMods()
 	task.spawn(function()
 		local modules = replicatedStorage:WaitForChild("Modules", 10)
@@ -692,7 +683,6 @@ function Combat:Load()
 		end
 	end)
 
-	-- Continual target discovery (always active when enabled).
 	task.spawn(function()
 		while true do
 			if CombatConfig.Enabled then
@@ -802,8 +792,7 @@ function Combat:Load()
 		if userInputService:GetFocusedTextBox() or guiService:MenuIsOpen() then
 			return oldIndex(self, key)
 		end
-
-		-- Do not intercept if player is actively looking at a nearby interactable object (Door, Box, Furnace, etc.).
+				
 		local myChar = localPlayer.Character
 		local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar.PrimaryPart)
 		local realTarget = oldIndex(self, "Target")
