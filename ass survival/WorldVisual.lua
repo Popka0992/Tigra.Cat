@@ -1,13 +1,11 @@
--- Services.
 local lightingService = cloneref(game:GetService("Lighting"))
 local runService = cloneref(game:GetService("RunService"))
 local workspaceService = cloneref(game:GetService("Workspace"))
 
----@module Features.Visuals.WorldVisuals
+
 local WorldVisuals = {}
 WorldVisuals.__index = WorldVisuals
 
--- Constants.
 local SKYBOX_ASSETS = {
 	["Roblox Default"] = {
 		Bk = "rbxasset://textures/sky/sky512_bk.tex",
@@ -225,7 +223,6 @@ for name in pairs(SKYBOX_ASSETS) do
 end
 table.sort(WorldVisuals.SkyboxNames)
 
--- Lighting baselines.
 local originalAmbient = lightingService.Ambient
 local originalOutdoorAmbient = lightingService.OutdoorAmbient
 local originalFogColor = lightingService.FogColor
@@ -255,7 +252,6 @@ local originalAtmosphere = {
 	Decay = initialAtmosphere and initialAtmosphere.Decay or Color3.fromRGB(106, 112, 125)
 }
 
--- Managed visual instances.
 local customSky = initialSky
 if not customSky then
 	customSky = Instance.new("Sky")
@@ -348,7 +344,6 @@ local function applyCloudsState(disabled)
 	end
 end
 
--- Atmosphere instances override and suppress legacy Fog properties.
 local function syncAtmosphereState()
 	local config = WorldVisuals.Config
 
@@ -384,7 +379,6 @@ local function syncAtmosphereState()
 	end
 end
 
----Apply selected Skybox assets to all Sky instances.
 function WorldVisuals:ApplySkybox(name)
 	local targetData = SKYBOX_ASSETS[name]
 	local skies = {}
@@ -413,7 +407,6 @@ function WorldVisuals:ApplySkybox(name)
 	end
 end
 
----Synchronize current state.
 function WorldVisuals:Update()
 	local config = self.Config
 	local cc = getActiveColorCorrection()
@@ -498,9 +491,8 @@ function WorldVisuals:GetSkyboxList()
 	return self.SkyboxNames
 end
 
----Initialize anti-rollback metatable hook and render loop.
 function WorldVisuals:Load()
-	-- Intercept game scripts modifying lighting and clouds properties.
+	
 	local oldNewindex
 	oldNewindex = hookmetamethod(game, "__newindex", newcclosure(function(self, property, value)
 		if not checkcaller() and typeof(self) == "Instance" then
@@ -533,14 +525,12 @@ function WorldVisuals:Load()
 		return oldNewindex(self, property, value)
 	end))
 
-	-- Enforce cloud state on newly created instances.
 	workspaceService.DescendantAdded:Connect(function(child)
 		if child:IsA("Clouds") and self.Config.Enabled and self.Config.NoClouds then
 			child.Enabled = false
 		end
 	end)
 
-	-- Enforce active visuals every render step to prevent engine rollbacks.
 	runService.RenderStepped:Connect(function()
 		local config = self.Config
 		if not config.Enabled then return end
