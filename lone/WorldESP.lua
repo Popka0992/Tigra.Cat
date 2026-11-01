@@ -1,9 +1,9 @@
--- Services.
+
 local cloneref = cloneref or function(o) return o end
 local workspaceService = cloneref(game:GetService("Workspace"))
 local runService = cloneref(game:GetService("RunService"))
 
----@module Features.Visuals.WorldESP
+
 local WorldESP = {
 	Config = {
 		Enabled = false,
@@ -23,7 +23,7 @@ local WorldESP = {
 	Connections = {}
 }
 
--- Reusable static buffer to prevent memory allocations per frame.
+
 local cornerOffsets = {
 	Vector3.new(-1, -1, -1),
 	Vector3.new(-1, -1,  1),
@@ -35,8 +35,7 @@ local cornerOffsets = {
 	Vector3.new( 1,  1,  1),
 }
 
----Destroy an entity ESP entry safely.
----@param instance Instance
+
 local function removeEntityEsp(instance)
 	local entry = WorldESP.Entities[instance]
 	if not entry then return end
@@ -53,9 +52,7 @@ local function removeEntityEsp(instance)
 	WorldESP.Entities[instance] = nil
 end
 
----Create Drawings for a valid entity.
----@param instance Instance
----@param definition table
+
 local function createEntityEsp(instance, definition)
 	if WorldESP.Entities[instance] then return end
 
@@ -96,8 +93,7 @@ local function createEntityEsp(instance, definition)
 	WorldESP.Entities[instance] = entry
 end
 
----Register matching world instances.
----@param child Instance
+
 local function checkAndRegisterEntity(child)
 	local def = WorldESP.Config.Targets[child.Name]
 	if def then
@@ -105,8 +101,7 @@ local function checkAndRegisterEntity(child)
 	end
 end
 
----Monitor parent containers for child events.
----@param container Instance
+
 local function monitorContainer(container)
 	for _, child in ipairs(container:GetChildren()) do
 		checkAndRegisterEntity(child)
@@ -114,9 +109,7 @@ local function monitorContainer(container)
 	table.insert(WorldESP.Connections, container.ChildAdded:Connect(checkAndRegisterEntity))
 end
 
----Initialize and start render cycle.
----@param config table?
----@return table
+
 function WorldESP:Load(config)
 	self:Unload()
 	if config then
@@ -175,7 +168,7 @@ function WorldESP:Load(config)
 			local pos = pivot.Position
 			local dist = (pos - camPos).Magnitude
 
-			-- Early distance cutoff to skip calculations.
+
 			if dist > maxDist then
 				entry.Box.Visible = false
 				entry.Name.Visible = false
@@ -261,13 +254,12 @@ function WorldESP:Load(config)
 	return self
 end
 
----Get current config table.
----@return table
+
 function WorldESP:GetConfig()
 	return self.Config
 end
 
----Clean up all drawings and connections.
+
 function WorldESP:Unload()
 	for _, conn in ipairs(self.Connections) do
 		conn:Disconnect()
