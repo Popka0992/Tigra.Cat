@@ -1,9 +1,9 @@
--- Check for table that is shared between executions.
+
 if not shared then
 	return warn("No shared, no script.")
 end
 
--- Initialize Luraph globals if they do not exist.
+
 loadstring("getfenv().LPH_NO_VIRTUALIZE = function(...) return ... end")()
 getfenv().PP_SCRAMBLE_NUM = function(...) return ... end
 getfenv().PP_SCRAMBLE_STR = function(...) return ... end
@@ -13,7 +13,7 @@ if shared.Arbuzi and shared.Arbuzi.Unload then
 	pcall(shared.Arbuzi.Unload, shared.Arbuzi)
 end
 
--- Services.
+
 local cloneref = cloneref or function(instance) return instance end
 local workspaceService = cloneref(game:GetService("Workspace"))
 local playersService = cloneref(game:GetService("Players"))
@@ -21,11 +21,11 @@ local runService = cloneref(game:GetService("RunService"))
 local httpService = cloneref(game:GetService("HttpService"))
 local coreGui = cloneref(game:GetService("CoreGui"))
 
--- Constants.
+
 local LOCAL_PLAYER = playersService.LocalPlayer
 local HTTP_REQUEST = request or (syn and syn.request) or (http and http.request) or http_request
 
--- Fast library references.
+
 local newVector3 = Vector3.new
 local newVector2 = Vector2.new
 local newUDim = UDim.new
@@ -42,7 +42,7 @@ local mathTan = math.tan
 local mathRad = math.rad
 local osClock = os.clock
 
--- Shared calculation state.
+
 local camera = workspaceService.CurrentCamera
 local zeroVector3 = newVector3(0, 0, 0)
 local cameraPosition = newVector3(0, 0, 0)
@@ -1152,7 +1152,6 @@ function Arbuzi:AddTarget(target)
 		self:InitEsp(data)
 		self.Cache[target] = data
 
-		-- Cache equipped weapon via listeners rather than polling every frame.
 		data.Conns.ChildAdded = target.ChildAdded:Connect(function()
 			data.WeaponDirty = true
 		end)
@@ -1870,7 +1869,6 @@ function Arbuzi:Load()
 			end
 		end
 
-		-- ORES
 		local oreCfg = config.Ores
 		if oreCfg and oreCfg.Enabled then
 			local maxDist = oreCfg.MaxDistance or 2500
@@ -1924,7 +1922,6 @@ function Arbuzi:Load()
 			end
 		end
 
-		-- PICKUPS
 		local pickupCfg = config.Pickups
 		if pickupCfg and pickupCfg.Enabled then
 			local maxDist = pickupCfg.MaxDistance or 1500
@@ -1979,7 +1976,6 @@ function Arbuzi:Load()
 			end
 		end
 
-		-- ANIMALS
 		local animalCfg = config.Animals
 		if animalCfg and animalCfg.Enabled then
 			local maxDist = animalCfg.MaxDistance or 2500
