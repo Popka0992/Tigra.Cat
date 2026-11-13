@@ -3656,7 +3656,7 @@ local Library do
         --                    "?" icon and tag sit right after it.
         -- TextItem nil    -> a right-aligned row is built inside Parent (buttons,
         --                    textboxes) and the reserved width is returned.
-        Library.AttachMeta = function(self, Element, Data, TextItem, Parent)
+        Library.AttachMeta = function(self, Element, Data, TextItem, Parent, ColorTarget)
             Data = Data or { }
 
             local Description = Data.Description or Data.Tooltip or Data.desc or Data.tooltip
@@ -3710,6 +3710,12 @@ local Library do
 
             local Reserve = 0
 
+            -- The name itself is tinted with the risk color too, not just the tag.
+            local ColorItem = ColorTarget or TextItem
+            local BaseColor = ColorItem and ColorItem.Instance.TextColor3
+
+            Element.NameColor = BaseColor
+
             if Description then
                 local Help = Instances:Create("TextButton", {
                     Parent = Row.Instance,
@@ -3752,6 +3758,12 @@ local Library do
                 end
 
                 Element.RiskKey = Key
+
+                if ColorItem and BaseColor then
+                    ColorItem:Tween(nil, {
+                        TextColor3 = Key and Library.RiskTags[Key].Color or BaseColor
+                    })
+                end
 
                 if Key then
                     Element.RiskTag = Library:CreateRiskTag(Row.Instance, Key, 3)
@@ -4074,7 +4086,7 @@ local Library do
                 end)
             end
 
-            local MetaReserve = Library:AttachMeta(Button, Data, nil, Items["ButtonHolder"])
+            local MetaReserve = Library:AttachMeta(Button, Data, nil, Items["ButtonHolder"], Items["Value"])
             if MetaReserve > 0 then
                 Items["Outline"].Instance.Size = UDim2New(1, -(50 + MetaReserve), 0, 21)
             end
@@ -4083,7 +4095,7 @@ local Library do
                 Items["Value"]:Tween(nil, {TextColor3 = Library.Theme.Accent})
                 Library:SafeCall(Button.Callback)
                 task.wait(0.1)
-                Items["Value"]:Tween(nil, {TextColor3 = FromRGB(221, 221, 221)})
+                Items["Value"]:Tween(nil, {TextColor3 = Button.NameColor or FromRGB(221, 221, 221)})
             end
 
             function Button:SetVisibility(Bool)
