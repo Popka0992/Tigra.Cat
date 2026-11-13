@@ -852,7 +852,14 @@ local Library do
     end
 
     Library.Round = function(self, Number, Float)
-        local Multiplier = 1 / (Float or 1)
+        Float = Float or 1
+
+        -- Decimals = 0 used to give 1/0 -> NaN in the slider value label.
+        if Float <= 0 then
+            return MathFloor(Number + 0.5)
+        end
+
+        local Multiplier = 1 / Float
         return MathFloor(Number * Multiplier) / Multiplier
     end
 
@@ -3085,7 +3092,16 @@ local Library do
                 end
             end)
 
-            if #Page.Window.Pages == 0 then 
+            local HasActivePage = false
+
+            for Index, Value in Page.Window.Pages do
+                if Value.Active then
+                    HasActivePage = true
+                    break
+                end
+            end
+
+            if not HasActivePage and Data.Activate ~= false then
                 Page:Turn(true)
             end
 
@@ -3584,17 +3600,17 @@ local Library do
         end
 
         -- Status tags (Risk) + hover tooltips (Description). Both are opt-in per
-        -- element through the Data table: {Risk = "own"|"detected"|"safe", Description = "..."}
+        -- element through the Data table: {Risk = "own"|"detected", Description = "..."}
+        -- "safe" / "legit" / "clean" resolve to no tag at all.
         Library.RiskTags = {
-            safe     = {Text = "SAFE",     Color = FromRGB(90, 205, 125)},
             own      = {Text = "OWN RISK", Color = FromRGB(255, 196, 0)},
             detected = {Text = "DETECTED", Color = FromRGB(255, 70, 70)},
         }
 
         Library.RiskAliases = {
-            safe = "safe", legit = "safe", clean = "safe",
             own = "own", ownrisk = "own", userisk = "own", useownrisk = "own", risky = "own", warning = "own",
             detected = "detected", detect = "detected", unsafe = "detected", danger = "detected",
+            safe = "none", legit = "none", clean = "none", harmless = "none", none = "none",
         }
 
         Library.NormalizeRisk = function(self, Risk)
@@ -3604,6 +3620,10 @@ local Library do
 
             local Key = StringGSub(StringLower(tostring(Risk)), "%s", "")
             Key = self.RiskAliases[Key] or Key
+
+            if Key == "none" then
+                return nil
+            end
 
             if self.RiskTags[Key] then
                 return Key
@@ -3630,8 +3650,8 @@ local Library do
                 BackgroundColor3 = TagData.Color,
                 BackgroundTransparency = 0.86,
                 BorderSizePixel = 0,
-                AutomaticSize = Enum.AutomaticSize.XY,
-                Size = UDim2New(0, 0, 0, 0),
+                AutomaticSize = Enum.AutomaticSize.X,
+                Size = UDim2New(0, 0, 0, 14),
             })
 
             Instances:Create("UICorner", {
@@ -3643,10 +3663,8 @@ local Library do
             Instances:Create("UIPadding", {
                 Parent = Tag.Instance,
                 Name = "\0",
-                PaddingLeft = UDimNew(0, 4),
-                PaddingRight = UDimNew(0, 4),
-                PaddingTop = UDimNew(0, 1),
-                PaddingBottom = UDimNew(0, 1),
+                PaddingLeft = UDimNew(0, 5),
+                PaddingRight = UDimNew(0, 5),
             })
 
             return Tag
@@ -5470,7 +5488,7 @@ local Library do
     end
 
     Library.CreateSettingsPage = function(self, Window, KeybindList, Watermark)
-        local SettingsPage = Window:Page({Icon = "rbxassetid://101420508297304"})
+        local SettingsPage = Window:Page({Icon = "rbxassetid://101420508297304", Activate = false})
         
         local MenuSubPage = SettingsPage:SubPage({Name = "Menu"})
         local ConfigsSubPage = SettingsPage:SubPage({Name = "Configs"})
