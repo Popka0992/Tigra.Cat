@@ -5806,6 +5806,6 @@ local Library do
         end)
     end
 end
-print("hello world")
+
 getgenv().Library = Library
 return Library
