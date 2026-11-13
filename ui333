@@ -2939,6 +2939,14 @@ local Library do
                 end)
             end
 
+            -- Force-opens one page and closes the rest, ignoring the per-page
+            -- debounce. Used to keep Settings from winning the first tab.
+            function Window:SelectPage(Target)
+                for Index, Value in self.Pages do
+                    Value:Turn(Value == Target, true)
+                end
+            end
+
             Library:Connect(UserInputService.InputBegan, function(Input)
                 if tostring(Input.KeyCode) == Library.MenuKeybind or tostring(Input.UserInputType) == Library.MenuKeybind then
                     Window:SetOpen(not Window.IsOpen)
@@ -3038,11 +3046,12 @@ local Library do
 
             local Debounce = false
 
-            function Page:Turn(Bool)
-                if Debounce then 
+            function Page:Turn(Bool, Force)
+                if Debounce and not Force then 
                     return 
                 end
 
+                Debounce = false
                 Page.Active = Bool 
                 
                 Debounce = true
@@ -5778,6 +5787,23 @@ local Library do
                 Library:RefreshConfigsList(ConfigsSearchbox)
             end
         end
+
+        -- Settings must never win the first tab, no matter when this runs.
+        -- Deferred so the user's pages exist by the time we pick one.
+        task.defer(function()
+            local Target
+
+            for Index, Value in Window.Pages do
+                if Value ~= SettingsPage then
+                    Target = Value
+                    break
+                end
+            end
+
+            if Target and SettingsPage.Active then
+                Window:SelectPage(Target)
+            end
+        end)
     end
 end
 
