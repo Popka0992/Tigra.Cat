@@ -1140,6 +1140,11 @@ local Library do
     Library.AttachMeta = function(self, Element, Data, NameLabel, Gutter)
         Data = Data or { }
 
+        -- Meta is opt-in: only create the question mark when explicitly enabled.
+        if Data.Meta ~= true then
+            return Element
+        end
+
         Element.Risk = self:NormalizeRisk(Data.Risk or Data.risk)
         Element.Description = Data.Description or Data.description or Data.Desc or Data.desc or "No description for this feature yet."
 
@@ -1169,12 +1174,19 @@ local Library do
         if NameLabel then
             local Update = function()
                 local Name = NameLabel.Instance
-                Meta.Instance.Position = UDim2FromOffset(Name.Position.X.Offset + Name.AbsoluteSize.X + 6, Name.Position.Y.Offset - 1)
+                local Parent = Meta.Instance.Parent
+                local RelativePosition = Name.AbsolutePosition - Parent.AbsolutePosition
+
+                Meta.Instance.Position = UDim2FromOffset(
+                    RelativePosition.X + Name.AbsoluteSize.X + 6,
+                    RelativePosition.Y - 1
+                )
             end
 
             Update()
             task.defer(Update)
             Library:Connect(NameLabel.Instance:GetPropertyChangedSignal("AbsoluteSize"), Update)
+            Library:Connect(NameLabel.Instance:GetPropertyChangedSignal("AbsolutePosition"), Update)
         else
             Meta.Instance.AnchorPoint = Vector2New(1, 0.5)
             Meta.Instance.Position = UDim2New(1, -8, 0.5, 0)
