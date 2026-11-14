@@ -1136,8 +1136,8 @@ local Library do
         Library:TooltipUpdate()
     end)
 
-    -- Optional "?" icon + risk tag API.
-    -- SetRisk is always available, even when Meta UI is disabled.
+    -- Optional "?" icon + static risk tag display.
+    -- Risk colors are applied even when Meta UI is disabled.
     Library.AttachMeta = function(self, Element, Data, NameLabel, Gutter)
         Data = Data or { }
 
@@ -1161,6 +1161,10 @@ local Library do
                 NameLabel.Instance.TextColor3 = Element.Risk and Color or BaseColor
             end
         end
+
+        -- Apply the configured risk color even when the optional tooltip icon is disabled.
+        -- This keeps Risk = "own"/"detected" visible on ordinary controls too.
+        Element:SetRisk(Element.Risk)
 
         -- Meta UI is opt-in. Do not create a question mark for ordinary controls.
         if Data.Meta ~= true then
@@ -1242,12 +1246,12 @@ local Library do
 
         local TagText = function()
             if Element.Risk == "own" then
-                return "Tag: use at your own risk. Right-click the ? to cycle it."
+                return "Risk status: use at your own risk."
             elseif Element.Risk == "detected" then
-                return "Tag: detected. Right-click the ? to cycle it."
+                return "Risk status: detected."
             end
 
-            return "No tag. Right-click the ? to cycle: own risk -> detected -> none."
+            return "No risk status assigned."
         end
 
         local ShowTooltip = function()
@@ -1262,20 +1266,6 @@ local Library do
         Question:OnHoverLeave(function()
             Question:Tween(nil, {TextColor3 = TagColor()})
             Library:TooltipHide()
-        end)
-
-        Question:Connect("MouseButton2Down", function()
-            if Element.Risk == nil then
-                Element:SetRisk("own")
-            elseif Element.Risk == "own" then
-                Element:SetRisk("detected")
-            else
-                Element:SetRisk(nil)
-            end
-
-            if Tooltip.Visible then
-                ShowTooltip()
-            end
         end)
 
         Element.Meta = Meta
@@ -4090,6 +4080,27 @@ local Library do
                     local Holder = Items["Holder"]
                     local Inner = Items["Inner"]
 
+                    local Fade = function(Visible, Speed)
+                        local Descendants = Inner.Instance:GetDescendants()
+                        TableInsert(Descendants, Inner.Instance)
+
+                        for _, Item in Descendants do
+                            local Properties = Tween:GetProperty(Item)
+
+                            if not Properties then
+                                continue
+                            end
+
+                            if type(Properties) == "table" then
+                                for _, Property in Properties do
+                                    Tween:FadeItem(Item, Property, Visible, Speed)
+                                end
+                            else
+                                Tween:FadeItem(Item, Properties, Visible, Speed)
+                            end
+                        end
+                    end
+
                     Holder.Instance.Visible = true
 
                     if Bool then
@@ -4100,8 +4111,10 @@ local Library do
 
                     if Instant then
                         Holder.Instance.Size = Target
+                        Fade(Bool, 0.01)
                     else
                         Holder:Tween(TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = Target})
+                        Fade(Bool, 0.18)
                     end
 
                     task.delay(Instant and 0.05 or 0.24, function()
@@ -5965,7 +5978,7 @@ local Library do
                         Library:RefreshConfigsList(ConfigsSearchbox)
                     end
                 })
-print("2jdj")
+
                 Library:RefreshConfigsList(ConfigsSearchbox)
             end
         end
