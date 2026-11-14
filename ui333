@@ -6215,11 +6215,26 @@ local Library do
     Library.TargetHUD = function(self, Options)
         Options = Options or {}
 
+        -- Custom fonts must be uploaded to Roblox first. A GitHub URL cannot be
+        -- assigned directly to TextLabel.FontFace at runtime.
+        local HudFont = Options.FontFace or Library.Font
+        if Options.FontAssetId then
+            local OK, UploadedFont = pcall(function()
+                return Font.new(tostring(Options.FontAssetId), Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+            end)
+            if OK and UploadedFont then
+                HudFont = UploadedFont
+            else
+                warn("[Samet UI] TargetHUD FontAssetId is invalid; falling back to Library.Font")
+            end
+        end
+
         local TargetHUD = {
             Target = nil,
             Data = {},
             Visible = false,
             WeaponMode = Options.WeaponMode or "Combined",
+            FontFace = HudFont,
             Slots = {},
             Statuses = {},
             Connections = {},
@@ -6285,7 +6300,7 @@ local Library do
         local Name = New("TextLabel", {
             Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
             Position = UDim2New(0, 145, 0, 11), Size = UDim2New(1, -155, 0, 17),
-            FontFace = Library.Font, Text = "Target", TextSize = 12,
+            FontFace = HudFont, Text = "Target", TextSize = 12,
             TextColor3 = Theme("Text", FromRGB(205,205,205)),
             TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
             ZIndex = 35
@@ -6293,7 +6308,7 @@ local Library do
         local Distance = New("TextLabel", {
             Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
             Position = UDim2New(0, 145, 0, 55),
-            Size = UDim2New(1, -155, 0, 16), FontFace = Library.Font,
+            Size = UDim2New(1, -155, 0, 16), FontFace = HudFont,
             Text = "--m", TextSize = 11, TextColor3 = Theme("Muted", FromRGB(132,132,132)),
             TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 35
         })
@@ -6301,21 +6316,21 @@ local Library do
         local UserCaption = New("TextLabel", {
             Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
             Position = UDim2New(0, 85, 0, 11), Size = UDim2New(0, 52, 0, 16),
-            FontFace = Library.Font, Text = "User", TextSize = 11,
+            FontFace = HudFont, Text = "User", TextSize = 11,
             TextColor3 = Theme("Muted", FromRGB(132,132,132)),
             TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 35
         })
         local WeaponCaption = New("TextLabel", {
             Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
             Position = UDim2New(0, 85, 0, 33), Size = UDim2New(0, 52, 0, 16),
-            FontFace = Library.Font, Text = "Weapon", TextSize = 11,
+            FontFace = HudFont, Text = "Weapon", TextSize = 11,
             TextColor3 = Theme("Muted", FromRGB(132,132,132)),
             TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 35
         })
         local DistanceCaption = New("TextLabel", {
             Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
             Position = UDim2New(0, 85, 0, 55), Size = UDim2New(0, 52, 0, 16),
-            FontFace = Library.Font, Text = "Distance", TextSize = 11,
+            FontFace = HudFont, Text = "Distance", TextSize = 11,
             TextColor3 = Theme("Muted", FromRGB(132,132,132)),
             TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 35
         })
@@ -6338,7 +6353,7 @@ local Library do
         New("UICorner", {Parent = HealthFill, CornerRadius = UDimNew(0, 3)})
         local HealthText = New("TextLabel", {
             Parent = HealthBack, BackgroundTransparency = 1, BorderSizePixel = 0,
-            Size = UDim2New(1, 0, 1, 0), FontFace = Library.Font,
+            Size = UDim2New(1, 0, 1, 0), FontFace = HudFont,
             Text = "100 HP", TextSize = 10, TextColor3 = FromRGB(245,245,245),
             TextStrokeTransparency = 0.65, ZIndex = 37
         })
@@ -6346,7 +6361,7 @@ local Library do
         local WeaponText = New("TextLabel", {
             Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
             Position = UDim2New(0, 145, 0, 33), Size = UDim2New(1, -155, 0, 16),
-            FontFace = Library.Font, Text = "Unarmed", TextSize = 11,
+            FontFace = HudFont, Text = "Unarmed", TextSize = 11,
             TextColor3 = Theme("Text", FromRGB(205,205,205)),
             TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
             ZIndex = 35
@@ -6410,18 +6425,29 @@ local Library do
 
         local function RenderSlots(Slots)
             ClearChildren(SlotHolder)
-            for Index, Slot in ipairs(Slots or {}) do
+            Slots = Slots or {}
+            -- Keep four visible equipment cells even when no armor data is supplied.
+            -- Extra entries are supported; UIGridLayout wraps them to another row.
+            local VisibleSlotCount = math.max(tonumber(Options.SlotCount) or 4, #Slots)
+            for Index = 1, VisibleSlotCount do
+                local Slot = Slots[Index]
+                local IsEmpty = Slot == nil
                 local Icon = type(Slot) == "table" and Slot.Icon or nil
-                local SlotName = type(Slot) == "table" and Slot.Name or tostring(Slot)
-                local Active = type(Slot) ~= "table" or Slot.Active ~= false
+                local SlotName = type(Slot) == "table" and Slot.Name or (Slot and tostring(Slot) or "")
+                local Active = not IsEmpty and (type(Slot) ~= "table" or Slot.Active ~= false)
                 local Box = New("Frame", {
                     Parent = SlotHolder,
                     BackgroundColor3 = Theme("Child", FromRGB(26,26,26)),
-                    BackgroundTransparency = Active and 0 or 0.45,
+                    BackgroundTransparency = IsEmpty and 0.28 or (Active and 0 or 0.45),
                     BorderSizePixel = 0, LayoutOrder = Index, ZIndex = 35
                 })
                 New("UICorner", {Parent = Box, CornerRadius = UDimNew(0, 3)})
-                New("UIStroke", {Parent = Box, Color = Theme("Border", FromRGB(58,58,58)), Transparency = 0.15})
+                New("UIStroke", {
+                    Parent = Box,
+                    Color = Theme("Border", FromRGB(58,58,58)),
+                    Transparency = IsEmpty and 0.38 or 0.15,
+                    Thickness = 1
+                })
                 if Icon and Icon ~= "" then
                     New("ImageLabel", {
                         Parent = Box, BackgroundTransparency = 1, BorderSizePixel = 0,
@@ -6429,10 +6455,10 @@ local Library do
                         Image = Icon, ScaleType = Enum.ScaleType.Fit,
                         ImageTransparency = Active and 0 or 0.5, ZIndex = 36
                     })
-                else
+                elseif not IsEmpty then
                     New("TextLabel", {
                         Parent = Box, BackgroundTransparency = 1, BorderSizePixel = 0,
-                        Size = UDim2New(1, 0, 1, 0), FontFace = Library.Font,
+                        Size = UDim2New(1, 0, 1, 0), FontFace = HudFont,
                         Text = string.sub(SlotName, 1, 2):upper(), TextSize = 9,
                         TextColor3 = Active and Theme("Text", FromRGB(205,205,205)) or Theme("Muted", FromRGB(132,132,132)),
                         ZIndex = 36
@@ -6455,7 +6481,7 @@ local Library do
                 New("TextLabel", {
                     Parent = Badge, BackgroundTransparency = 1, BorderSizePixel = 0,
                     Size = UDim2New(1, -6, 1, 0), Position = UDim2New(0, 3, 0, 0),
-                    FontFace = Library.Font, Text = string.upper(StatusName),
+                    FontFace = HudFont, Text = string.upper(StatusName),
                     TextSize = 9, TextColor3 = FromRGB(250,250,250),
                     TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 36
                 })
