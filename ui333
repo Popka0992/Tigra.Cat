@@ -2654,7 +2654,7 @@ local Library do
                     })
 
                     TableInsert(Items["ShadowLayers"], {
-                        Instance = Shadow.Instance,
+                        Item = Shadow,
                         Transparency = Layer.Transparency,
                     })
                 end
@@ -3038,7 +3038,7 @@ local Library do
 
                 -- Shadow fades with the window instead of popping in.
                 for _, Shadow in Items["ShadowLayers"] do
-                    Shadow.Instance:Tween(TweenInfo.new(Library.FadeSpeed, Library.Tween.Style, Library.Tween.Direction), {
+                    Shadow.Item:Tween(TweenInfo.new(Library.FadeSpeed, Library.Tween.Style, Library.Tween.Direction), {
                         BackgroundTransparency = Bool and Shadow.Transparency or 1
                     })
                 end
