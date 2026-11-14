@@ -65,6 +65,8 @@ local Library do
     Library = {
         Theme =  { },
         OverlayState = { Watermark = nil, KeybindList = nil },
+        ShowInactiveBinds = false,
+        KeybindEntries = {},
 
         MenuKeybind = tostring(Enum.KeyCode.RightControl), 
 
@@ -80,7 +82,9 @@ local Library do
 
         Folders = {
             Directory = "Tigra.cat",
-            Configs = "Tigra.cat/Configs",
+            Configs = "Tigra.cat/Configs", -- legacy compatibility
+            FeaturesConfigs = "Tigra.cat/Configs/Features",
+            UIConfigs = "Tigra.cat/Configs/UI",
             Assets = "Tigra.cat/Images",
             Fonts = "Tigra.cat/Fonts"
         },
@@ -200,8 +204,8 @@ local Library do
         ["Preset"] = {
             ["Window"] = FromRGB(20, 20, 20),
             ["Child"] = FromRGB(26, 26, 26),
-            ["Text"] = FromRGB(238, 238, 238),
-            ["Muted"] = FromRGB(155, 155, 155),
+            ["Text"] = FromRGB(205, 205, 205),
+            ["Muted"] = FromRGB(132, 132, 132),
             ["Border"] = FromRGB(58, 58, 58),
             ["Accent"] = FromRGB(255, 164, 72),
             ["Dark Accent"] = FromRGB(190, 105, 35)
@@ -210,10 +214,18 @@ local Library do
 
     Library.Theme = TableClone(Themes["Preset"])
 
-    -- Folders
-    for Index, Value in Library.Folders do 
-        if not isfolder(Value) then
-            makefolder(Value)
+    -- Folders (create parents first; table iteration order is not guaranteed).
+    local RequiredFolders = {
+        Library.Folders.Directory,
+        Library.Folders.Configs,
+        Library.Folders.FeaturesConfigs,
+        Library.Folders.UIConfigs,
+        Library.Folders.Assets,
+        Library.Folders.Fonts
+    }
+    for _, Folder in ipairs(RequiredFolders) do
+        if not isfolder(Folder) then
+            makefolder(Folder)
         end
     end
 
@@ -839,108 +851,164 @@ local Library do
 		return `<font color="rgb({MathFloor(Color.R * 255)}, {MathFloor(Color.G * 255)}, {MathFloor(Color.B * 255)})">{Text}</font>`
 	end
 
-    Library.GetConfig = function(self)
-        local Config = { } 
+    -- Feature configs contain only registered feature flags. UI-only settings are
+    -- deliberately stored by the separate UI manager below.
+    local UIOnlyFlags = {
+        ["Show inactive binds"] = true,
+        ["Keybind List"] = true, ["Watermark"] = true,
+        ["MenuKeybind"] = true, ["Animation speed"] = true,
+        ["BannerType"] = true, ["BannerImage"] = true, ["BannerVideo"] = true,
+        ["BannerX"] = true, ["BannerY"] = true,
+        ["BannerHeight"] = true, ["BackgroundImage"] = true
+    }
 
-        local Success, Result = Library:SafeCall(function()
-            for Index, Value in Library.Flags do 
-                if type(Value) == "table" and Value.Key then
-                    Config[Index] = {Key = tostring(Value.Key), Mode = Value.Mode}
-                elseif type(Value) == "table" and Value.Color then
-                    Config[Index] = {Color = "#" .. Value.HexValue, Alpha = Value.Alpha}
-                else
-                    Config[Index] = Value
-                end
+    local function SerializeFeatureFlags()
+        local Config = {}
+        for Index, Value in Library.Flags do
+            if UIOnlyFlags[Index] or string.sub(tostring(Index), 1, 6) == "Theme_" then
+                continue
             end
-        end)
+            if type(Value) == "table" and Value.Key then
+                Config[Index] = { Key = tostring(Value.Key), Mode = Value.Mode }
+            elseif type(Value) == "table" and Value.Color then
+                Config[Index] = { Color = "#" .. Value.HexValue, Alpha = Value.Alpha }
+            else
+                Config[Index] = Value
+            end
+        end
+        return Config
+    end
 
-        -- Keep UI-only preferences separate from element flags to avoid collisions.
-        Config.__SametUI = { Version = 2, Theme = { }, Overlay = { } }
+    local function ApplyFeatureFlags(Decoded)
+        for Index, Value in Decoded do
+            if UIOnlyFlags[Index] or string.sub(tostring(Index), 1, 6) == "Theme_" then
+                continue
+            end
+            local SetFunction = Library.SetFlags[Index]
+            if not SetFunction then continue end
+            if type(Value) == "table" and Value.Key then
+                SetFunction(Value)
+            elseif type(Value) == "table" and Value.Color then
+                SetFunction(Value.Color, Value.Alpha)
+            else
+                SetFunction(Value)
+            end
+        end
+    end
+
+    local function SerializeUISettings()
+        local Config = { Version = 2, Theme = {}, Overlay = {}, ShowInactiveBinds = Library.ShowInactiveBinds == true }
         for ThemeName, ThemeColor in Library.Theme do
             if typeof(ThemeColor) == "Color3" then
-                Config.__SametUI.Theme[ThemeName] = "#" .. ThemeColor:ToHex()
+                Config.Theme[ThemeName] = "#" .. ThemeColor:ToHex()
             end
         end
         for OverlayName, OverlayPosition in Library.OverlayState do
-            if OverlayPosition then
-                Config.__SametUI.Overlay[OverlayName] = OverlayPosition
+            if OverlayPosition then Config.Overlay[OverlayName] = OverlayPosition end
+        end
+        return Config
+    end
+
+    local function ApplyUISettings(UIData)
+        if type(UIData) ~= "table" then return end
+        for ThemeName, Hex in UIData.Theme or {} do
+            if Library.Theme[ThemeName] and type(Hex) == "string" then
+                Library:ChangeTheme(ThemeName, FromHex(Hex))
             end
         end
-
-        return HttpService:JSONEncode(Config)
-    end
-
-    Library.LoadConfig = function(self, Config)
-        local Decoded = HttpService:JSONDecode(Config)
-
-        local Success, Result = Library:SafeCall(function()
-            for Index, Value in Decoded do
-                if Index == "__SametUI" then
-                    continue
-                end
-                local SetFunction = Library.SetFlags[Index]
-                if not SetFunction then continue end
-                if type(Value) == "table" and Value.Key then
-                    SetFunction(Value)
-                elseif type(Value) == "table" and Value.Color then
-                    SetFunction(Value.Color, Value.Alpha)
-                else
-                    SetFunction(Value)
-                end
+        for OverlayName, Position in UIData.Overlay or {} do
+            local Overlay = Library.Overlays and Library.Overlays[OverlayName]
+            if Overlay and type(Position) == "table" then Overlay:SetPosition(Position, false) end
+        end
+        if type(UIData.ShowInactiveBinds) == "boolean" then
+            Library.ShowInactiveBinds = UIData.ShowInactiveBinds
+            if Library.KeyList and Library.KeyList.SetShowInactive then
+                Library.KeyList:SetShowInactive(UIData.ShowInactiveBinds)
             end
-
-            local UIData = Decoded.__SametUI
-            if type(UIData) == "table" then
-                for ThemeName, Hex in UIData.Theme or { } do
-                    if Library.Theme[ThemeName] and type(Hex) == "string" then
-                        Library:ChangeTheme(ThemeName, FromHex(Hex))
-                    end
-                end
-                for OverlayName, Position in UIData.Overlay or { } do
-                    local Overlay = Library.Overlays and Library.Overlays[OverlayName]
-                    if Overlay and type(Position) == "table" then
-                        Overlay:SetPosition(Position, false)
-                    end
-                end
-            end
-        end)
-
-        return Success, Result
-    end
-
-    Library.DeleteConfig = function(self, Config)
-        if isfile(Library.Folders.Configs .. "/" .. Config) then 
-            delfile(Library.Folders.Configs .. "/" .. Config)
+            local Setter = Library.SetFlags["Show inactive binds"]
+            if Setter then Setter(UIData.ShowInactiveBinds) end
         end
     end
 
-    Library.RefreshConfigsList = function(self, Element)
-        local List = { }
-        local ReturnList = { }
+    Library.GetFeatureConfig = function(self)
+        return HttpService:JSONEncode(SerializeFeatureFlags())
+    end
 
-        List = listfiles(Library.Folders.Configs)
+    Library.LoadFeatureConfig = function(self, Config)
+        local Decoded = type(Config) == "string" and HttpService:JSONDecode(Config) or Config
+        if type(Decoded) ~= "table" then return false, "Invalid features config" end
+        return Library:SafeCall(function() ApplyFeatureFlags(Decoded) end)
+    end
 
-        for Index = 1, #List do 
-            local File = List[Index]
+    Library.GetUIConfig = function(self)
+        return HttpService:JSONEncode(SerializeUISettings())
+    end
 
-            if File:sub(-5) == ".json" then
-                local Position = File:find(".json", 1, true)
-                local StartPosition = Position
+    Library.LoadUIConfig = function(self, Config)
+        local Decoded = type(Config) == "string" and HttpService:JSONDecode(Config) or Config
+        if type(Decoded) ~= "table" then return false, "Invalid UI config" end
+        return Library:SafeCall(function() ApplyUISettings(Decoded) end)
+    end
 
-                local Character = File:sub(Position, Position)
-                while Character ~= "/" and Character ~= "\\" and Character ~= "" do
-                    Position = Position - 1
-                    Character = File:sub(Position, Position)
-                end
+    -- Backwards-compatible legacy API: GetConfig/LoadConfig now mean feature config.
+    Library.GetConfig = Library.GetFeatureConfig
+    Library.LoadConfig = Library.LoadFeatureConfig
 
-                if Character == "/" or Character == "\\" then
-                    TableInsert(ReturnList, File:sub(Position + 1, StartPosition - 1))
+    local function MakeConfigManager(Folder, GetData, LoadData)
+        local Manager = { Folder = Folder }
+        local function ValidName(Name)
+            return type(Name) == "string" and #Name > 0 and #Name <= 48
+                and not string.find(Name, "[%c/\\]") and Name ~= "." and Name ~= ".."
+        end
+        function Manager:List()
+            local Result = {}
+            for _, File in listfiles(Folder) do
+                if string.sub(File, -5) == ".json" then
+                    local Name = File:match("([^/\\]+)%.json$")
+                    if Name then table.insert(Result, Name) end
                 end
             end
+            table.sort(Result)
+            return Result
         end
-
-        Element:Refresh(ReturnList)
+        function Manager:Create(Name)
+            if not ValidName(Name) then return false, "Invalid config name" end
+            local Path = Folder .. "/" .. Name .. ".json"
+            if isfile(Path) then return false, "Config already exists" end
+            writefile(Path, GetData(Library))
+            return true
+        end
+        function Manager:Save(Name)
+            if not ValidName(Name) then return false, "Invalid config name" end
+            local Path = Folder .. "/" .. Name .. ".json"
+            if not isfile(Path) then return false, "Config does not exist" end
+            writefile(Path, GetData(Library))
+            return true
+        end
+        function Manager:Load(Name)
+            if not ValidName(Name) then return false, "Invalid config name" end
+            local Path = Folder .. "/" .. Name .. ".json"
+            if not isfile(Path) then return false, "Config does not exist" end
+            return LoadData(Library, readfile(Path))
+        end
+        function Manager:Delete(Name)
+            if not ValidName(Name) then return false, "Invalid config name" end
+            local Path = Folder .. "/" .. Name .. ".json"
+            if not isfile(Path) then return false, "Config does not exist" end
+            delfile(Path)
+            return true
+        end
+        return Manager
     end
+
+    Library.Configs = {
+        Features = MakeConfigManager(Library.Folders.FeaturesConfigs, Library.GetFeatureConfig, Library.LoadFeatureConfig),
+        UI = MakeConfigManager(Library.Folders.UIConfigs, Library.GetUIConfig, Library.LoadUIConfig)
+    }
+    Library.ConfigManagers = Library.Configs
+    -- Compatibility helpers retained for integrations using the former API.
+    Library.DeleteConfig = function(self, Name) return self.Configs.Features:Delete(Name) end
+    Library.RefreshConfigsList = function(self, Element) Element:Refresh(self.Configs.Features:List()) end
 
     Library.ChangeItemTheme = function(self, Item, Properties)
         Item = Item.Instance or Item
@@ -1421,7 +1489,7 @@ local Library do
                 Instances:Create("UIStroke", {
                     Parent = Items["ColorpickerWindow"].Instance,
                     Name = "\0",
-                    Color = FromRGB(35, 35, 35),
+                    Color = FromRGB(62, 62, 62),
                     ApplyStrokeMode = Enum.ApplyStrokeMode.Border
                 })
                 
@@ -2788,7 +2856,7 @@ local Library do
                     Parent = Items["Top"].Instance,
                     Name = "\0",
                     FontFace = Library.Font,
-                    TextColor3 = FromRGB(248, 248, 248),
+                    TextColor3 = Library.Theme.Text,
                     BorderColor3 = FromRGB(0, 0, 0),
                     Text = "Keybinds",
                     AnchorPoint = Vector2New(0, 0.5),
@@ -2798,7 +2866,7 @@ local Library do
                     BorderSizePixel = 0,
                     TextSize = 14,
                     BackgroundColor3 = FromRGB(255, 255, 255)
-                })
+                }) Items["Text"]:AddToTheme({TextColor3 = "Text"})
                 
                 Items["Content"] = Instances:Create("Frame", {
                     Parent = Items["KeybindsList"].Instance,
@@ -2831,57 +2899,109 @@ local Library do
             MakeOverlayDraggable(Items["KeybindsList"], "KeybindList")
 
             local ActiveCount = 0
+            local VisibleCount = 0
             KeybindList.Enabled = true
-            local CurrentTween
-            local function UpdateListVisibility()
-                local ShouldShow = ActiveCount > 0 and KeybindList.Enabled ~= false
-                local Frame = Items["KeybindsList"].Instance
-                if CurrentTween then CurrentTween:Cancel() end
+            KeybindList.ShowInactive = Library.ShowInactiveBinds == true
+            Library.KeybindEntries = {}
+
+            local Frame = Items["KeybindsList"].Instance
+            Frame.Visible = false
+            local IsShown = false
+            local VisibilityTween
+            local HeightTween
+            local ANIMATION_TIME = 0.20
+
+            local function CountVisible()
+                local Count = 0
+                for _, Entry in ipairs(Library.KeybindEntries) do
+                    local ShouldDisplay = not Entry.Removing and (Entry.Active or (KeybindList.ShowInactive and Entry.Bound))
+                    Entry.Displayed = ShouldDisplay
+                    Entry.Label.Instance.Visible = ShouldDisplay
+                    Entry.ModeLabel.Instance.Visible = ShouldDisplay
+                    if ShouldDisplay then Count += 1 end
+                end
+                VisibleCount = Count
+                return Count
+            end
+
+            local function UpdateListVisibility(Animate)
+                local Count = CountVisible()
+                local ShouldShow = Count > 0 and KeybindList.Enabled ~= false
+                local TargetHeight = 25 + Items["Content"].Instance.AbsoluteSize.Y + 10
+                if HeightTween then HeightTween:Cancel() end
+
+                -- Do not restart the fade on every bind state update. This was the
+                -- source of the old one-frame flash/flicker when a bind was added.
+                if ShouldShow == IsShown then
+                    if ShouldShow then
+                        HeightTween = TweenService:Create(Frame, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                            Size = UDim2New(0, 150, 0, TargetHeight)
+                        })
+                        HeightTween:Play()
+                    end
+                    return
+                end
+
+                IsShown = ShouldShow
+                if VisibilityTween then VisibilityTween:Cancel() end
                 if ShouldShow then
                     Frame.Visible = true
+                    Frame.Size = UDim2New(0, 150, 0, 25)
                     Frame.BackgroundTransparency = 1
                     Items["Top"].Instance.BackgroundTransparency = 1
-                    TweenService:Create(Items["Top"].Instance, TweenInfo.new(0.18), {BackgroundTransparency = 0}):Play()
-                    local ContentHeight = Items["Content"].Instance.AbsoluteSize.Y
-                    local TargetHeight = 35 + ContentHeight
-                    CurrentTween = TweenService:Create(Frame, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                        BackgroundTransparency = 0, Size = UDim2New(0, 150, 0, TargetHeight)
+                    VisibilityTween = TweenService:Create(Frame, TweenInfo.new(ANIMATION_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                        BackgroundTransparency = 0,
+                        Size = UDim2New(0, 150, 0, TargetHeight)
                     })
-                    CurrentTween:Play()
-                    task.defer(function()
-                        if ActiveCount > 0 and KeybindList.Enabled ~= false then
-                            local Height = 35 + Items["Content"].Instance.AbsoluteSize.Y
-                            CurrentTween = TweenService:Create(Frame, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2New(0, 150, 0, Height)})
-                            CurrentTween:Play()
-                        end
-                    end)
-                    for _, Descendant in Frame:GetDescendants() do
-                        if Descendant:IsA("TextLabel") then
-                            Descendant.TextTransparency = 1
-                            TweenService:Create(Descendant, TweenInfo.new(0.18), {TextTransparency = 0}):Play()
-                        elseif Descendant:IsA("UIStroke") then
-                            Descendant.Transparency = 1
-                            TweenService:Create(Descendant, TweenInfo.new(0.18), {Transparency = 0}):Play()
-                        end
+                    VisibilityTween:Play()
+                    TweenService:Create(Items["Top"].Instance, TweenInfo.new(ANIMATION_TIME), {BackgroundTransparency = 0}):Play()
+                    local Stroke = Frame:FindFirstChildOfClass("UIStroke")
+                    if Stroke then
+                        Stroke.Transparency = 1
+                        TweenService:Create(Stroke, TweenInfo.new(ANIMATION_TIME), {Transparency = 0}):Play()
                     end
                 else
-                    TweenService:Create(Items["Top"].Instance, TweenInfo.new(0.16), {BackgroundTransparency = 1}):Play()
-                    for _, Descendant in Frame:GetDescendants() do
-                        if Descendant:IsA("TextLabel") then
-                            TweenService:Create(Descendant, TweenInfo.new(0.16), {TextTransparency = 1}):Play()
-                        elseif Descendant:IsA("UIStroke") then
-                            TweenService:Create(Descendant, TweenInfo.new(0.16), {Transparency = 1}):Play()
-                        end
-                    end
-                    CurrentTween = TweenService:Create(Frame, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1, Size = UDim2New(0, 150, 0, 25)})
-                    CurrentTween:Play()
-                    task.delay(0.17, function() if ActiveCount == 0 then Frame.Visible = false end end)
+                    VisibilityTween = TweenService:Create(Frame, TweenInfo.new(ANIMATION_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+                        BackgroundTransparency = 1,
+                        Size = UDim2New(0, 150, 0, 25)
+                    })
+                    VisibilityTween:Play()
+                    TweenService:Create(Items["Top"].Instance, TweenInfo.new(ANIMATION_TIME), {BackgroundTransparency = 1}):Play()
+                    local Stroke = Frame:FindFirstChildOfClass("UIStroke")
+                    if Stroke then TweenService:Create(Stroke, TweenInfo.new(ANIMATION_TIME), {Transparency = 1}):Play() end
+                    task.delay(ANIMATION_TIME + 0.02, function()
+                        if not IsShown and Frame.Parent then Frame.Visible = false end
+                    end)
                 end
+            end
+
+            local function RefreshEntry(Entry)
+                local ShouldDisplay = not Entry.Removing and (Entry.Active or (KeybindList.ShowInactive and Entry.Bound))
+                Entry.Displayed = ShouldDisplay
+                Entry.Label.Instance.Visible = ShouldDisplay
+                Entry.ModeLabel.Instance.Visible = ShouldDisplay
+                Entry.Label.Instance.TextColor3 = Entry.Active and Library.Theme.Text or Library.Theme.Muted
+                Entry.ModeLabel.Instance.TextColor3 = Entry.Active and Library.Theme.Accent or Library.Theme.Muted
+                Entry.ModeLabel.Instance.Text = Entry.Active and Entry.Mode or (Entry.Mode .. "  [off]")
             end
 
             function KeybindList:SetVisibility(Bool)
                 KeybindList.Enabled = Bool == true
-                UpdateListVisibility()
+                UpdateListVisibility(true)
+            end
+
+            function KeybindList:SetShowInactive(Bool)
+                KeybindList.ShowInactive = Bool == true
+                Library.ShowInactiveBinds = KeybindList.ShowInactive
+                for _, Entry in ipairs(Library.KeybindEntries) do
+                    local WasDisplayed = Entry.Displayed
+                    RefreshEntry(Entry)
+                    if Entry.Displayed and not WasDisplayed then
+                        TweenService:Create(Entry.Label.Instance, TweenInfo.new(0.14), {TextTransparency = 0}):Play()
+                        TweenService:Create(Entry.ModeLabel.Instance, TweenInfo.new(0.14), {TextTransparency = 0}):Play()
+                    end
+                end
+                UpdateListVisibility(true)
             end
 
             function KeybindList:Add(Name, Mode)
@@ -2889,9 +3009,10 @@ local Library do
                     Parent = Items["Content"].Instance,
                     Name = "\0",
                     FontFace = Library.Font,
-                    TextColor3 = FromRGB(238, 238, 238),
+                    TextColor3 = Library.Theme.Text,
+                    TextTransparency = 1,
                     BorderColor3 = FromRGB(0, 0, 0),
-                    Text = Name,
+                    Text = tostring(Name),
                     Size = UDim2New(1, 0, 0, 20),
                     BackgroundTransparency = 1,
                     TextXAlignment = Enum.TextXAlignment.Left,
@@ -2900,14 +3021,15 @@ local Library do
                     TextSize = 14,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
-                
+
                 local NewKeyMode = Instances:Create("TextLabel", {
                     Parent = NewKey.Instance,
                     Name = "\0",
                     FontFace = Library.Font,
-                    TextColor3 = FromRGB(255, 174, 91),
+                    TextColor3 = Library.Theme.Accent,
+                    TextTransparency = 1,
                     BorderColor3 = FromRGB(0, 0, 0),
-                    Text = Mode,
+                    Text = tostring(Mode or ""),
                     AnchorPoint = Vector2New(1, 0),
                     Size = UDim2New(0, 0, 0, 20),
                     BackgroundTransparency = 1,
@@ -2917,27 +3039,96 @@ local Library do
                     TextSize = 14,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
-                
+
                 Instances:Create("UIPadding", {
                     Parent = NewKey.Instance,
                     Name = "\0",
                     PaddingRight = UDimNew(0, 55)
-                })                
+                })
 
-                function NewKey:SetText(Name, Mode)
-                    NewKey.Instance.Text = Name
-                    NewKeyMode.Instance.Text = Mode
+                local Entry
+                function NewKey:SetText(NewName, NewMode)
+                    NewKey.Instance.Text = tostring(NewName or "")
+                    if NewMode ~= nil then
+                        Entry.Mode = tostring(NewMode)
+                        NewKeyMode.Instance.Text = Entry.Mode
+                        RefreshEntry(Entry)
+                    end
                 end
 
-                local IsActive = false
+                Entry = {
+                    Label = NewKey,
+                    ModeLabel = NewKeyMode,
+                    Active = false,
+                    Bound = true,
+                    Mode = tostring(Mode or ""),
+                    Displayed = false,
+                    Removing = false
+                }
+                table.insert(Library.KeybindEntries, Entry)
+                NewKey:AddToTheme({TextColor3 = function()
+                    return Entry.Active and Library.Theme.Text or Library.Theme.Muted
+                end})
+                NewKeyMode:AddToTheme({TextColor3 = function()
+                    return Entry.Active and Library.Theme.Accent or Library.Theme.Muted
+                end})
+                RefreshEntry(Entry)
+
+                -- Fade only the newly-created row; existing rows are never reset
+                -- to transparency 1, preventing the list-wide flicker.
+                if Entry.Displayed then
+                    TweenService:Create(NewKey.Instance, TweenInfo.new(0.16), {TextTransparency = 0}):Play()
+                    TweenService:Create(NewKeyMode.Instance, TweenInfo.new(0.16), {TextTransparency = 0}):Play()
+                end
+                UpdateListVisibility(true)
+                task.defer(function()
+                    if Frame.Parent and IsShown then UpdateListVisibility(false) end
+                end)
+
                 function NewKey:Set(Bool)
                     Bool = Bool == true
-                    if IsActive ~= Bool then
-                        IsActive = Bool
+                    if Entry.Active ~= Bool then
+                        Entry.Active = Bool
                         ActiveCount = math.max(0, ActiveCount + (Bool and 1 or -1))
                     end
-                    NewKey.Instance.Visible = Bool
-                    if KeybindList.Enabled ~= false then UpdateListVisibility() end
+                    RefreshEntry(Entry)
+                    if Entry.Displayed then
+                        TweenService:Create(NewKey.Instance, TweenInfo.new(0.12), {TextTransparency = 0}):Play()
+                        TweenService:Create(NewKeyMode.Instance, TweenInfo.new(0.12), {TextTransparency = 0}):Play()
+                    else
+                        TweenService:Create(NewKey.Instance, TweenInfo.new(0.12), {TextTransparency = 1}):Play()
+                        TweenService:Create(NewKeyMode.Instance, TweenInfo.new(0.12), {TextTransparency = 1}):Play()
+                    end
+                    UpdateListVisibility(true)
+                end
+
+                function NewKey:SetBound(Bool)
+                    local WasDisplayed = Entry.Displayed
+                    Entry.Bound = Bool == true
+                    RefreshEntry(Entry)
+                    if Entry.Displayed and not WasDisplayed then
+                        TweenService:Create(NewKey.Instance, TweenInfo.new(0.14), {TextTransparency = 0}):Play()
+                        TweenService:Create(NewKeyMode.Instance, TweenInfo.new(0.14), {TextTransparency = 0}):Play()
+                    elseif not Entry.Displayed then
+                        TweenService:Create(NewKey.Instance, TweenInfo.new(0.12), {TextTransparency = 1}):Play()
+                        TweenService:Create(NewKeyMode.Instance, TweenInfo.new(0.12), {TextTransparency = 1}):Play()
+                    end
+                    UpdateListVisibility(true)
+                end
+
+                function NewKey:Remove()
+                    if Entry.Removing then return end
+                    Entry.Removing = true
+                    Entry.Displayed = false
+                    local Index = table.find(Library.KeybindEntries, Entry)
+                    if Index then table.remove(Library.KeybindEntries, Index) end
+                    UpdateListVisibility(true)
+                    local FadeA = TweenService:Create(NewKey.Instance, TweenInfo.new(0.12), {TextTransparency = 1})
+                    local FadeB = TweenService:Create(NewKeyMode.Instance, TweenInfo.new(0.12), {TextTransparency = 1})
+                    FadeA:Play(); FadeB:Play()
+                    task.delay(0.13, function()
+                        if NewKey.Instance then NewKey.Instance:Destroy() end
+                    end)
                 end
 
                 return NewKey
@@ -2959,9 +3150,11 @@ local Library do
                     Size = UDim2New(0, 0, 0, 28),
                     BorderSizePixel = 0,
                     AutomaticSize = Enum.AutomaticSize.X,
-                    BackgroundColor3 = FromRGB(29, 29, 29)
+                    BackgroundColor3 = FromRGB(30, 30, 30)
                 })
                 
+                Items["Watermark"]:AddToTheme({BackgroundColor3 = "Child"})
+
                 Instances:Create("UIPadding", {
                     Parent = Items["Watermark"].Instance,
                     Name = "\0",
@@ -3002,7 +3195,7 @@ local Library do
                     Name = "\0",
                     FontFace = Library.Font,
                     RichText = true,
-                    TextColor3 = FromRGB(248, 248, 248),
+                    TextColor3 = Library.Theme.Text,
                     BorderColor3 = FromRGB(0, 0, 0),
                     Text = Name,
                     Size = UDim2New(0, 0, 0, 15),
@@ -3013,13 +3206,13 @@ local Library do
                     AutomaticSize = Enum.AutomaticSize.X,
                     TextSize = 14,
                     BackgroundColor3 = FromRGB(255, 255, 255)
-                })
+                }) Items["Text"]:AddToTheme({TextColor3 = "Text"})
 
                 Items["Stats"] = Instances:Create("TextLabel", {
                     Parent = Items["Watermark"].Instance,
                     Name = "\0",
                     FontFace = Library.Font,
-                    TextColor3 = FromRGB(255, 255, 255),
+                    TextColor3 = Library.Theme.Muted,
                     Text = " | FPS 0  |  Ping -- ms",
                     AnchorPoint = Vector2New(0, 0.5),
                     Position = UDim2New(0, 0, 0.5, -2),
@@ -3029,7 +3222,7 @@ local Library do
                     BorderSizePixel = 0,
                     TextSize = 13,
                     TextXAlignment = Enum.TextXAlignment.Left
-                })
+                }) Items["Stats"]:AddToTheme({TextColor3 = "Muted"})
                 
                 Instances:Create("UIGradient", {
                     Parent = Items["Watermark"].Instance,
@@ -6038,6 +6231,15 @@ local Library do
                     KeybindList:SetVisibility(Value)
                 end})
 
+                MenuSection:Toggle({Name = "Show inactive binds", Flag = "Show inactive binds", Default = Library.ShowInactiveBinds, Callback = function(Value)
+                    Library.ShowInactiveBinds = Value == true
+                    KeybindList:SetShowInactive(Value)
+                end})
+                Library.SetFlags["Show inactive binds"] = function(Value)
+                    Library.ShowInactiveBinds = Value == true
+                    KeybindList:SetShowInactive(Value)
+                end
+
                 MenuSection:Toggle({Name = "Watermark", Flag = "Watermark", Default = true, Callback = function(Value)
                     Watermark:SetVisibility(Value)
                 end})
@@ -6223,88 +6425,42 @@ local Library do
             end
         end
 
-        do -- Config Subpages
-            local ConfigsSection = ConfigsSubPage:Section({Name = "Profiles"}) do
-                local ConfigName 
-                local ConfigSelected
-                
-                local ConfigsSearchbox = ConfigsSection:Searchbox({
-                    Name = "Profiles list",
-                    Flag = "Profiles list",
-                    Multi = false,
-                    Items = { },
-                    Callback = function(Value)
-                        ConfigSelected = Value
-                    end
+        do -- Independent Features and UI config managers
+            local function BuildConfigSection(SectionName, Manager, Prefix)
+                local Section = ConfigsSubPage:Section({Name = SectionName})
+                local Selected, ConfigName
+                local Searchbox = Section:Searchbox({
+                    Name = "Configs list", Flag = Prefix .. " list", Multi = false, Items = {},
+                    Callback = function(Value) Selected = Value end
                 })
-
-                ConfigsSection:Textbox({
-                    Name = "Config name", 
-                    Default = "", 
-                    Flag = "ConfigName", 
-                    Placeholder = "...", 
-                    Callback = function(Value)
-                        ConfigName = Value
-                    end
-                })
-
-                ConfigsSection:Button({
-                    Name = "Create",
-                    Callback = function()
-                        if ConfigName ~= "" then
-                            if not isfile(Library.Folders.Configs .. "/" .. ConfigName .. ".json") then
-                                writefile(Library.Folders.Configs .. "/" .. ConfigName .. ".json", Library:GetConfig())
-                                Library:RefreshConfigsList(ConfigsSearchbox)
-                                Library:Notification("Created config " .. ConfigName .. ".json", 5, FromRGB(0, 255, 0))
-                            end
-                        end
-                    end
-                })
-
-                ConfigsSection:Button({
-                    Name = "Delete",
-                    Callback = function()
-                        if ConfigSelected ~= nil then
-                            delfile(Library.Folders.Configs .. "/" .. ConfigSelected .. ".json")
-                            Library:RefreshConfigsList(ConfigsSearchbox)
-                            Library:Notification("Deleted config " .. ConfigSelected .. ".json", 5, FromRGB(255, 0, 0))
-                        end
-                    end
-                })
-
-                ConfigsSection:Button({
-                    Name = "Load",
-                    Callback = function()
-                        if ConfigSelected ~= nil then
-                            local Success, Result = Library:LoadConfig(readfile(Library.Folders.Configs .. "/" .. ConfigSelected .. ".json"))
-                            if Success then
-                                Library:Notification("Loaded config " .. ConfigSelected .. ".json", 5, FromRGB(0, 255, 0))
-                            else
-                                Library:Notification("Failed to load config " .. ConfigSelected .. ".json", 5, FromRGB(255, 0, 0))
-                            end
-                        end
-                    end
-                })
-
-                ConfigsSection:Button({
-                    Name = "Save",
-                    Callback = function()
-                        if ConfigSelected ~= nil then
-                            writefile(Library.Folders.Configs .. "/" .. ConfigSelected .. ".json", Library:GetConfig())
-                            Library:Notification("Saved config " .. ConfigSelected .. ".json", 5, FromRGB(0, 255, 0))
-                        end
-                    end
-                })
-
-                ConfigsSection:Button({
-                    Name = "Refresh",
-                    Callback = function()
-                        Library:RefreshConfigsList(ConfigsSearchbox)
-                    end
-                })
-
-                Library:RefreshConfigsList(ConfigsSearchbox)
+                Section:Textbox({Name = "Config name", Default = "", Flag = Prefix .. " name", Placeholder = "...", Callback = function(Value) ConfigName = Value end})
+                local function Refresh() Searchbox:Refresh(Manager:List()) end
+                Section:Button({Name = "Create", Callback = function()
+                    local OK, Err = Manager:Create(ConfigName or "")
+                    Library:Notification(OK and ("Created " .. ConfigName) or tostring(Err), 4, OK and FromRGB(90, 200, 120) or FromRGB(220, 90, 90))
+                    Refresh()
+                end})
+                Section:Button({Name = "Save", Callback = function()
+                    local OK, Err = Manager:Save(Selected or "")
+                    Library:Notification(OK and ("Saved " .. Selected) or tostring(Err), 4, OK and FromRGB(90, 200, 120) or FromRGB(220, 90, 90))
+                    Refresh()
+                end})
+                Section:Button({Name = "Load", Callback = function()
+                    local OK, Err = Manager:Load(Selected or "")
+                    Library:Notification(OK and ("Loaded " .. Selected) or ("Load failed: " .. tostring(Err)), 4, OK and FromRGB(90, 200, 120) or FromRGB(220, 90, 90))
+                end})
+                Section:Button({Name = "Delete", Callback = function()
+                    local OK, Err = Manager:Delete(Selected or "")
+                    if OK then Selected = nil end
+                    Library:Notification(OK and "Config deleted" or tostring(Err), 4, OK and FromRGB(90, 200, 120) or FromRGB(220, 90, 90))
+                    Refresh()
+                end})
+                Section:Button({Name = "Refresh", Callback = Refresh})
+                Refresh()
             end
+
+            BuildConfigSection("Features configs", Library.Configs.Features, "Features")
+            BuildConfigSection("UI / Theme configs", Library.Configs.UI, "UI")
         end
     end
 end
