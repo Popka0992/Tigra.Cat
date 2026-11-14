@@ -6224,7 +6224,7 @@ local Library do
             Statuses = {},
             Connections = {},
             Position = Options.Position or UDim2New(0, 24, 0, 220),
-            Size = Options.Size or UDim2New(0, 390, 0, 154)
+            Size = Options.Size or UDim2New(0, 278, 0, 142)
         }
 
         local function New(Class, Properties)
@@ -6259,19 +6259,19 @@ local Library do
         local Header = New("Frame", {
             Parent = Root, BackgroundColor3 = Theme("Child", FromRGB(26,26,26)),
             BorderSizePixel = 0, Position = UDim2New(0, 0, 0, 0),
-            Size = UDim2New(1, 0, 0, 43), ZIndex = 31
+            Size = UDim2New(1, 0, 0, 2), ZIndex = 31
         })
         New("UICorner", {Parent = Header, CornerRadius = UDimNew(0, 5)})
         New("Frame", {
             Parent = Header, BackgroundColor3 = Theme("Accent", FromRGB(255,164,72)),
-            BorderSizePixel = 0, Position = UDim2New(0, 0, 1, -2),
-            Size = UDim2New(1, 0, 0, 2), ZIndex = 32
+            BorderSizePixel = 0, Position = UDim2New(0, 0, 0, 0),
+            Size = UDim2New(1, 0, 0, 1), ZIndex = 32
         })
 
         local AvatarWrap = New("Frame", {
             Parent = Root, BackgroundColor3 = Theme("Accent", FromRGB(255,164,72)),
-            BorderSizePixel = 0, Position = UDim2New(0, 10, 0, 10),
-            Size = UDim2New(0, 54, 0, 54), ZIndex = 34
+            BorderSizePixel = 0, Position = UDim2New(0, 10, 0, 9),
+            Size = UDim2New(0, 66, 0, 78), ZIndex = 34
         })
         New("UICorner", {Parent = AvatarWrap, CornerRadius = UDimNew(0, 5)})
         local Avatar = New("ImageLabel", {
@@ -6284,43 +6284,58 @@ local Library do
 
         local Name = New("TextLabel", {
             Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
-            Position = UDim2New(0, 75, 0, 10), Size = UDim2New(1, -145, 0, 22),
-            FontFace = Library.Font, Text = "Target", TextSize = 16,
+            Position = UDim2New(0, 145, 0, 11), Size = UDim2New(1, -155, 0, 17),
+            FontFace = Library.Font, Text = "Target", TextSize = 12,
             TextColor3 = Theme("Text", FromRGB(205,205,205)),
             TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
             ZIndex = 35
         })
         local Distance = New("TextLabel", {
             Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
-            AnchorPoint = Vector2New(1, 0), Position = UDim2New(1, -11, 0, 12),
-            Size = UDim2New(0, 62, 0, 18), FontFace = Library.Font,
-            Text = "-- m", TextSize = 12, TextColor3 = Theme("Muted", FromRGB(132,132,132)),
-            TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 35
+            Position = UDim2New(0, 145, 0, 55),
+            Size = UDim2New(1, -155, 0, 16), FontFace = Library.Font,
+            Text = "--m", TextSize = 11, TextColor3 = Theme("Muted", FromRGB(132,132,132)),
+            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 35
+        })
+
+        local UserCaption = New("TextLabel", {
+            Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
+            Position = UDim2New(0, 85, 0, 11), Size = UDim2New(0, 52, 0, 16),
+            FontFace = Library.Font, Text = "User", TextSize = 11,
+            TextColor3 = Theme("Muted", FromRGB(132,132,132)),
+            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 35
+        })
+        local WeaponCaption = New("TextLabel", {
+            Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
+            Position = UDim2New(0, 85, 0, 33), Size = UDim2New(0, 52, 0, 16),
+            FontFace = Library.Font, Text = "Weapon", TextSize = 11,
+            TextColor3 = Theme("Muted", FromRGB(132,132,132)),
+            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 35
+        })
+        local DistanceCaption = New("TextLabel", {
+            Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
+            Position = UDim2New(0, 85, 0, 55), Size = UDim2New(0, 52, 0, 16),
+            FontFace = Library.Font, Text = "Distance", TextSize = 11,
+            TextColor3 = Theme("Muted", FromRGB(132,132,132)),
+            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 35
         })
 
         local HealthBack = New("Frame", {
             Parent = Root, BackgroundColor3 = Theme("Window", FromRGB(20,20,20)),
-            BorderSizePixel = 0, Position = UDim2New(0, 75, 0, 35),
-            Size = UDim2New(1, -90, 0, 12), ZIndex = 34
+            BorderSizePixel = 0, Position = UDim2New(0, 85, 0, 76),
+            Size = UDim2New(1, -98, 0, 16), ZIndex = 34
         })
         New("UICorner", {Parent = HealthBack, CornerRadius = UDimNew(0, 3)})
         local DamageTrail = New("Frame", {
-            Parent = HealthBack, BackgroundColor3 = FromRGB(220, 75, 65),
+            Parent = HealthBack, BackgroundColor3 = FromRGB(105, 48, 50),
             BorderSizePixel = 0, Size = UDim2New(1, 0, 1, 0), ZIndex = 35
         })
         New("UICorner", {Parent = DamageTrail, CornerRadius = UDimNew(0, 3)})
         local HealthFill = New("Frame", {
-            Parent = HealthBack, BackgroundColor3 = FromRGB(90, 205, 115),
+            Parent = HealthBack, BackgroundColor3 = FromRGB(220, 75, 75),
             BorderSizePixel = 0, Size = UDim2New(1, 0, 1, 0), ZIndex = 36
         })
         New("UICorner", {Parent = HealthFill, CornerRadius = UDimNew(0, 3)})
-        New("UIGradient", {
-            Parent = HealthFill, Rotation = 0,
-            Color = RGBSequence{
-                RGBSequenceKeypoint(0, FromRGB(95, 215, 125)),
-                RGBSequenceKeypoint(1, FromRGB(65, 175, 95))
-            }
-        })
         local HealthText = New("TextLabel", {
             Parent = HealthBack, BackgroundTransparency = 1, BorderSizePixel = 0,
             Size = UDim2New(1, 0, 1, 0), FontFace = Library.Font,
@@ -6330,40 +6345,40 @@ local Library do
 
         local WeaponText = New("TextLabel", {
             Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
-            Position = UDim2New(0, 75, 0, 54), Size = UDim2New(1, -90, 0, 19),
-            FontFace = Library.Font, Text = "Unarmed", TextSize = 12,
+            Position = UDim2New(0, 145, 0, 33), Size = UDim2New(1, -155, 0, 16),
+            FontFace = Library.Font, Text = "Unarmed", TextSize = 11,
             TextColor3 = Theme("Text", FromRGB(205,205,205)),
             TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
             ZIndex = 35
         })
         local WeaponIcon = New("ImageLabel", {
             Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
-            Position = UDim2New(0, 75, 0, 53), Size = UDim2New(0, 18, 0, 18),
+            Position = UDim2New(0, 145, 0, 32), Size = UDim2New(0, 15, 0, 15),
             Image = "", ScaleType = Enum.ScaleType.Fit, ZIndex = 35
         })
 
         local SlotHolder = New("Frame", {
             Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
-            Position = UDim2New(0, 10, 0, 76), Size = UDim2New(1, -20, 0, 25),
+            Position = UDim2New(0, 10, 0, 99), Size = UDim2New(0, 148, 0, 34),
             ZIndex = 34
         })
         local SlotLayout = New("UIGridLayout", {
-            Parent = SlotHolder, CellSize = UDim2New(0, 25, 0, 23),
-            CellPadding = UDim2New(0, 4, 0, 3),
+            Parent = SlotHolder, CellSize = UDim2New(0, 34, 0, 32),
+            CellPadding = UDim2New(0, 3, 0, 2),
             FillDirection = Enum.FillDirection.Horizontal,
-            FillDirectionMaxCells = 12, SortOrder = Enum.SortOrder.LayoutOrder
+            FillDirectionMaxCells = 4, SortOrder = Enum.SortOrder.LayoutOrder
         })
 
         local StatusHolder = New("Frame", {
             Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
-            Position = UDim2New(0, 10, 0, 106), Size = UDim2New(1, -20, 0, 39),
+            Position = UDim2New(0, 164, 0, 99), Size = UDim2New(1, -174, 0, 34),
             ZIndex = 34
         })
         New("UIGridLayout", {
-            Parent = StatusHolder, CellSize = UDim2New(0, 88, 0, 17),
-            CellPadding = UDim2New(0, 4, 0, 3),
+            Parent = StatusHolder, CellSize = UDim2New(0, 50, 0, 15),
+            CellPadding = UDim2New(0, 3, 0, 2),
             FillDirection = Enum.FillDirection.Horizontal,
-            FillDirectionMaxCells = 4, SortOrder = Enum.SortOrder.LayoutOrder
+            FillDirectionMaxCells = 2, SortOrder = Enum.SortOrder.LayoutOrder
         })
 
         local StatusPalette = {
@@ -6528,20 +6543,20 @@ local Library do
                 WeaponIcon.Visible = WeaponIcon.Image ~= ""
                 if Mode == "Text" then
                     WeaponIcon.Visible = false
-                    WeaponText.Position = UDim2New(0, 75, 0, 54)
-                    WeaponText.Size = UDim2New(1, -90, 0, 19)
+                    WeaponText.Position = UDim2New(0, 145, 0, 33)
+                    WeaponText.Size = UDim2New(1, -155, 0, 16)
                 elseif Mode == "Icon" then
                     WeaponText.Visible = false
                     WeaponIcon.Visible = WeaponIcon.Image ~= ""
-                    WeaponIcon.Position = UDim2New(0, 75, 0, 53)
-                    WeaponIcon.Size = UDim2New(0, 20, 0, 20)
+                    WeaponIcon.Position = UDim2New(0, 145, 0, 32)
+                    WeaponIcon.Size = UDim2New(0, 16, 0, 16)
                 else
                     WeaponText.Visible = true
                     WeaponIcon.Visible = WeaponIcon.Image ~= ""
-                    WeaponIcon.Position = UDim2New(0, 75, 0, 53)
-                    WeaponIcon.Size = UDim2New(0, 18, 0, 18)
-                    WeaponText.Position = UDim2New(0, WeaponIcon.Visible and 99 or 75, 0, 54)
-                    WeaponText.Size = UDim2New(1, WeaponIcon.Visible and -114 or -90, 0, 19)
+                    WeaponIcon.Position = UDim2New(0, 145, 0, 32)
+                    WeaponIcon.Size = UDim2New(0, 15, 0, 15)
+                    WeaponText.Position = UDim2New(0, WeaponIcon.Visible and 164 or 145, 0, 33)
+                    WeaponText.Size = UDim2New(1, WeaponIcon.Visible and -174 or -155, 0, 16)
                 end
                 if Mode ~= "Icon" then WeaponText.Visible = true end
                 local StateColor = Data.StateColor
@@ -6637,7 +6652,10 @@ local Library do
             Header.BackgroundColor3 = Theme("Child", FromRGB(26,26,26))
             Name.TextColor3 = Theme("Text", FromRGB(205,205,205))
             WeaponText.TextColor3 = Theme("Text", FromRGB(205,205,205))
-            Distance.TextColor3 = Theme("Muted", FromRGB(132,132,132))
+            Distance.TextColor3 = Theme("Text", FromRGB(205,205,205))
+            UserCaption.TextColor3 = Theme("Muted", FromRGB(132,132,132))
+            WeaponCaption.TextColor3 = Theme("Muted", FromRGB(132,132,132))
+            DistanceCaption.TextColor3 = Theme("Muted", FromRGB(132,132,132))
             Border.Color = Theme("Border", FromRGB(58,58,58))
             RefreshElapsed += DeltaTime
             if RefreshElapsed >= 0.10 and TargetHUD.Target then
