@@ -2883,15 +2883,15 @@ local Library do
                 Instances:Create("UIListLayout", {
                     Parent = Items["Content"].Instance,
                     Name = "\0",
-                    Padding = UDimNew(0, 4),
+                    Padding = UDimNew(0, 2),
                     SortOrder = Enum.SortOrder.LayoutOrder
                 })
                 
                 Instances:Create("UIPadding", {
                     Parent = Items["Content"].Instance,
                     Name = "\0",
-                    PaddingBottom = UDimNew(0, 8),
-                    PaddingTop = UDimNew(0, 5),
+                    PaddingBottom = UDimNew(0, 3),
+                    PaddingTop = UDimNew(0, 3),
                     PaddingLeft = UDimNew(0, 8)
                 })                
             end
@@ -2927,7 +2927,7 @@ local Library do
             local function UpdateListVisibility(Animate)
                 local Count = CountVisible()
                 local ShouldShow = Count > 0 and KeybindList.Enabled ~= false
-                local TargetHeight = 25 + Items["Content"].Instance.AbsoluteSize.Y + 10
+                local TargetHeight = 25 + Items["Content"].Instance.AbsoluteSize.Y + 2
                 if HeightTween then HeightTween:Cancel() end
 
                 -- Do not restart the fade on every bind state update. This was the
@@ -3013,12 +3013,12 @@ local Library do
                     TextTransparency = 1,
                     BorderColor3 = FromRGB(0, 0, 0),
                     Text = tostring(Name),
-                    Size = UDim2New(1, 0, 0, 20),
+                    Size = UDim2New(1, 0, 0, 18),
                     BackgroundTransparency = 1,
                     TextXAlignment = Enum.TextXAlignment.Left,
                     BorderSizePixel = 0,
                     AutomaticSize = Enum.AutomaticSize.X,
-                    TextSize = 14,
+                    TextSize = 13,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
 
@@ -3031,12 +3031,12 @@ local Library do
                     BorderColor3 = FromRGB(0, 0, 0),
                     Text = tostring(Mode or ""),
                     AnchorPoint = Vector2New(1, 0),
-                    Size = UDim2New(0, 0, 0, 20),
+                    Size = UDim2New(0, 0, 0, 18),
                     BackgroundTransparency = 1,
                     Position = UDim2New(1, 50, 0, 0),
                     BorderSizePixel = 0,
                     AutomaticSize = Enum.AutomaticSize.X,
-                    TextSize = 14,
+                    TextSize = 13,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
 
@@ -4924,14 +4924,18 @@ local Library do
                     PlaceholderColor3 = FromRGB(150, 150, 150),
                     BackgroundColor3 = FromRGB(32, 32, 32),
                     BorderSizePixel = 0,
-                    TextSize = 13,
-                    Size = UDim2New(0, 64, 0, 19),
+                    TextSize = 12,
+                    TextXAlignment = Enum.TextXAlignment.Center,
+                    Size = UDim2New(0, 42, 0, 15),
                     AnchorPoint = Vector2New(1, 0),
-                    Position = UDim2New(1, -25, 0, -5),
-                    ZIndex = 10
+                    -- Match the numeric readout's right edge and vertical line.
+                    -- The old 64x19 box extended left over long slider labels.
+                    Position = UDim2New(1, -28, 0, -2),
+                    ZIndex = 20
                 })
                 Items["Value"].Instance.MouseButton1Click:Connect(function()
                     Items["ValueInput"].Instance.Text = tostring(Slider.Value)
+                    Items["ValueInput"].Instance.Size = UDim2New(0, 42, 0, 15)
                     Items["Value"].Instance.Visible = false
                     Items["ValueInput"].Instance.Visible = true
                     Items["ValueInput"].Instance:CaptureFocus()
