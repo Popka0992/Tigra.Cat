@@ -1136,8 +1136,8 @@ local Library do
         Library:TooltipUpdate()
     end)
 
-    -- Optional "?" icon + static risk tag display.
-    -- Risk colors are applied even when Meta UI is disabled.
+    -- Optional "?" icon + risk tag API.
+    -- SetRisk is always available, even when Meta UI is disabled.
     Library.AttachMeta = function(self, Element, Data, NameLabel, Gutter)
         Data = Data or { }
 
@@ -4080,27 +4080,6 @@ local Library do
                     local Holder = Items["Holder"]
                     local Inner = Items["Inner"]
 
-                    local Fade = function(Visible, Speed)
-                        local Descendants = Inner.Instance:GetDescendants()
-                        TableInsert(Descendants, Inner.Instance)
-
-                        for _, Item in Descendants do
-                            local Properties = Tween:GetProperty(Item)
-
-                            if not Properties then
-                                continue
-                            end
-
-                            if type(Properties) == "table" then
-                                for _, Property in Properties do
-                                    Tween:FadeItem(Item, Property, Visible, Speed)
-                                end
-                            else
-                                Tween:FadeItem(Item, Properties, Visible, Speed)
-                            end
-                        end
-                    end
-
                     Holder.Instance.Visible = true
 
                     if Bool then
@@ -4111,10 +4090,8 @@ local Library do
 
                     if Instant then
                         Holder.Instance.Size = Target
-                        Fade(Bool, 0.01)
                     else
                         Holder:Tween(TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = Target})
-                        Fade(Bool, 0.18)
                     end
 
                     task.delay(Instant and 0.05 or 0.24, function()
