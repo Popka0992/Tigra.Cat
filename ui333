@@ -737,6 +737,9 @@ local Library do
     })
 
     Library.Unload = function(self)
+        if self.TargetHUDInstance and self.TargetHUDInstance.Destroy then
+            pcall(function() self.TargetHUDInstance:Destroy() end)
+        end
         for Index, Value in self.Connections do 
             Value.Connection:Disconnect()
         end
@@ -6204,503 +6207,488 @@ local Library do
 
 
     -- Target HUD -------------------------------------------------------------
-    -- Public API:
-    --   local HUD = Library:TargetHUD({ Position = UDim2.fromOffset(20, 220) })
-    --   HUD:Show(player, { Weapon = "AK-47", WeaponMode = "Combined", ... })
-    --   HUD:Update({ Health = 85, MaxHealth = 100, Statuses = {...} })
-    --   HUD:Hide()
-    --
-    -- Game-specific flags (resolver/manipulated/etc.) are intentionally fed
-    -- through Data.Statuses by the example script; the UI does not infer them.
-    Library.TargetHUD = function(self, Options)
+    -- Port of the NHack TargetIndicator layout, rebuilt on Samet UI's holder,
+    -- theme palette, connection registry and lifecycle. Both APIs are exposed:
+    --   local HUD = Library:TargetIndicator()
+    --   HUD:SetTarget(Player, { Weapon = "AK-47", Armor = {...}, Statuses = {...} })
+    --   local HUD = Library:TargetHUD({ Position = UDim2.fromOffset(24, 220) })
+    --   HUD:Show(Player, Data) / HUD:Update(Data) / HUD:Hide()
+    Library.TargetIndicator = function(self, Options)
         Options = Options or {}
 
-        -- Custom fonts must be uploaded to Roblox first. A GitHub URL cannot be
-        -- assigned directly to TextLabel.FontFace at runtime.
+        -- Prevent duplicate overlays if an example accidentally creates the HUD twice.
+        if Library.TargetHUDInstance and Library.TargetHUDInstance.Root
+            and Library.TargetHUDInstance.Root.Parent then
+            return Library.TargetHUDInstance
+        end
+
         local HudFont = Options.FontFace or Library.Font
         if Options.FontAssetId then
             local OK, UploadedFont = pcall(function()
                 return Font.new(tostring(Options.FontAssetId), Enum.FontWeight.Regular, Enum.FontStyle.Normal)
             end)
-            if OK and UploadedFont then
-                HudFont = UploadedFont
-            else
-                warn("[Samet UI] TargetHUD FontAssetId is invalid; falling back to Library.Font")
-            end
+            if OK and UploadedFont then HudFont = UploadedFont end
         end
 
-        local TargetHUD = {
+        local HudWidth = Options.Size and Options.Size.X.Offset or 284
+        local HUD = {
             Target = nil,
             Data = {},
             Visible = false,
             WeaponMode = Options.WeaponMode or "Combined",
-            FontFace = HudFont,
-            Slots = {},
-            Statuses = {},
-            Connections = {},
             Position = Options.Position or UDim2New(0, 24, 0, 220),
-            Size = Options.Size or UDim2New(0, 278, 0, 142)
+            Connections = {},
+            Root = nil,
         }
-
-        local function New(Class, Properties)
-            local Object = InstanceNew(Class)
-            for Property, Value in pairs(Properties) do
-                Object[Property] = Value
-            end
-            return Object
-        end
 
         local function Theme(Key, Fallback)
             return Library.Theme[Key] or Fallback
         end
 
+        local function New(Class, Properties)
+            local Object = InstanceNew(Class)
+            for Property, Value in pairs(Properties) do Object[Property] = Value end
+            return Object
+        end
+
+        local function Track(Event, Callback, Name)
+            local Connection = Library:Connect(Event, Callback, "SametTargetHUD_" .. Name .. "_" .. HttpService:GenerateGUID(false))
+            TableInsert(HUD.Connections, Connection)
+            return Connection
+        end
+
+        local function DisconnectTracked(Connection)
+            if not Connection then return end
+            if Connection.Connection then
+                pcall(function() Connection.Connection:Disconnect() end)
+                Connection.Connection = nil
+            end
+            for Index = #Library.Connections, 1, -1 do
+                if Library.Connections[Index] == Connection then
+                    TableRemove(Library.Connections, Index)
+                    break
+                end
+            end
+            for Index = #HUD.Connections, 1, -1 do
+                if HUD.Connections[Index] == Connection then
+                    TableRemove(HUD.Connections, Index)
+                    break
+                end
+            end
+        end
+
         local Root = New("Frame", {
-            Name = "SametTargetHUD",
+            Name = "Samet_TargetIndicator",
             Parent = Library.Holder.Instance,
+            Position = HUD.Position,
+            Size = Options.Size or UDim2New(0, 284, 0, 142),
             BackgroundColor3 = Theme("Window", FromRGB(20, 20, 20)),
             BorderSizePixel = 0,
-            Position = TargetHUD.Position,
-            Size = TargetHUD.Size,
             Visible = false,
             ClipsDescendants = true,
-            ZIndex = 30
+            ZIndex = 40,
         })
-        New("UICorner", {Parent = Root, CornerRadius = UDimNew(0, 5)})
+        HUD.Root = Root
+        New("UICorner", {Parent = Root, CornerRadius = UDimNew(0, 4)})
         local Border = New("UIStroke", {
-            Parent = Root, Color = Theme("Border", FromRGB(58,58,58)),
-            Thickness = 1, Transparency = 0
+            Parent = Root, Color = Theme("Border", FromRGB(58, 58, 58)),
+            Thickness = 1, Transparency = 0,
+        })
+        local AccentLine = New("Frame", {
+            Parent = Root, Name = "Samet_TargetIndicator_Accent",
+            Position = UDim2New(0, 0, 0, 0), Size = UDim2New(1, 0, 0, 1),
+            BackgroundColor3 = Theme("Accent", FromRGB(255, 164, 72)),
+            BorderSizePixel = 0, ZIndex = 41,
         })
 
-        local Header = New("Frame", {
-            Parent = Root, BackgroundColor3 = Theme("Child", FromRGB(26,26,26)),
-            BorderSizePixel = 0, Position = UDim2New(0, 0, 0, 0),
-            Size = UDim2New(1, 0, 0, 2), ZIndex = 31
+        -- NHack's avatar-left / information-right composition, with Samet styling.
+        local AvatarFrame = New("Frame", {
+            Parent = Root, Position = UDim2New(0, 9, 0, 10), Size = UDim2New(0, 64, 0, 64),
+            BackgroundColor3 = Theme("Child", FromRGB(26, 26, 26)), BorderSizePixel = 0, ZIndex = 42,
         })
-        New("UICorner", {Parent = Header, CornerRadius = UDimNew(0, 5)})
-        New("Frame", {
-            Parent = Header, BackgroundColor3 = Theme("Accent", FromRGB(255,164,72)),
-            BorderSizePixel = 0, Position = UDim2New(0, 0, 0, 0),
-            Size = UDim2New(1, 0, 0, 1), ZIndex = 32
-        })
-
-        local AvatarWrap = New("Frame", {
-            Parent = Root, BackgroundColor3 = Theme("Accent", FromRGB(255,164,72)),
-            BorderSizePixel = 0, Position = UDim2New(0, 10, 0, 9),
-            Size = UDim2New(0, 66, 0, 78), ZIndex = 34
-        })
-        New("UICorner", {Parent = AvatarWrap, CornerRadius = UDimNew(0, 5)})
+        New("UICorner", {Parent = AvatarFrame, CornerRadius = UDimNew(0, 4)})
+        local AvatarStroke = New("UIStroke", {Parent = AvatarFrame, Color = Theme("Border", FromRGB(58,58,58)), Thickness = 1})
         local Avatar = New("ImageLabel", {
-            Parent = AvatarWrap, BackgroundColor3 = Theme("Window", FromRGB(20,20,20)),
-            BorderSizePixel = 0, Position = UDim2New(0, 2, 0, 2),
-            Size = UDim2New(1, -4, 1, -4), Image = "", ScaleType = Enum.ScaleType.Crop,
-            ZIndex = 35
+            Parent = AvatarFrame, Position = UDim2New(0, 2, 0, 2), Size = UDim2New(1, -4, 1, -4),
+            BackgroundTransparency = 1, BorderSizePixel = 0,
+            Image = "rbxasset://textures/ui/GuiImagePlaceholder.png", ScaleType = Enum.ScaleType.Crop, ZIndex = 43,
         })
-        New("UICorner", {Parent = Avatar, CornerRadius = UDimNew(0, 4)})
+        New("UICorner", {Parent = Avatar, CornerRadius = UDimNew(0, 3)})
 
-        local Name = New("TextLabel", {
-            Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
-            Position = UDim2New(0, 145, 0, 11), Size = UDim2New(1, -155, 0, 17),
-            FontFace = HudFont, Text = "Target", TextSize = 12,
-            TextColor3 = Theme("Text", FromRGB(205,205,205)),
-            TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
-            ZIndex = 35
+        local InfoHolder = New("Frame", {
+            Parent = Root, Position = UDim2New(0, 82, 0, 9), Size = UDim2New(1, -92, 0, 62),
+            BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 42,
         })
-        local Distance = New("TextLabel", {
-            Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
-            Position = UDim2New(0, 145, 0, 55),
-            Size = UDim2New(1, -155, 0, 16), FontFace = HudFont,
-            Text = "--m", TextSize = 11, TextColor3 = Theme("Muted", FromRGB(132,132,132)),
-            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 35
-        })
-
-        local UserCaption = New("TextLabel", {
-            Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
-            Position = UDim2New(0, 85, 0, 11), Size = UDim2New(0, 52, 0, 16),
-            FontFace = HudFont, Text = "User", TextSize = 11,
-            TextColor3 = Theme("Muted", FromRGB(132,132,132)),
-            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 35
-        })
-        local WeaponCaption = New("TextLabel", {
-            Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
-            Position = UDim2New(0, 85, 0, 33), Size = UDim2New(0, 52, 0, 16),
-            FontFace = HudFont, Text = "Weapon", TextSize = 11,
-            TextColor3 = Theme("Muted", FromRGB(132,132,132)),
-            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 35
-        })
-        local DistanceCaption = New("TextLabel", {
-            Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
-            Position = UDim2New(0, 85, 0, 55), Size = UDim2New(0, 52, 0, 16),
-            FontFace = HudFont, Text = "Distance", TextSize = 11,
-            TextColor3 = Theme("Muted", FromRGB(132,132,132)),
-            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 35
+        local function MakeInfoRow(LabelText, Y, InitialValue)
+            local Caption = New("TextLabel", {
+                Parent = InfoHolder, Position = UDim2New(0, 0, 0, Y), Size = UDim2New(0, 48, 0, 16),
+                BackgroundTransparency = 1, BorderSizePixel = 0, FontFace = HudFont, TextSize = 11,
+                Text = LabelText, TextColor3 = Theme("Muted", FromRGB(132,132,132)),
+                TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 43,
+            })
+            local Value = New("TextLabel", {
+                Parent = InfoHolder, Position = UDim2New(0, 50, 0, Y), Size = UDim2New(1, -50, 0, 16),
+                BackgroundTransparency = 1, BorderSizePixel = 0, FontFace = HudFont, TextSize = 11,
+                Text = InitialValue, TextColor3 = Theme("Text", FromRGB(205,205,205)),
+                TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 43,
+            })
+            return Caption, Value
+        end
+        local UserCaption, Name = MakeInfoRow("User", 0, "Target")
+        local WeaponCaption, WeaponText = MakeInfoRow("Weapon", 21, "Unarmed")
+        local DistanceCaption, Distance = MakeInfoRow("Distance", 42, "--m")
+        local WeaponIcon = New("ImageLabel", {
+            Parent = InfoHolder, Position = UDim2New(0, 50, 0, 21), Size = UDim2New(0, 14, 0, 14),
+            BackgroundTransparency = 1, BorderSizePixel = 0, Image = "", ScaleType = Enum.ScaleType.Fit,
+            Visible = false, ZIndex = 44,
         })
 
         local HealthBack = New("Frame", {
-            Parent = Root, BackgroundColor3 = Theme("Window", FromRGB(20,20,20)),
-            BorderSizePixel = 0, Position = UDim2New(0, 85, 0, 76),
-            Size = UDim2New(1, -98, 0, 16), ZIndex = 34
+            Parent = Root, Position = UDim2New(0, 82, 0, 76), Size = UDim2New(1, -94, 0, 13),
+            BackgroundColor3 = Theme("Child", FromRGB(26,26,26)), BorderSizePixel = 0, ZIndex = 42,
         })
-        New("UICorner", {Parent = HealthBack, CornerRadius = UDimNew(0, 3)})
+        New("UICorner", {Parent = HealthBack, CornerRadius = UDimNew(0, 2)})
+        New("UIStroke", {Parent = HealthBack, Color = Theme("Border", FromRGB(58,58,58)), Thickness = 1})
         local DamageTrail = New("Frame", {
-            Parent = HealthBack, BackgroundColor3 = FromRGB(105, 48, 50),
-            BorderSizePixel = 0, Size = UDim2New(1, 0, 1, 0), ZIndex = 35
+            Parent = HealthBack, Size = UDim2New(1, 0, 1, 0), BackgroundColor3 = FromRGB(120, 55, 55),
+            BorderSizePixel = 0, ZIndex = 43,
         })
-        New("UICorner", {Parent = DamageTrail, CornerRadius = UDimNew(0, 3)})
+        New("UICorner", {Parent = DamageTrail, CornerRadius = UDimNew(0, 2)})
         local HealthFill = New("Frame", {
-            Parent = HealthBack, BackgroundColor3 = FromRGB(220, 75, 75),
-            BorderSizePixel = 0, Size = UDim2New(1, 0, 1, 0), ZIndex = 36
+            Parent = HealthBack, Size = UDim2New(1, 0, 1, 0), BackgroundColor3 = FromRGB(75, 190, 105),
+            BorderSizePixel = 0, ZIndex = 44,
         })
-        New("UICorner", {Parent = HealthFill, CornerRadius = UDimNew(0, 3)})
+        New("UICorner", {Parent = HealthFill, CornerRadius = UDimNew(0, 2)})
         local HealthText = New("TextLabel", {
-            Parent = HealthBack, BackgroundTransparency = 1, BorderSizePixel = 0,
-            Size = UDim2New(1, 0, 1, 0), FontFace = HudFont,
-            Text = "100 HP", TextSize = 10, TextColor3 = FromRGB(245,245,245),
-            TextStrokeTransparency = 0.65, ZIndex = 37
-        })
-
-        local WeaponText = New("TextLabel", {
-            Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
-            Position = UDim2New(0, 145, 0, 33), Size = UDim2New(1, -155, 0, 16),
-            FontFace = HudFont, Text = "Unarmed", TextSize = 11,
-            TextColor3 = Theme("Text", FromRGB(205,205,205)),
-            TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
-            ZIndex = 35
-        })
-        local WeaponIcon = New("ImageLabel", {
-            Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
-            Position = UDim2New(0, 145, 0, 32), Size = UDim2New(0, 15, 0, 15),
-            Image = "", ScaleType = Enum.ScaleType.Fit, ZIndex = 35
+            Parent = HealthBack, Size = UDim2New(1, 0, 1, 0), BackgroundTransparency = 1,
+            BorderSizePixel = 0, FontFace = HudFont, TextSize = 10, Text = "100/100",
+            TextColor3 = Theme("Text", FromRGB(235,235,235)), TextStrokeTransparency = 0.7,
+            ZIndex = 45,
         })
 
         local SlotHolder = New("Frame", {
-            Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
-            Position = UDim2New(0, 10, 0, 99), Size = UDim2New(0, 148, 0, 34),
-            ZIndex = 34
-        })
-        local SlotLayout = New("UIGridLayout", {
-            Parent = SlotHolder, CellSize = UDim2New(0, 34, 0, 32),
-            CellPadding = UDim2New(0, 3, 0, 2),
-            FillDirection = Enum.FillDirection.Horizontal,
-            FillDirectionMaxCells = 4, SortOrder = Enum.SortOrder.LayoutOrder
-        })
-
-        local StatusHolder = New("Frame", {
-            Parent = Root, BackgroundTransparency = 1, BorderSizePixel = 0,
-            Position = UDim2New(0, 164, 0, 99), Size = UDim2New(1, -174, 0, 34),
-            ZIndex = 34
+            Parent = Root, Position = UDim2New(0, 9, 0, 99), Size = UDim2New(0, 124, 0, 34),
+            BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 42,
         })
         New("UIGridLayout", {
-            Parent = StatusHolder, CellSize = UDim2New(0, 50, 0, 15),
-            CellPadding = UDim2New(0, 3, 0, 2),
-            FillDirection = Enum.FillDirection.Horizontal,
-            FillDirectionMaxCells = 2, SortOrder = Enum.SortOrder.LayoutOrder
+            Parent = SlotHolder, CellSize = UDim2New(0, 27, 0, 27), CellPadding = UDim2New(0, 4, 0, 3),
+            FillDirection = Enum.FillDirection.Horizontal, FillDirectionMaxCells = 4,
+            SortOrder = Enum.SortOrder.LayoutOrder,
         })
-
+        local StatusHolder = New("Frame", {
+            Parent = Root, Position = UDim2New(0, 141, 0, 99), Size = UDim2New(1, -150, 0, 34),
+            BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 42,
+        })
+        New("UIGridLayout", {
+            Parent = StatusHolder, CellSize = UDim2New(0, 62, 0, 14), CellPadding = UDim2New(0, 3, 0, 3),
+            FillDirection = Enum.FillDirection.Horizontal, FillDirectionMaxCells = 2,
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        })
         local StatusPalette = {
-            MANIPULATED = FromRGB(220, 75, 75),
-            HITSCAN = FromRGB(225, 135, 55),
-            RESOLVER = FromRGB(180, 105, 235),
-            LETHAL = FromRGB(215, 65, 65),
-            BAIM = FromRGB(205, 165, 65),
-            DUCKING = FromRGB(75, 145, 215),
-            DEFAULT = Theme("Accent", FromRGB(255,164,72))
+            MANIPULATED = FromRGB(205, 70, 70), HITSCAN = FromRGB(210, 125, 55),
+            RESOLVER = FromRGB(155, 100, 205), LETHAL = FromRGB(190, 65, 65),
+            BAIM = FromRGB(175, 140, 65), DUCKING = FromRGB(65, 125, 185),
         }
-
-        local function LerpColor(A, B, T)
-            return A:Lerp(B, T)
-        end
-
-        local function HealthColor(Fraction)
-            if Fraction > 0.5 then
-                return LerpColor(FromRGB(235, 190, 65), FromRGB(85, 205, 115), (Fraction - 0.5) * 2)
-            end
-            return LerpColor(FromRGB(225, 75, 65), FromRGB(235, 190, 65), Fraction * 2)
-        end
-
-        local function ClearChildren(Container)
+        local function ClearGuiChildren(Container)
             for _, Child in ipairs(Container:GetChildren()) do
                 if Child:IsA("GuiObject") then Child:Destroy() end
             end
         end
-
+        local function HealthColor(Fraction)
+            if Fraction >= 0.5 then
+                return FromRGB(225, 185, 65):Lerp(FromRGB(75, 190, 105), (Fraction - 0.5) * 2)
+            end
+            return FromRGB(215, 65, 65):Lerp(FromRGB(225, 185, 65), Fraction * 2)
+        end
         local function RenderSlots(Slots)
-            ClearChildren(SlotHolder)
-            Slots = Slots or {}
-            -- Keep four visible equipment cells even when no armor data is supplied.
-            -- Extra entries are supported; UIGridLayout wraps them to another row.
-            local VisibleSlotCount = math.max(tonumber(Options.SlotCount) or 4, #Slots)
-            for Index = 1, VisibleSlotCount do
+            ClearGuiChildren(SlotHolder)
+            Slots = type(Slots) == "table" and Slots or {}
+            local Count = math.max(tonumber(Options.SlotCount) or 4, #Slots)
+            local Rows = math.max(1, math.ceil(Count / 4))
+            SlotHolder.Size = UDim2New(0, 124, 0, Rows * 30)
+            StatusHolder.Size = UDim2New(1, -150, 0, Rows * 30)
+            Root.Size = UDim2New(0, HudWidth, 0, math.max(142, 99 + Rows * 30 + 9))
+            for Index = 1, Count do
                 local Slot = Slots[Index]
                 local IsEmpty = Slot == nil
+                local SlotName = type(Slot) == "table" and tostring(Slot.Name or "") or tostring(Slot or "")
                 local Icon = type(Slot) == "table" and Slot.Icon or nil
-                local SlotName = type(Slot) == "table" and Slot.Name or (Slot and tostring(Slot) or "")
                 local Active = not IsEmpty and (type(Slot) ~= "table" or Slot.Active ~= false)
-                local Box = New("Frame", {
-                    Parent = SlotHolder,
-                    BackgroundColor3 = Theme("Child", FromRGB(26,26,26)),
-                    BackgroundTransparency = IsEmpty and 0.28 or (Active and 0 or 0.45),
-                    BorderSizePixel = 0, LayoutOrder = Index, ZIndex = 35
+                local Cell = New("Frame", {
+                    Parent = SlotHolder, LayoutOrder = Index, BackgroundColor3 = Theme("Child", FromRGB(26,26,26)),
+                    BackgroundTransparency = IsEmpty and 0.25 or (Active and 0 or 0.4), BorderSizePixel = 0, ZIndex = 43,
                 })
-                New("UICorner", {Parent = Box, CornerRadius = UDimNew(0, 3)})
-                New("UIStroke", {
-                    Parent = Box,
-                    Color = Theme("Border", FromRGB(58,58,58)),
-                    Transparency = IsEmpty and 0.38 or 0.15,
-                    Thickness = 1
-                })
-                if Icon and Icon ~= "" then
-                    New("ImageLabel", {
-                        Parent = Box, BackgroundTransparency = 1, BorderSizePixel = 0,
-                        Size = UDim2New(1, -4, 1, -4), Position = UDim2New(0, 2, 0, 2),
-                        Image = Icon, ScaleType = Enum.ScaleType.Fit,
-                        ImageTransparency = Active and 0 or 0.5, ZIndex = 36
-                    })
-                elseif not IsEmpty then
-                    New("TextLabel", {
-                        Parent = Box, BackgroundTransparency = 1, BorderSizePixel = 0,
-                        Size = UDim2New(1, 0, 1, 0), FontFace = HudFont,
-                        Text = string.sub(SlotName, 1, 2):upper(), TextSize = 9,
-                        TextColor3 = Active and Theme("Text", FromRGB(205,205,205)) or Theme("Muted", FromRGB(132,132,132)),
-                        ZIndex = 36
-                    })
+                New("UICorner", {Parent = Cell, CornerRadius = UDimNew(0, 2)})
+                New("UIStroke", {Parent = Cell, Color = Theme("Border", FromRGB(58,58,58)), Thickness = 1, Transparency = IsEmpty and 0.35 or 0.1})
+                if Icon and tostring(Icon) ~= "" then
+                    New("ImageLabel", {Parent = Cell, BackgroundTransparency = 1, Size = UDim2New(1,-4,1,-4), Position = UDim2New(0,2,0,2), Image = tostring(Icon), ScaleType = Enum.ScaleType.Fit, ImageTransparency = Active and 0 or 0.55, ZIndex = 44})
+                elseif SlotName ~= "" then
+                    New("TextLabel", {Parent = Cell, BackgroundTransparency = 1, Size = UDim2New(1,0,1,0), FontFace = HudFont, TextSize = 9, Text = string.sub(SlotName,1,3):upper(), TextColor3 = Theme("Muted", FromRGB(132,132,132)), ZIndex = 44})
                 end
             end
         end
-
         local function RenderStatuses(Statuses)
-            ClearChildren(StatusHolder)
-            for Index, Status in ipairs(Statuses or {}) do
-                local StatusName = type(Status) == "table" and Status.Name or tostring(Status)
-                local Color = type(Status) == "table" and Status.Color or StatusPalette[string.upper(StatusName)] or StatusPalette.DEFAULT
-                local Badge = New("Frame", {
-                    Parent = StatusHolder, BackgroundColor3 = Color,
-                    BackgroundTransparency = 0.12, BorderSizePixel = 0,
-                    LayoutOrder = Index, ZIndex = 35
-                })
-                New("UICorner", {Parent = Badge, CornerRadius = UDimNew(0, 3)})
-                New("TextLabel", {
-                    Parent = Badge, BackgroundTransparency = 1, BorderSizePixel = 0,
-                    Size = UDim2New(1, -6, 1, 0), Position = UDim2New(0, 3, 0, 0),
-                    FontFace = HudFont, Text = string.upper(StatusName),
-                    TextSize = 9, TextColor3 = FromRGB(250,250,250),
-                    TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 36
-                })
+            ClearGuiChildren(StatusHolder)
+            if type(Statuses) ~= "table" then return end
+            for Index, Status in ipairs(Statuses) do
+                local Label = type(Status) == "table" and tostring(Status.Name or "") or tostring(Status)
+                if Label ~= "" then
+                    local Color = type(Status) == "table" and Status.Color or StatusPalette[string.upper(Label)] or Theme("Accent", FromRGB(255,164,72))
+                    if typeof(Color) ~= "Color3" then Color = Theme("Accent", FromRGB(255,164,72)) end
+                    local Badge = New("Frame", {Parent = StatusHolder, LayoutOrder = Index, BackgroundColor3 = Color, BackgroundTransparency = 0.78, BorderSizePixel = 0, ZIndex = 43})
+                    New("UICorner", {Parent = Badge, CornerRadius = UDimNew(0,2)})
+                    New("UIStroke", {Parent = Badge, Color = Color, Transparency = 0.25, Thickness = 1})
+                    New("TextLabel", {Parent = Badge, BackgroundTransparency = 1, Size = UDim2New(1,-4,1,0), Position = UDim2New(0,2,0,0), FontFace = HudFont, TextSize = 8, Text = Label, TextColor3 = Color, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 44})
+                end
             end
         end
-
-        local function GetRootPart(Player)
-            local Character = Player and Player.Character
-            return Character and (Character:FindFirstChild("HumanoidRootPart") or Character.PrimaryPart)
-        end
-
         local function GetHumanoid(Player)
             local Character = Player and Player.Character
             return Character and Character:FindFirstChildOfClass("Humanoid")
         end
-
-        local LastHealthFraction = 1
-        local HealthUpdateId = 0
-        local function UpdateHealth(Data)
-            local Humanoid = TargetHUD.Target and GetHumanoid(TargetHUD.Target)
-            local Health = tonumber(Data.Health) or (Humanoid and Humanoid.Health) or 0
-            local MaxHealth = tonumber(Data.MaxHealth) or (Humanoid and Humanoid.MaxHealth) or 100
-            MaxHealth = math.max(MaxHealth, 1)
-            Health = math.clamp(Health, 0, MaxHealth)
-            local Fraction = Health / MaxHealth
-            local TargetSize = UDim2New(Fraction, 0, 1, 0)
-            local PreviousFraction = LastHealthFraction
-            LastHealthFraction = Fraction
-            HealthUpdateId += 1
-            local ThisUpdate = HealthUpdateId
-            TweenService:Create(HealthFill, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                Size = TargetSize, BackgroundColor3 = HealthColor(Fraction)
-            }):Play()
-            if Fraction < PreviousFraction then
-                -- Keep the previous bar width briefly, then let the damage trail catch up.
-                DamageTrail.Size = UDim2New(PreviousFraction, 0, 1, 0)
-                task.delay(0.30, function()
-                    if ThisUpdate == HealthUpdateId and DamageTrail.Parent then
-                        TweenService:Create(DamageTrail, TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                            Size = TargetSize
-                        }):Play()
-                    end
-                end)
-            else
-                TweenService:Create(DamageTrail, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                    Size = TargetSize
-                }):Play()
-            end
-            HealthText.Text = string.format("%d HP", math.floor(Health + 0.5))
+        local function GetRoot(Player)
+            local Character = Player and Player.Character
+            return Character and (Character:FindFirstChild("HumanoidRootPart") or Character.PrimaryPart)
         end
-
+        local function UpdateHealth(Data)
+            local Humanoid = GetHumanoid(HUD.Target)
+            local MaxHealth = math.max(tonumber(Data.MaxHealth) or (Humanoid and Humanoid.MaxHealth) or 100, 1)
+            local Health = math.clamp(tonumber(Data.Health) or (Humanoid and Humanoid.Health) or 0, 0, MaxHealth)
+            local Fraction = Health / MaxHealth
+            local Previous = HealthFill.Size.X.Scale
+            local Goal = UDim2New(Fraction, 0, 1, 0)
+            TweenService:Create(HealthFill, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = Goal, BackgroundColor3 = HealthColor(Fraction)}):Play()
+            if Fraction < Previous then
+                DamageTrail.Size = UDim2New(Previous, 0, 1, 0)
+                TweenService:Create(DamageTrail, TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, false, 0.22), {Size = Goal}):Play()
+            else
+                TweenService:Create(DamageTrail, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = Goal}):Play()
+            end
+            HealthText.Text = string.format("%d/%d", math.floor(Health + 0.5), math.floor(MaxHealth + 0.5))
+        end
         local function ApplyData(Data)
             Data = Data or {}
-            TargetHUD.Data = Data
-            local Player = TargetHUD.Target
-            if Player then
-                Name.Text = tostring(Data.Name or Player.DisplayName or Player.Name)
-                local Humanoid = GetHumanoid(Player)
-                local RootPart = GetRootPart(Player)
-                if Data.Distance ~= nil then
-                    Distance.Text = string.format("%.0fm", tonumber(Data.Distance) or 0)
-                elseif RootPart and GetRootPart(Players.LocalPlayer) then
-                    local Meters = (RootPart.Position - GetRootPart(Players.LocalPlayer).Position).Magnitude
-                    Distance.Text = string.format("%.0fm", Meters)
-                else
-                    Distance.Text = "-- m"
-                end
-
-                if Data.Avatar then
-                    Avatar.Image = tostring(Data.Avatar)
-                else
-                    task.spawn(function()
-                        local OK, Image = pcall(function()
-                            return Players:GetUserThumbnailAsync(Player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
-                        end)
-                        if OK and TargetHUD.Target == Player then Avatar.Image = Image end
-                    end)
-                end
-
-                local EquippedTool = Player.Character and Player.Character:FindFirstChildOfClass("Tool")
-                local Weapon = tostring(Data.Weapon or (EquippedTool and EquippedTool.Name) or "Unarmed")
-                local Mode = Data.WeaponMode or TargetHUD.WeaponMode
-                WeaponText.Text = Weapon
-                WeaponIcon.Image = tostring(Data.WeaponIcon or "")
+            HUD.Data = Data
+            local Player = HUD.Target
+            if not Player then return end
+            Name.Text = tostring(Data.Name or Player.DisplayName or Player.Name)
+            local Tool = Player.Character and Player.Character:FindFirstChildOfClass("Tool")
+            local Weapon = tostring(Data.Weapon or (Tool and Tool.Name) or "Unarmed")
+            WeaponText.Text = Weapon
+            local Mode = Data.WeaponMode or HUD.WeaponMode
+            WeaponIcon.Image = tostring(Data.WeaponIcon or "")
+            if Mode == "Icon" then
+                WeaponText.Visible = false
                 WeaponIcon.Visible = WeaponIcon.Image ~= ""
-                if Mode == "Text" then
-                    WeaponIcon.Visible = false
-                    WeaponText.Position = UDim2New(0, 145, 0, 33)
-                    WeaponText.Size = UDim2New(1, -155, 0, 16)
-                elseif Mode == "Icon" then
-                    WeaponText.Visible = false
-                    WeaponIcon.Visible = WeaponIcon.Image ~= ""
-                    WeaponIcon.Position = UDim2New(0, 145, 0, 32)
-                    WeaponIcon.Size = UDim2New(0, 16, 0, 16)
-                else
-                    WeaponText.Visible = true
-                    WeaponIcon.Visible = WeaponIcon.Image ~= ""
-                    WeaponIcon.Position = UDim2New(0, 145, 0, 32)
-                    WeaponIcon.Size = UDim2New(0, 15, 0, 15)
-                    WeaponText.Position = UDim2New(0, WeaponIcon.Visible and 164 or 145, 0, 33)
-                    WeaponText.Size = UDim2New(1, WeaponIcon.Visible and -174 or -155, 0, 16)
-                end
-                if Mode ~= "Icon" then WeaponText.Visible = true end
-                local StateColor = Data.StateColor
-                if typeof(StateColor) ~= "Color3" then
-                    local State = string.lower(tostring(Data.State or "default"))
-                    StateColor = State == "friendly" and FromRGB(80,180,120)
-                        or State == "danger" and FromRGB(225,75,65)
-                        or State == "visible" and Theme("Accent", FromRGB(255,164,72))
-                        or Theme("Border", FromRGB(58,58,58))
-                end
-                AvatarWrap.BackgroundColor3 = StateColor
-                Border.Color = Theme("Border", FromRGB(58,58,58))
-                UpdateHealth(Data)
-                RenderSlots(Data.Armor or Data.Slots or {})
-                RenderStatuses(Data.Statuses or {})
+            elseif Mode == "Combined" and WeaponIcon.Image ~= "" then
+                WeaponText.Visible = true
+                WeaponIcon.Visible = true
+                WeaponText.Position = UDim2New(0, 68, 0, 21)
+                WeaponText.Size = UDim2New(1, -68, 0, 16)
+            else
+                WeaponText.Visible = true
+                WeaponIcon.Visible = false
+                WeaponText.Position = UDim2New(0, 50, 0, 21)
+                WeaponText.Size = UDim2New(1, -50, 0, 16)
             end
+            local DistanceValue = tonumber(Data.Distance)
+            local TargetRoot, LocalRoot = GetRoot(Player), GetRoot(Players.LocalPlayer)
+            if not DistanceValue and TargetRoot and LocalRoot then
+                DistanceValue = (TargetRoot.Position - LocalRoot.Position).Magnitude
+            end
+            Distance.Text = DistanceValue and string.format("%.0fm", DistanceValue) or "--m"
+            if Data.Avatar then
+                Avatar.Image = tostring(Data.Avatar)
+            else
+                task.spawn(function()
+                    local OK, Image = pcall(function()
+                        return Players:GetUserThumbnailAsync(Player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+                    end)
+                    if OK and HUD.Target == Player then Avatar.Image = Image end
+                end)
+            end
+            local StateColor = Data.StateColor
+            if typeof(StateColor) ~= "Color3" then
+                local State = string.lower(tostring(Data.State or "default"))
+                StateColor = State == "friendly" and FromRGB(75,170,115)
+                    or State == "danger" and FromRGB(205,70,70)
+                    or State == "visible" and Theme("Accent", FromRGB(255,164,72))
+                    or Theme("Border", FromRGB(58,58,58))
+            end
+            AvatarFrame.BackgroundColor3 = StateColor
+            AvatarStroke.Color = Theme("Border", FromRGB(58,58,58))
+            UpdateHealth(Data)
+            RenderSlots(Data.Armor or Data.Slots or {})
+            RenderStatuses(Data.Statuses or {})
         end
 
-        function TargetHUD:Show(Player, Data)
-            if not Player or not Player:IsA("Player") then return false end
+        function HUD:ResetConnection()
+            if self.HealthConnection then
+                DisconnectTracked(self.HealthConnection)
+                self.HealthConnection = nil
+            end
+            self.BoundHumanoid = nil
+        end
+        function HUD:SetTarget(Player, Data)
+            self:ResetConnection()
+            if not Player or not Player:IsA("Player") then
+                self.Target = nil
+                Name.Text = "No target selected"
+                WeaponText.Text = "Unarmed"
+                Distance.Text = "--m"
+                Avatar.Image = "rbxasset://textures/ui/GuiImagePlaceholder.png"
+                HealthText.Text = "0/0"
+                HealthFill.Size = UDim2New(0,0,1,0)
+                DamageTrail.Size = UDim2New(0,0,1,0)
+                RenderSlots({})
+                RenderStatuses({})
+                return false
+            end
             self.Target = Player
             self.Visible = true
             Root.Visible = true
             ApplyData(Data or {})
+            local Humanoid = GetHumanoid(Player)
+            if Humanoid then
+                self.BoundHumanoid = Humanoid
+                self.HealthConnection = Track(Humanoid.HealthChanged, function(Health)
+                    if HUD.Target == Player and HUD.BoundHumanoid == Humanoid then
+                        local Current = TableClone(HUD.Data or {})
+                        Current.Health = Health
+                        Current.MaxHealth = Humanoid.MaxHealth
+                        UpdateHealth(Current)
+                    end
+                end, "Health")
+            end
             return true
         end
-
-        function TargetHUD:Update(Data)
+        function HUD:Show(Player, Data)
+            if not self:SetTarget(Player, Data) then return false end
+            self.Visible = true
+            Root.Visible = true
+            return true
+        end
+        function HUD:Update(Data)
             if not self.Target then return false end
             ApplyData(Data or self.Data)
             return true
         end
-
-        function TargetHUD:Hide()
+        function HUD:Hide()
             self.Visible = false
             Root.Visible = false
-            self.Target = nil
+            self:ResetConnection()
             return true
         end
-
-        function TargetHUD:SetWeaponMode(Mode)
+        function HUD:SetVisibility(Bool)
+            self.Visible = Bool == true and self.Target ~= nil
+            Root.Visible = self.Visible
+        end
+        function HUD:SetPosition(Position)
+            self.Position = Position
+            Root.Position = Position
+        end
+        function HUD:Center()
+            local Camera = Workspace.CurrentCamera
+            if Camera then
+                local Viewport = Camera.ViewportSize
+                self:SetPosition(UDim2New(0, math.floor((Viewport.X - Root.AbsoluteSize.X) / 2), 0, math.floor(Viewport.Y * 0.72)))
+            end
+        end
+        function HUD:GetBounds()
+            return Root.AbsolutePosition, Root.AbsoluteSize
+        end
+        function HUD:SetWeaponMode(Mode)
             assert(Mode == "Text" or Mode == "Icon" or Mode == "Combined", "WeaponMode must be Text, Icon or Combined")
             self.WeaponMode = Mode
             if self.Target then ApplyData(self.Data) end
         end
-
-        function TargetHUD:SetPosition(Position)
-            self.Position = Position
-            Root.Position = Position
+        function HUD:AddItem(Text)
+            local Entry = tostring(Text or "")
+            if Entry == "" then return nil end
+            local Badge = New("TextLabel", {
+                Parent = StatusHolder, BackgroundColor3 = Theme("Child", FromRGB(26,26,26)),
+                BorderSizePixel = 0, AutomaticSize = Enum.AutomaticSize.X,
+                Size = UDim2New(0,0,0,14), FontFace = HudFont, TextSize = 9,
+                Text = Entry, TextColor3 = Theme("Text", FromRGB(205,205,205)),
+                ZIndex = 44,
+            })
+            New("UIPadding", {Parent = Badge, PaddingLeft = UDimNew(0,4), PaddingRight = UDimNew(0,4)})
+            New("UICorner", {Parent = Badge, CornerRadius = UDimNew(0,2)})
+            return Badge
         end
-
-        function TargetHUD:SetVisibility(Bool)
-            Root.Visible = Bool == true and self.Target ~= nil
-        end
-
-        function TargetHUD:Destroy()
-            for _, Connection in ipairs(self.Connections) do
-                local RawConnection = Connection.Connection or Connection
-                if RawConnection and RawConnection.Connected then
-                    RawConnection:Disconnect()
-                end
+        function HUD:Destroy()
+            self:ResetConnection()
+            for Index = #self.Connections, 1, -1 do
+                DisconnectTracked(self.Connections[Index])
             end
-            Root:Destroy()
+            if Root and Root.Parent then Root:Destroy() end
+            if Library.TargetHUDInstance == self then Library.TargetHUDInstance = nil end
+            if Library.TargetIndicatorInstance == self then Library.TargetIndicatorInstance = nil end
         end
 
-        -- Dragging uses the same mouse/touch conventions as the other overlays.
+        -- Drag handlers are registered in Samet UI's connection registry so
+        -- Library:Unload() and HUD:Destroy() both clean them up.
         local Dragging, DragStart, StartPosition = false, nil, nil
-        table.insert(TargetHUD.Connections, Library:Connect(Root.InputBegan, function(Input)
+        Track(Root.InputBegan, function(Input)
             if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
                 Dragging = true
                 DragStart = Input.Position
                 StartPosition = Root.Position
             end
-        end))
-        table.insert(TargetHUD.Connections, Library:Connect(UserInputService.InputChanged, function(Input)
+        end, "DragBegin")
+        Track(UserInputService.InputChanged, function(Input)
             if Dragging and (Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch) then
                 local Delta = Input.Position - DragStart
                 Root.Position = UDim2New(StartPosition.X.Scale, StartPosition.X.Offset + Delta.X, StartPosition.Y.Scale, StartPosition.Y.Offset + Delta.Y)
             end
-        end))
-        table.insert(TargetHUD.Connections, Library:Connect(UserInputService.InputEnded, function(Input)
+        end, "DragMove")
+        Track(UserInputService.InputEnded, function(Input)
             if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
                 Dragging = false
-                TargetHUD.Position = Root.Position
+                HUD.Position = Root.Position
             end
-        end))
-
-        -- Re-apply current theme live, so user-selected menu colors also affect HUD.
+        end, "DragEnd")
         local RefreshElapsed = 0
-        local ThemeConnection = Library:Connect(RunService.RenderStepped, function(DeltaTime)
+        Track(RunService.RenderStepped, function(DeltaTime)
             if not Root.Parent then return end
+            RefreshElapsed += DeltaTime
+            if RefreshElapsed >= 0.12 and HUD.Target then
+                RefreshElapsed = 0
+                local Data = HUD.Data or {}
+                local TargetRoot, LocalRoot = GetRoot(HUD.Target), GetRoot(Players.LocalPlayer)
+                if Data.Distance == nil and TargetRoot and LocalRoot then
+                    Distance.Text = string.format("%.0fm", (TargetRoot.Position - LocalRoot.Position).Magnitude)
+                end
+                if Data.Health == nil then UpdateHealth(Data) end
+            end
             Root.BackgroundColor3 = Theme("Window", FromRGB(20,20,20))
-            Header.BackgroundColor3 = Theme("Child", FromRGB(26,26,26))
-            Name.TextColor3 = Theme("Text", FromRGB(205,205,205))
-            WeaponText.TextColor3 = Theme("Text", FromRGB(205,205,205))
-            Distance.TextColor3 = Theme("Text", FromRGB(205,205,205))
+            Border.Color = Theme("Border", FromRGB(58,58,58))
+            AccentLine.BackgroundColor3 = Theme("Accent", FromRGB(255,164,72))
             UserCaption.TextColor3 = Theme("Muted", FromRGB(132,132,132))
             WeaponCaption.TextColor3 = Theme("Muted", FromRGB(132,132,132))
             DistanceCaption.TextColor3 = Theme("Muted", FromRGB(132,132,132))
-            Border.Color = Theme("Border", FromRGB(58,58,58))
-            RefreshElapsed += DeltaTime
-            if RefreshElapsed >= 0.10 and TargetHUD.Target then
-                RefreshElapsed = 0
-                local CurrentData = TargetHUD.Data or {}
-                local CurrentRoot = GetRootPart(TargetHUD.Target)
-                local LocalRoot = GetRootPart(Players.LocalPlayer)
-                if CurrentData.Distance == nil and CurrentRoot and LocalRoot then
-                    Distance.Text = string.format("%.0fm", (CurrentRoot.Position - LocalRoot.Position).Magnitude)
-                end
-                if CurrentData.Health == nil then
-                    UpdateHealth(CurrentData)
+            Name.TextColor3 = Theme("Text", FromRGB(205,205,205))
+            WeaponText.TextColor3 = Theme("Text", FromRGB(205,205,205))
+            Distance.TextColor3 = Theme("Text", FromRGB(205,205,205))
+            AvatarStroke.Color = Theme("Border", FromRGB(58,58,58))
+            for _, SlotCell in ipairs(SlotHolder:GetChildren()) do
+                if SlotCell:IsA("Frame") then
+                    SlotCell.BackgroundColor3 = Theme("Child", FromRGB(26,26,26))
+                    local SlotStroke = SlotCell:FindFirstChildOfClass("UIStroke")
+                    if SlotStroke then SlotStroke.Color = Theme("Border", FromRGB(58,58,58)) end
                 end
             end
-        end, "TargetHUDTheme")
-        table.insert(TargetHUD.Connections, ThemeConnection)
+        end, "ThemeRefresh")
 
-        Library.TargetHUDInstance = TargetHUD
-        return TargetHUD
+        Library.TargetHUDInstance = HUD
+        Library.TargetIndicatorInstance = HUD
+        return HUD
+    end
+
+    -- Backwards-compatible Samet API. The visual implementation above is the
+    -- NHack indicator port; TargetHUD and TargetIndicator return the same singleton.
+    Library.TargetHUD = function(self, Options)
+        return self:TargetIndicator(Options)
     end
 
     Library.CreateSettingsPage = function(self, Window, KeybindList, Watermark)
