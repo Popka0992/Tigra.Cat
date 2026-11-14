@@ -1136,21 +1136,45 @@ local Library do
         Library:TooltipUpdate()
     end)
 
-    -- "?" icon + clickable risk dot, attached to any element's name label
+    -- Optional "?" icon + risk tag API.
+    -- SetRisk is always available, even when Meta UI is disabled.
     Library.AttachMeta = function(self, Element, Data, NameLabel, Gutter)
         Data = Data or { }
 
-        -- Meta is opt-in: only create the question mark when explicitly enabled.
+        Element.Risk = self:NormalizeRisk(Data.Risk or Data.risk)
+        Element.Description = Data.Description or Data.description or Data.Desc or Data.desc
+
+        local BaseColor = NameLabel and NameLabel.Instance.TextColor3 or FromRGB(221, 221, 221)
+        local Question = nil
+        local Meta = nil
+
+        function Element:SetRisk(Risk)
+            Element.Risk = Library:NormalizeRisk(Risk)
+
+            local Color = Element.Risk and Library.RiskColors[Element.Risk] or FromRGB(119, 119, 119)
+
+            if Question then
+                Question.Instance.TextColor3 = Color
+            end
+
+            if NameLabel then
+                NameLabel.Instance.TextColor3 = Element.Risk and Color or BaseColor
+            end
+        end
+
+        -- Meta UI is opt-in. Do not create a question mark for ordinary controls.
         if Data.Meta ~= true then
+            Element.Meta = nil
             return Element
         end
 
-        Element.Risk = self:NormalizeRisk(Data.Risk or Data.risk)
-        Element.Description = Data.Description or Data.description or Data.Desc or Data.desc or "No description for this feature yet."
+        -- A tooltip icon needs a non-empty description; risk tags can still be
+        -- controlled through SetRisk without forcing a visible question mark.
+        if not Element.Description or StringLen(tostring(Element.Description)) == 0 then
+            Element.Description = "No description for this feature yet."
+        end
 
-        local BaseColor = NameLabel and NameLabel.Instance.TextColor3 or FromRGB(221, 221, 221)
-
-        local Meta = Instances:Create("Frame", {
+        Meta = Instances:Create("Frame", {
             Parent = NameLabel and NameLabel.Instance.Parent or Gutter.Instance,
             Name = "\0",
             BackgroundTransparency = 1,
@@ -1173,6 +1197,10 @@ local Library do
 
         if NameLabel then
             local Update = function()
+                if not NameLabel.Instance or not Meta.Instance.Parent then
+                    return
+                end
+
                 local Name = NameLabel.Instance
                 local Parent = Meta.Instance.Parent
                 local RelativePosition = Name.AbsolutePosition - Parent.AbsolutePosition
@@ -1192,7 +1220,7 @@ local Library do
             Meta.Instance.Position = UDim2New(1, -8, 0.5, 0)
         end
 
-        local Question = Instances:Create("TextButton", {
+        Question = Instances:Create("TextButton", {
             Parent = Meta.Instance,
             Name = "\0",
             Text = "?",
@@ -1226,18 +1254,6 @@ local Library do
             Library:TooltipShow(StringFormat("%s\n\n%s", Element.Description, TagText()))
         end
 
-        function Element:SetRisk(Risk)
-            Element.Risk = Library:NormalizeRisk(Risk)
-
-            local Color = Element.Risk and Library.RiskColors[Element.Risk] or nil
-
-            Question.Instance.TextColor3 = Color or FromRGB(119, 119, 119)
-
-            if NameLabel then
-                NameLabel.Instance.TextColor3 = Color or BaseColor
-            end
-        end
-
         Question:OnHover(function()
             Question:Tween(nil, {TextColor3 = Library.Theme.Accent})
             ShowTooltip()
@@ -1263,8 +1279,8 @@ local Library do
         end)
 
         Element.Meta = Meta
-
         Element:SetRisk(Element.Risk)
+        return Element
     end
 
     do 
