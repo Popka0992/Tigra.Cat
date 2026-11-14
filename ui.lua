@@ -731,6 +731,10 @@ local Library do
             self.Holder:Clean()
         end
 
+        if self.TooltipHolder then
+            self.TooltipHolder:Clean()
+        end
+
         Library = nil 
         getgenv().Library = nil
     end
@@ -958,6 +962,342 @@ local Library do
     Library.GetDarkerColor = function(self, Color, Increment)
         local Hue, Saturation, Value = Color:ToHSV()
         return FromHSV(Hue, Saturation, Value / Increment)
+    end
+
+    -- Risk tags
+    Library.RiskColors = {
+        own = FromRGB(255, 196, 0),
+        detected = FromRGB(255, 77, 77)
+    }
+
+    Library.NormalizeRisk = function(self, Risk)
+        if not Risk or Risk == false then
+            return nil
+        end
+
+        local Key = StringLower(tostring(Risk))
+
+        if Key == "own" or Key == "use own risk" or Key == "risky" or Key == "warning" or Key == "yellow" then
+            return "own"
+        elseif Key == "detected" or Key == "detect" or Key == "red" or Key == "unsafe" then
+            return "detected"
+        end
+
+        return nil
+    end
+
+    -- Tooltip layer (own ScreenGui so section clipping never cuts it off)
+    local Tooltip = { Visible = false, Token = 0 }
+
+    Tooltip.Holder = Instances:Create("ScreenGui", {
+        Parent = gethui(),
+        Name = "\0",
+        ZIndexBehavior = Enum.ZIndexBehavior.Global,
+        DisplayOrder = 50,
+        IgnoreGuiInset = true,
+        ResetOnSpawn = false
+    })
+
+    Library.TooltipHolder = Tooltip.Holder
+
+    Tooltip.Root = Instances:Create("Frame", {
+        Parent = Tooltip.Holder.Instance,
+        Name = "\0",
+        BackgroundColor3 = FromRGB(14, 14, 14),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        AutomaticSize = Enum.AutomaticSize.XY,
+        Visible = false,
+        Active = false,
+        ZIndex = 1000,
+        Size = UDim2New(0, 0, 0, 0)
+    })
+
+    Instances:Create("UICorner", {
+        Parent = Tooltip.Root.Instance,
+        Name = "\0",
+        CornerRadius = UDimNew(0, 4)
+    })
+
+    Tooltip.Stroke = Instances:Create("UIStroke", {
+        Parent = Tooltip.Root.Instance,
+        Name = "\0",
+        Color = FromRGB(48, 48, 48),
+        Transparency = 1,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+        LineJoinMode = Enum.LineJoinMode.Miter
+    })
+
+    Tooltip.Scale = Instances:Create("UIScale", {
+        Parent = Tooltip.Root.Instance,
+        Name = "\0",
+        Scale = 1
+    })
+
+    Instances:Create("UIPadding", {
+        Parent = Tooltip.Root.Instance,
+        Name = "\0",
+        PaddingTop = UDimNew(0, 7),
+        PaddingBottom = UDimNew(0, 7),
+        PaddingLeft = UDimNew(0, 9),
+        PaddingRight = UDimNew(0, 9)
+    })
+
+    Tooltip.Text = Instances:Create("TextLabel", {
+        Parent = Tooltip.Root.Instance,
+        Name = "\0",
+        FontFace = Library.Font,
+        Text = "",
+        TextSize = 13,
+        TextColor3 = FromRGB(221, 221, 221),
+        TextTransparency = 1,
+        TextWrapped = true,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Top,
+        BackgroundTransparency = 1,
+        Size = UDim2New(0, 210, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BorderSizePixel = 0,
+        ZIndex = 1001,
+        BackgroundColor3 = FromRGB(255, 255, 255)
+    })
+
+    local TooltipTween = function(Item, Goal, Time)
+        TweenService:Create(Item, TweenInfo.new(Time or 0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), Goal):Play()
+    end
+
+    Library.TooltipShow = function(self, Text)
+        Text = tostring(Text or "")
+
+        if StringLen(Text) == 0 then
+            return
+        end
+
+        local WasVisible = Tooltip.Visible
+
+        Tooltip.Visible = true
+        Tooltip.Token = Tooltip.Token + 1
+
+        if not WasVisible then
+            Tooltip.Scale.Instance.Scale = 0.97
+        end
+
+        Tooltip.Text.Instance.Text = Text
+        Tooltip.Root.Instance.Visible = true
+
+        self:TooltipUpdate()
+
+        TooltipTween(Tooltip.Root.Instance, {BackgroundTransparency = 0})
+        TooltipTween(Tooltip.Text.Instance, {TextTransparency = 0})
+        TooltipTween(Tooltip.Stroke.Instance, {Transparency = 0})
+        TooltipTween(Tooltip.Scale.Instance, {Scale = 1})
+    end
+
+    Library.TooltipHide = function(self)
+        if not Tooltip.Visible then
+            return
+        end
+
+        Tooltip.Visible = false
+        Tooltip.Token = Tooltip.Token + 1
+
+        local Token = Tooltip.Token
+
+        TooltipTween(Tooltip.Root.Instance, {BackgroundTransparency = 1}, 0.14)
+        TooltipTween(Tooltip.Text.Instance, {TextTransparency = 1}, 0.14)
+        TooltipTween(Tooltip.Stroke.Instance, {Transparency = 1}, 0.14)
+        TooltipTween(Tooltip.Scale.Instance, {Scale = 0.97}, 0.14)
+
+        task.delay(0.15, function()
+            if Tooltip.Token ~= Token then
+                return
+            end
+
+            Tooltip.Root.Instance.Visible = false
+        end)
+    end
+
+    Library.TooltipUpdate = function(self)
+        if not Tooltip.Visible then
+            return
+        end
+
+        local Viewport = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2New(1920, 1080)
+        local Position = UserInputService:GetMouseLocation()
+        local Size = Tooltip.Root.Instance.AbsoluteSize
+
+        Tooltip.Root.Instance.Position = UDim2FromOffset(
+            MathClamp(Position.X + 16, 8, math.max(8, Viewport.X - Size.X - 8)),
+            MathClamp(Position.Y + 20, 8, math.max(8, Viewport.Y - Size.Y - 8))
+        )
+    end
+
+    Library:Connect(RunService.RenderStepped, function()
+        Library:TooltipUpdate()
+    end)
+
+    -- "?" icon + clickable risk dot, attached to any element's name label
+    Library.AttachMeta = function(self, Element, Data, NameLabel, Gutter)
+        Data = Data or { }
+
+        Element.Risk = self:NormalizeRisk(Data.Risk or Data.risk)
+        Element.Description = Data.Description or Data.description or Data.Desc or Data.desc or "No description for this feature yet."
+
+        local BaseColor = NameLabel and NameLabel.Instance.TextColor3 or FromRGB(221, 221, 221)
+
+        local Meta = Instances:Create("Frame", {
+            Parent = NameLabel and NameLabel.Instance.Parent or Gutter.Instance,
+            Name = "\0",
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Size = UDim2New(0, 0, 0, 14),
+            AutomaticSize = Enum.AutomaticSize.X,
+            ZIndex = 3,
+            BackgroundColor3 = FromRGB(255, 255, 255)
+        })
+
+        Instances:Create("UIListLayout", {
+            Parent = Meta.Instance,
+            Name = "\0",
+            FillDirection = Enum.FillDirection.Horizontal,
+            VerticalAlignment = Enum.VerticalAlignment.Center,
+            HorizontalAlignment = Enum.HorizontalAlignment.Left,
+            Padding = UDimNew(0, 5),
+            SortOrder = Enum.SortOrder.LayoutOrder
+        })
+
+        if NameLabel then
+            local Update = function()
+                local Name = NameLabel.Instance
+                Meta.Instance.Position = UDim2FromOffset(Name.Position.X.Offset + Name.AbsoluteSize.X + 6, Name.Position.Y.Offset - 1)
+            end
+
+            Update()
+            task.defer(Update)
+            Library:Connect(NameLabel.Instance:GetPropertyChangedSignal("AbsoluteSize"), Update)
+        else
+            Meta.Instance.AnchorPoint = Vector2New(1, 0.5)
+            Meta.Instance.Position = UDim2New(1, -8, 0.5, 0)
+        end
+
+        local Question = Instances:Create("TextButton", {
+            Parent = Meta.Instance,
+            Name = "\0",
+            Text = "?",
+            FontFace = Library.Font,
+            TextSize = 12,
+            TextColor3 = FromRGB(119, 119, 119),
+            BackgroundTransparency = 1,
+            AutoButtonColor = false,
+            Size = UDim2New(0, 12, 0, 12),
+            TextXAlignment = Enum.TextXAlignment.Center,
+            BorderSizePixel = 0,
+            ZIndex = 4,
+            BackgroundColor3 = FromRGB(255, 255, 255)
+        })
+
+        local DotButton = Instances:Create("TextButton", {
+            Parent = Meta.Instance,
+            Name = "\0",
+            Text = "",
+            AutoButtonColor = false,
+            BackgroundTransparency = 1,
+            Size = UDim2New(0, 12, 0, 12),
+            BorderSizePixel = 0,
+            ZIndex = 4,
+            BackgroundColor3 = FromRGB(255, 255, 255)
+        })
+
+        local Dot = Instances:Create("Frame", {
+            Parent = DotButton.Instance,
+            Name = "\0",
+            AnchorPoint = Vector2New(0.5, 0.5),
+            Position = UDim2New(0.5, 0, 0.5, 0),
+            Size = UDim2New(0, 8, 0, 8),
+            BackgroundColor3 = FromRGB(58, 58, 58),
+            BorderSizePixel = 0,
+            ZIndex = 4
+        })
+
+        Instances:Create("UICorner", {
+            Parent = Dot.Instance,
+            Name = "\0",
+            CornerRadius = UDimNew(1, 0)
+        })
+
+        local DotStroke = Instances:Create("UIStroke", {
+            Parent = Dot.Instance,
+            Name = "\0",
+            Color = FromRGB(90, 90, 90),
+            Transparency = 0.35,
+            ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        })
+
+        local RiskText = function()
+            if Element.Risk == "own" then
+                return "Tag: use at your own risk. Click the dot to cycle it."
+            elseif Element.Risk == "detected" then
+                return "Tag: detected. Click the dot to cycle it."
+            end
+
+            return "No risk tag. Click the dot to cycle: own risk -> detected -> none."
+        end
+
+        function Element:SetRisk(Risk)
+            local Normalized = Library:NormalizeRisk(Risk)
+
+            Element.Risk = Normalized
+
+            local Color = Normalized and Library.RiskColors[Normalized] or nil
+
+            Dot:Tween(TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+                BackgroundColor3 = Color or FromRGB(58, 58, 58)
+            })
+
+            DotStroke:Tween(nil, {Transparency = Color and 1 or 0.35})
+
+            if NameLabel then
+                NameLabel:Tween(nil, {TextColor3 = Color or BaseColor})
+            end
+        end
+
+        Question:OnHover(function()
+            Question:Tween(nil, {TextColor3 = Library.Theme.Accent})
+            Library:TooltipShow(Element.Description)
+        end)
+
+        Question:OnHoverLeave(function()
+            Question:Tween(nil, {TextColor3 = FromRGB(119, 119, 119)})
+            Library:TooltipHide()
+        end)
+
+        DotButton:OnHover(function()
+            Dot:Tween(nil, {BackgroundColor3 = Library:GetLighterColor(Element.Risk and Library.RiskColors[Element.Risk] or FromRGB(58, 58, 58), 1.4)})
+            Library:TooltipShow(RiskText())
+        end)
+
+        DotButton:OnHoverLeave(function()
+            Dot:Tween(nil, {BackgroundColor3 = Element.Risk and Library.RiskColors[Element.Risk] or FromRGB(58, 58, 58)})
+            Library:TooltipHide()
+        end)
+
+        DotButton:Connect("MouseButton1Down", function()
+            if Element.Risk == nil then
+                Element:SetRisk("own")
+            elseif Element.Risk == "own" then
+                Element:SetRisk("detected")
+            else
+                Element:SetRisk(nil)
+            end
+
+            if Tooltip.Visible then
+                Library:TooltipShow(RiskText())
+            end
+        end)
+
+        Element.Meta = Meta
+
+        Element:SetRisk(Element.Risk)
     end
 
     do 
@@ -3491,6 +3831,8 @@ local Library do
                 Value = false
             }
 
+            Toggle.Holder = Toggle.Section.Items["ElementsHolder"].Instance
+
             local Items = { } do 
                 Items["Toggle"] = Instances:Create("TextButton", {
                     Parent = Toggle.Section.Items["ElementsHolder"].Instance,
@@ -3600,10 +3942,18 @@ local Library do
                 if Toggle.Callback then 
                     Library:SafeCall(Toggle.Callback, Toggle.Value)
                 end
+
+                if Toggle.ChildGroup then
+                    Toggle.ChildGroup:SetOpen(Toggle.Value)
+                end
             end
 
             function Toggle:SetVisibility(Bool)
                 Items["Toggle"].Instance.Visible = Bool 
+
+                if Toggle.ChildGroup then
+                    Toggle.ChildGroup:SetVisibility(Bool)
+                end
             end
 
             function Toggle:Colorpicker(Data)
@@ -3661,6 +4011,201 @@ local Library do
                 return NewKeybind
             end
 
+            -- Collapsible child options: Toggle:Child({ Name = "Aimbot" }):Slider({...})
+            function Toggle:Child(Data)
+                Data = Data or { }
+
+                local Group = {
+                    Window = Toggle.Window,
+                    Page = Toggle.Page,
+                    Section = Toggle.Section,
+                    Parent = Toggle,
+                    Name = Data.Name or Data.name or Toggle.Name,
+
+                    Open = false,
+                    Elements = { },
+                    Token = 0
+                }
+
+                local Items = { } do
+                    Items["Holder"] = Instances:Create("Frame", {
+                        Parent = Toggle.Holder,
+                        Name = "\0",
+                        BackgroundTransparency = 1,
+                        BorderSizePixel = 0,
+                        ClipsDescendants = true,
+                        Visible = false,
+                        Size = UDim2New(1, 0, 0, 0),
+                        BackgroundColor3 = FromRGB(255, 255, 255)
+                    })
+
+                    Items["Bar"] = Instances:Create("Frame", {
+                        Parent = Items["Holder"].Instance,
+                        Name = "\0",
+                        Position = UDim2New(0, 4, 0, 2),
+                        Size = UDim2New(0, 1, 1, -6),
+                        BorderSizePixel = 0,
+                        BackgroundColor3 = FromRGB(45, 45, 45)
+                    })
+
+                    Items["Inner"] = Instances:Create("Frame", {
+                        Parent = Items["Holder"].Instance,
+                        Name = "\0",
+                        BackgroundTransparency = 1,
+                        Position = UDim2New(0, 14, 0, 4),
+                        Size = UDim2New(1, -16, 0, 0),
+                        AutomaticSize = Enum.AutomaticSize.Y,
+                        BorderSizePixel = 0,
+                        BackgroundColor3 = FromRGB(255, 255, 255)
+                    })
+
+                    Instances:Create("UIListLayout", {
+                        Parent = Items["Inner"].Instance,
+                        Name = "\0",
+                        Padding = UDimNew(0, 8),
+                        SortOrder = Enum.SortOrder.LayoutOrder
+                    })
+                end
+
+                function Group:Height()
+                    local Inner = Items["Inner"].Instance
+                    local Content = Inner.AbsoluteSize.Y
+
+                    if Content <= 0 then
+                        Content = 0
+
+                        for _, Child in Inner:GetChildren() do
+                            if Child:IsA("GuiObject") and Child.Visible then
+                                Content = Content + Child.AbsoluteSize.Y + 8
+                            end
+                        end
+                    end
+
+                    return Inner.Position.Y.Offset + Content + 4
+                end
+
+                function Group:SetOpen(Bool, Instant)
+                    Bool = Bool and true or false
+
+                    if Group.Open == Bool and not Instant then
+                        return
+                    end
+
+                    Group.Open = Bool
+                    Group.Token = Group.Token + 1
+
+                    local Token = Group.Token
+                    local Holder = Items["Holder"]
+                    local Inner = Items["Inner"]
+
+                    local Fade = function(Visible, Speed)
+                        local Descendants = Inner.Instance:GetDescendants()
+                        TableInsert(Descendants, Inner.Instance)
+
+                        for _, Item in Descendants do
+                            local Properties = Tween:GetProperty(Item)
+
+                            if not Properties then
+                                continue
+                            end
+
+                            if type(Properties) == "table" then
+                                for _, Property in Properties do
+                                    Tween:FadeItem(Item, Property, Visible, Speed)
+                                end
+                            else
+                                Tween:FadeItem(Item, Properties, Visible, Speed)
+                            end
+                        end
+                    end
+
+                    Holder.Instance.Visible = true
+
+                    if Bool then
+                        Inner.Instance.Visible = true
+                    end
+
+                    local Target = UDim2New(1, 0, 0, Bool and Group:Height() or 0)
+
+                    if Instant then
+                        Holder.Instance.Size = Target
+                        Fade(Bool, 0.01)
+                    else
+                        Holder:Tween(TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = Target})
+                        Fade(Bool, 0.18)
+                    end
+
+                    task.delay(Instant and 0.05 or 0.24, function()
+                        if Group.Token ~= Token then
+                            return
+                        end
+
+                        if not Bool then
+                            Inner.Instance.Visible = false
+                            Holder.Instance.Visible = false
+                        elseif Group:Height() > Target.Y.Offset + 0.5 then
+                            Holder.Instance.Size = UDim2New(1, 0, 0, Group:Height())
+                        end
+                    end)
+                end
+
+                function Group:SetVisibility(Bool)
+                    if Bool and not Group.Open then
+                        Items["Holder"].Instance.Visible = false
+                    else
+                        Items["Holder"].Instance.Visible = Bool
+                    end
+                end
+
+                -- Keep the collapsible container in sync when children resize
+                Library:Connect(Items["Inner"].Instance:GetPropertyChangedSignal("AbsoluteSize"), function()
+                    if not Group.Open then
+                        return
+                    end
+
+                    Items["Holder"]:Tween(TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+                        Size = UDim2New(1, 0, 0, Group:Height())
+                    })
+                end)
+
+                -- Children are built through the normal section constructors, just
+                -- pointed at the group's inner holder instead of the section itself.
+                local Section = Toggle.Section
+                local RealHolder = Section.Items["ElementsHolder"]
+                local ProxyHolder = { Instance = Items["Inner"].Instance }
+
+                local function Create(Method, ChildData)
+                    Section.Items["ElementsHolder"] = ProxyHolder
+
+                    local Success, Element = pcall(Section[Method], Section, ChildData)
+
+                    Section.Items["ElementsHolder"] = RealHolder
+
+                    if not Success then
+                        error(StringFormat("[Library] Toggle:Child():%s failed - %s", Method, tostring(Element)), 2)
+                    end
+
+                    Element.Group = Group
+                    TableInsert(Group.Elements, Element)
+
+                    return Element
+                end
+
+                function Group:Toggle(ChildData) return Create("Toggle", ChildData) end
+                function Group:Slider(ChildData) return Create("Slider", ChildData) end
+                function Group:Dropdown(ChildData) return Create("Dropdown", ChildData) end
+                function Group:Button(ChildData) return Create("Button", ChildData) end
+                function Group:Label(ChildData) return Create("Label", ChildData) end
+                function Group:Textbox(ChildData) return Create("Textbox", ChildData) end
+                function Group:Searchbox(ChildData) return Create("Searchbox", ChildData) end
+
+                Toggle.ChildGroup = Group
+
+                Group:SetOpen(Toggle.Value, true)
+
+                return Group
+            end
+
             Items["Toggle"]:Connect("MouseButton1Down", function()
                 Toggle:Set(not Toggle.Value)
             end)
@@ -3670,6 +4215,8 @@ local Library do
             Library.SetFlags[Toggle.Flag] = function(Value)
                 Toggle:Set(Value)
             end
+
+            Library:AttachMeta(Toggle, Data, Items["Text"])
 
             return Toggle 
         end
@@ -3794,6 +4341,8 @@ local Library do
             Items["Indicator"]:Connect("MouseButton1Down", function()
                 Button:Press()
             end)
+
+            Library:AttachMeta(Button, Data, nil, Items["ButtonHolder"])
 
             return Button
         end
@@ -3972,6 +4521,8 @@ local Library do
             Library.SetFlags[Slider.Flag] = function(Value)
                 Slider:Set(Value)
             end
+
+            Library:AttachMeta(Slider, Data, Items["Text"])
 
             return Slider 
         end
@@ -4512,10 +5063,19 @@ local Library do
                 Dropdown:Set(Value)
             end
 
+            Library:AttachMeta(Dropdown, Data, Items["Text"])
+
             return Dropdown
         end
 
         Library.Sections.Label = function(self, Text)
+            local Data = { }
+
+            if type(Text) == "table" then
+                Data = Text
+                Text = Data.Name or Data.name
+            end
+
             local Label = {
                 Window = self.Window,
                 Page = self.Page,
@@ -4637,6 +5197,8 @@ local Library do
                 return NewKeybind
             end
 
+            Library:AttachMeta(Label, Data, Items["Text"])
+
             return Label 
         end
 
@@ -4738,6 +5300,8 @@ local Library do
             Library.SetFlags[Textbox.Flag] = function(Value)
                 Textbox:Set(Value)
             end
+
+            Library:AttachMeta(Textbox, Data, nil, Items["Textbox"])
 
             return Textbox
         end
@@ -5138,6 +5702,8 @@ local Library do
             Library.SetFlags[Dropdown.Flag] = function(Value)
                 Dropdown:Set(Value)
             end
+
+            Library:AttachMeta(Dropdown, Data, Items["Text"])
 
             return Dropdown
         end
