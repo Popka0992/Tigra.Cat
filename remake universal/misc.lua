@@ -2,10 +2,35 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local SoundService = game:GetService("SoundService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
+local Voxel = ReplicatedStorage:WaitForChild("Voxel")
 
-local HitSounds = {
+local HitPredict = require(Voxel:WaitForChild("HitPredict"))
+local VoxelSound = require(Voxel:WaitForChild("VoxelSound"))
+
+local Misc = {}
+
+Misc.Config = {
+    Fly = false,
+    FlySpeed = 60,
+
+    Speed = false,
+    WalkSpeed = 32,
+
+    Noclip = false,
+
+    GunSound = false,
+    GunSoundName = "AWP",
+
+    HitSound = false,
+    HitSoundName = "neverlose",
+
+    SoundVolume = 1,
+}
+
+Misc.HitSounds = {
     ["neverlose"] = "rbxassetid://6607204501",
     ["rust"] = "rbxassetid://4764109000",
     ["gamesense"] = "rbxassetid://4817809188",
@@ -18,7 +43,7 @@ local HitSounds = {
     ["Bubble"] = "rbxassetid://198598793",
 }
 
-local ShootSounds = {
+Misc.ShootSounds = {
     ["Scar20"] = "rbxassetid://91510933153450",
     ["SSg08"] = "rbxassetid://2476571739",
     ["AWP"] = "rbxassetid://2753888131",
@@ -37,310 +62,219 @@ local ShootSounds = {
     ["Arrow"] = "rbxassetid://76555891505373",
 }
 
-local function SortedKeys(Source)
-    local Result = {}
+local Config = Misc.Config
 
-    for Key in pairs(Source) do
-        table.insert(Result, Key)
-    end
+local Connections = {}
+local SavedCollisions = {}
 
-    table.sort(Result)
+local SavedHumanoid
+local SavedWalkSpeed
 
-    return Result
+local FlyAttachment
+local FlyVelocity
+local FlyOrientation
+
+local Loaded = false
+local Active = false
+
+local function Connect(Signal, Callback)
+    local Connection = Signal:Connect(Callback)
+    table.insert(Connections, Connection)
+    return Connection
 end
 
-return function(MiscPage)
-    local Config = {
-        Fly = false,
-        FlySpeed = 60,
-
-        Speed = false,
-        WalkSpeed = 32,
-
-        Noclip = false,
-
-        GunSound = false,
-        GunSoundName = "AWP",
-
-        HitSound = false,
-        HitSoundName = "neverlose",
-
-        SoundVolume = 1,
-    }
-
-    local Connections = {}
-    local ToolConnections = {}
-    local SavedCollisions = {}
-
-    local SavedWalkSpeed
-    local SavedHumanoid
-
-    local FlyAttachment
-    local FlyVelocity
-    local FlyOrientation
-
-    local Destroyed = false
-
-    local function Connect(Signal, Callback)
-        local Connection = Signal:Connect(Callback)
-        table.insert(Connections, Connection)
-        return Connection
+local function PlaySound(SoundId)
+    if not Active or not SoundId then
+        return
     end
 
-    local function PlaySound(SoundId)
-        if Destroyed or not SoundId then
-            return
-        end
+    local Sound = Instance.new("Sound")
+    Sound.SoundId = SoundId
+    Sound.Volume = Config.SoundVolume
+    Sound.Parent = SoundService
 
-        local Sound = Instance.new("Sound")
-        Sound.SoundId = SoundId
-        Sound.Volume = Config.SoundVolume
-        Sound.Parent = SoundService
+    Sound.Ended:Connect(function()
+        Sound:Destroy()
+    end)
 
-        Sound.Ended:Connect(function()
+    Sound:Play()
+
+    task.delay(10, function()
+        if Sound.Parent then
             Sound:Destroy()
-        end)
+        end
+    end)
+end
 
-        Sound:Play()
+function Misc:PlayGunSound()
+    if Config.GunSound then
+        PlaySound(self.ShootSounds[Config.GunSoundName])
+    end
+end
 
-        task.delay(10, function()
-            if Sound.Parent then
-                Sound:Destroy()
-            end
-        end)
+function Misc:PlayHitSound()
+    if Config.HitSound then
+        PlaySound(self.HitSounds[Config.HitSoundName])
+    end
+end
+
+function Misc:TestGunSound()
+    PlaySound(self.ShootSounds[Config.GunSoundName])
+end
+
+function Misc:TestHitSound()
+    PlaySound(self.HitSounds[Config.HitSoundName])
+end
+
+local function StopFly()
+    if FlyVelocity then
+        FlyVelocity:Destroy()
+        FlyVelocity = nil
     end
 
-    local function StopFly()
-        if FlyVelocity then
-            FlyVelocity:Destroy()
-            FlyVelocity = nil
-        end
-
-        if FlyOrientation then
-            FlyOrientation:Destroy()
-            FlyOrientation = nil
-        end
-
-        if FlyAttachment then
-            FlyAttachment:Destroy()
-            FlyAttachment = nil
-        end
+    if FlyOrientation then
+        FlyOrientation:Destroy()
+        FlyOrientation = nil
     end
 
-    local function StartFly()
+    if FlyAttachment then
+        FlyAttachment:Destroy()
+        FlyAttachment = nil
+    end
+end
+
+local function StartFly()
+    StopFly()
+
+    local Character = LocalPlayer.Character
+    local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+    if not Root then
+        return
+    end
+
+    FlyAttachment = Instance.new("Attachment")
+    FlyAttachment.Name = "MiscFlyAttachment"
+    FlyAttachment.Parent = Root
+
+    FlyVelocity = Instance.new("LinearVelocity")
+    FlyVelocity.Name = "MiscFlyVelocity"
+    FlyVelocity.Attachment0 = FlyAttachment
+    FlyVelocity.RelativeTo = Enum.ActuatorRelativeTo.World
+    FlyVelocity.MaxForce = math.huge
+    FlyVelocity.VectorVelocity = Vector3.zero
+    FlyVelocity.Parent = Root
+
+    FlyOrientation = Instance.new("AlignOrientation")
+    FlyOrientation.Name = "MiscFlyOrientation"
+    FlyOrientation.Attachment0 = FlyAttachment
+    FlyOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
+    FlyOrientation.MaxTorque = math.huge
+    FlyOrientation.Responsiveness = 20
+    FlyOrientation.Parent = Root
+end
+
+function Misc:SetFly(State)
+    Config.Fly = State
+
+    if State then
+        StartFly()
+    else
         StopFly()
+    end
+end
 
-        local Character = LocalPlayer.Character
-        local Root = Character
-            and Character:FindFirstChild("HumanoidRootPart")
-
-        if not Root then
-            return
-        end
-
-        FlyAttachment = Instance.new("Attachment")
-        FlyAttachment.Name = "MiscFlyAttachment"
-        FlyAttachment.Parent = Root
-
-        FlyVelocity = Instance.new("LinearVelocity")
-        FlyVelocity.Name = "MiscFlyVelocity"
-        FlyVelocity.Attachment0 = FlyAttachment
-        FlyVelocity.RelativeTo = Enum.ActuatorRelativeTo.World
-        FlyVelocity.MaxForce = math.huge
-        FlyVelocity.VectorVelocity = Vector3.zero
-        FlyVelocity.Parent = Root
-
-        FlyOrientation = Instance.new("AlignOrientation")
-        FlyOrientation.Name = "MiscFlyOrientation"
-        FlyOrientation.Attachment0 = FlyAttachment
-        FlyOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
-        FlyOrientation.MaxTorque = math.huge
-        FlyOrientation.Responsiveness = 20
-        FlyOrientation.Parent = Root
+local function RestoreSpeed()
+    if SavedHumanoid and SavedHumanoid.Parent and SavedWalkSpeed ~= nil then
+        SavedHumanoid.WalkSpeed = SavedWalkSpeed
     end
 
-    local function RestoreCollisions()
-        for Part, Original in pairs(SavedCollisions) do
-            if Part and Part.Parent then
-                Part.CanCollide = Original
-            end
-        end
+    SavedHumanoid = nil
+    SavedWalkSpeed = nil
+end
 
-        table.clear(SavedCollisions)
+function Misc:SetSpeed(State)
+    Config.Speed = State
+
+    if not State then
+        RestoreSpeed()
+    end
+end
+
+local function RestoreCollisions()
+    for Part, Original in pairs(SavedCollisions) do
+        if Part and Part.Parent then
+            Part.CanCollide = Original
+        end
     end
 
-    local function RestoreSpeed()
-        if SavedHumanoid and SavedHumanoid.Parent
-            and SavedWalkSpeed ~= nil then
-            SavedHumanoid.WalkSpeed = SavedWalkSpeed
-        end
+    table.clear(SavedCollisions)
+end
 
-        SavedHumanoid = nil
-        SavedWalkSpeed = nil
+function Misc:SetNoclip(State)
+    Config.Noclip = State
+
+    if not State then
+        RestoreCollisions()
+    end
+end
+
+-- Хуки остаются установленными после Destroy, но становятся неактивными.
+-- Load повторно хуки не устанавливает.
+local function HookShot(Name)
+    local OriginalFunction = VoxelSound[Name]
+
+    if type(OriginalFunction) ~= "function" then
+        warn("[Misc] VoxelSound." .. Name .. " отсутствует")
+        return
     end
 
-    local MovementSub = MiscPage:SubPage({
-        Name = "Movement",
-    })
+    if type(hookfunction) ~= "function"
+        or type(newcclosure) ~= "function" then
+        warn("[Misc] hookfunction/newcclosure недоступны")
+        return
+    end
 
-    local MovementSection = MovementSub:Section({
-        Name = "Movement",
-        Side = 1,
-    })
+    local Original
 
-    local FlyToggle = MovementSection:Toggle({
-        Name = "Fly",
-        Flag = "MiscFly",
-        Default = false,
-        Meta = true,
-        Callback = function(State)
-            Config.Fly = State
+    local Success, Err = pcall(function()
+        Original = hookfunction(
+            OriginalFunction,
+            newcclosure(function(...)
+                if Active and Config.GunSound then
+                    PlaySound(Misc.ShootSounds[Config.GunSoundName])
+                end
 
-            if State then
-                StartFly()
-            else
-                StopFly()
-            end
-        end,
-    })
+                return Original(...)
+            end)
+        )
+    end)
 
-    local FlyChild = FlyToggle:Child({
-        Name = "Fly options",
-    })
+    if not Success then
+        warn("[Misc] Не удалось подключить " .. Name .. ": " .. tostring(Err))
+    end
+end
 
-    FlyChild:Slider({
-        Name = "Fly speed",
-        Flag = "MiscFlySpeed",
-        Min = 10,
-        Max = 200,
-        Default = 60,
-        Decimals = 1,
-        Callback = function(Value)
-            Config.FlySpeed = Value
-        end,
-    })
+function Misc:Load()
+    if Active then
+        return
+    end
 
-    local SpeedToggle = MovementSection:Toggle({
-        Name = "Speed",
-        Flag = "MiscSpeed",
-        Default = false,
-        Meta = true,
-        Callback = function(State)
-            Config.Speed = State
+    Active = true
 
-            if not State then
-                RestoreSpeed()
-            end
-        end,
-    })
+    if not Loaded then
+        Loaded = true
 
-    local SpeedChild = SpeedToggle:Child({
-        Name = "Speed options",
-    })
+        HookShot("ownShot")
+        HookShot("ownShotgun")
+        HookShot("minigunOwn")
+    end
 
-    SpeedChild:Slider({
-        Name = "Walk speed",
-        Flag = "MiscWalkSpeed",
-        Min = 16,
-        Max = 200,
-        Default = 32,
-        Decimals = 1,
-        Callback = function(Value)
-            Config.WalkSpeed = Value
-        end,
-    })
-
-    MovementSection:Toggle({
-        Name = "Noclip",
-        Flag = "MiscNoclip",
-        Default = false,
-        Callback = function(State)
-            Config.Noclip = State
-
-            if not State then
-                RestoreCollisions()
-            end
-        end,
-    })
-
-    local SoundsSub = MiscPage:SubPage({
-        Name = "Sounds",
-    })
-
-    local GunSoundSection = SoundsSub:Section({
-        Name = "Gun sound",
-        Side = 1,
-    })
-
-    local HitSoundSection = SoundsSub:Section({
-        Name = "Hit sound",
-        Side = 2,
-    })
-
-    GunSoundSection:Toggle({
-        Name = "Gun sound",
-        Flag = "MiscGunSound",
-        Default = false,
-        Callback = function(State)
-            Config.GunSound = State
-        end,
-    })
-
-    GunSoundSection:Dropdown({
-        Name = "Sound",
-        Flag = "MiscGunSoundType",
-        Items = SortedKeys(ShootSounds),
-        Default = "AWP",
-        Callback = function(Value)
-            Config.GunSoundName = Value
-        end,
-    })
-
-    GunSoundSection:Button({
-        Name = "Test gun sound",
-        Callback = function()
-            PlaySound(ShootSounds[Config.GunSoundName])
-        end,
-    })
-
-    HitSoundSection:Toggle({
-        Name = "Hit sound",
-        Flag = "MiscHitSound",
-        Default = false,
-        Callback = function(State)
-            Config.HitSound = State
-        end,
-    })
-
-    HitSoundSection:Dropdown({
-        Name = "Sound",
-        Flag = "MiscHitSoundType",
-        Items = SortedKeys(HitSounds),
-        Default = "neverlose",
-        Callback = function(Value)
-            Config.HitSoundName = Value
-        end,
-    })
-
-    HitSoundSection:Button({
-        Name = "Test hit sound",
-        Callback = function()
-            PlaySound(HitSounds[Config.HitSoundName])
-        end,
-    })
-
-    HitSoundSection:Slider({
-        Name = "Volume",
-        Flag = "MiscSoundVolume",
-        Min = 0,
-        Max = 100,
-        Default = 100,
-        Decimals = 1,
-        Suffix = "%",
-        Callback = function(Value)
-            Config.SoundVolume = Value / 100
-        end,
-    })
+    Connect(HitPredict.confirmed, function()
+        if Config.HitSound then
+            PlaySound(Misc.HitSounds[Config.HitSoundName])
+        end
+    end)
 
     Connect(RunService.Stepped, function()
         local Character = LocalPlayer.Character
@@ -432,60 +366,16 @@ return function(MiscPage)
         end
     end)
 
-    local function BindTool(Tool)
-        if not Tool:IsA("Tool") or ToolConnections[Tool] then
-            return
-        end
-
-        local ActivatedConnection = Tool.Activated:Connect(function()
-            if Config.GunSound then
-                PlaySound(ShootSounds[Config.GunSoundName])
-            end
-        end)
-
-        local DestroyingConnection
-
-        DestroyingConnection = Tool.Destroying:Connect(function()
-            ActivatedConnection:Disconnect()
-            DestroyingConnection:Disconnect()
-            ToolConnections[Tool] = nil
-        end)
-
-        ToolConnections[Tool] = {
-            ActivatedConnection,
-            DestroyingConnection,
-        }
-    end
-
-    local function BindToolContainer(Container)
-        for _, Child in ipairs(Container:GetChildren()) do
-            BindTool(Child)
-        end
-
-        Connect(Container.ChildAdded, BindTool)
-    end
-
-    local Backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
-        or LocalPlayer:WaitForChild("Backpack")
-
-    BindToolContainer(Backpack)
-
-    if LocalPlayer.Character then
-        BindToolContainer(LocalPlayer.Character)
-    end
-
     Connect(LocalPlayer.CharacterAdded, function(Character)
         StopFly()
-        table.clear(SavedCollisions)
+        RestoreCollisions()
         RestoreSpeed()
-
-        BindToolContainer(Character)
 
         if Config.Fly then
             task.spawn(function()
                 Character:WaitForChild("HumanoidRootPart", 10)
 
-                if not Destroyed
+                if Active
                     and Config.Fly
                     and LocalPlayer.Character == Character then
                     StartFly()
@@ -494,49 +384,31 @@ return function(MiscPage)
         end
     end)
 
-    local Misc = {
-        Config = Config,
-    }
-
-    function Misc:PlayHitSound()
-        if Config.HitSound then
-            PlaySound(HitSounds[Config.HitSoundName])
-        end
+    if Config.Fly then
+        StartFly()
     end
-
-    function Misc:PlayGunSound()
-        if Config.GunSound then
-            PlaySound(ShootSounds[Config.GunSoundName])
-        end
-    end
-
-    function Misc:Destroy()
-        if Destroyed then
-            return
-        end
-
-        Destroyed = true
-        Config.Fly = false
-        Config.Speed = false
-        Config.Noclip = false
-
-        StopFly()
-        RestoreCollisions()
-        RestoreSpeed()
-
-        for _, Connection in ipairs(Connections) do
-            Connection:Disconnect()
-        end
-
-        for _, ToolConnectionList in pairs(ToolConnections) do
-            for _, Connection in ipairs(ToolConnectionList) do
-                Connection:Disconnect()
-            end
-        end
-
-        table.clear(Connections)
-        table.clear(ToolConnections)
-    end
-
-    return Misc
 end
+
+function Misc:Destroy()
+    if not Active then
+        return
+    end
+
+    Active = false
+
+    Config.Fly = false
+    Config.Speed = false
+    Config.Noclip = false
+
+    StopFly()
+    RestoreSpeed()
+    RestoreCollisions()
+
+    for _, Connection in ipairs(Connections) do
+        Connection:Disconnect()
+    end
+
+    table.clear(Connections)
+end
+
+return Misc
