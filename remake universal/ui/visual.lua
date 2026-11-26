@@ -349,10 +349,6 @@ StateToggle:Colorpicker({
     end,
 })
 
-end 
-
-return function(VisualsPage, World, WorldCfg, White, ColorOr)
-
 local WorldSub = VisualsPage:SubPage({
     Name = "World",
 })
