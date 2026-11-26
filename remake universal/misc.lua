@@ -219,8 +219,6 @@ function Misc:SetNoclip(State)
     end
 end
 
--- Хуки остаются установленными после Destroy, но становятся неактивными.
--- Load повторно хуки не устанавливает.
 local function HookShot(Name)
     local OriginalFunction = VoxelSound[Name]
 
@@ -251,7 +249,7 @@ local function HookShot(Name)
     end)
 
     if not Success then
-        warn("[Misc] Не удалось подключить " .. Name .. ": " .. tostring(Err))
+        warn("[Misc] error " .. Name .. ": " .. tostring(Err))
     end
 end
 
@@ -265,11 +263,16 @@ function Misc:Load()
     if not Loaded then
         Loaded = true
 
-        HookShot("ownShot")
-        HookShot("ownShotgun")
-        HookShot("minigunOwn")
+HookShot("ownShot")       -- Rifle
+HookShot("ownSMG")        -- SMG
+HookShot("ownLMG")        -- LMG
+HookShot("ownDMR")        -- DMR
+HookShot("ownSniper")     -- Sniper
+HookShot("ownShotgun")    -- Shotgun
+HookShot("minigunOwn")    -- Minigun
+        
     end
-
+    
     Connect(HitPredict.confirmed, function()
         if Config.HitSound then
             PlaySound(Misc.HitSounds[Config.HitSoundName])
